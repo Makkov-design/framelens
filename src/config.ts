@@ -1,4 +1,4 @@
-import { ConfigError } from "./errors.js";
+import { ConfigError, MissingKeyError } from "./errors.js";
 
 export const DEFAULT_MODEL = "gemini-flash-latest";
 
@@ -36,7 +36,7 @@ function readInt(env: Env, name: string, fallback: number, min: number, max: num
 export function loadConfig(env: Env): Config {
   const apiKey = read(env, "GEMINI_API_KEY") ?? read(env, "GOOGLE_API_KEY");
   if (!apiKey) {
-    throw new ConfigError(
+    throw new MissingKeyError(
       "GEMINI_API_KEY is not set. Create a key at https://aistudio.google.com/apikey and pass it " +
         'in the "env" section of your MCP client config.',
     );
@@ -44,7 +44,7 @@ export function loadConfig(env: Env): Config {
 
   if (apiKey.startsWith("${")) {
     // Claude Code passes `${VAR}` through literally when VAR is not set.
-    throw new ConfigError(
+    throw new MissingKeyError(
       `GEMINI_API_KEY is not set in this environment (the MCP config passed the placeholder ${apiKey} through). ` +
         "Add GEMINI_API_KEY to the environment variables, e.g. in your cloud environment settings.",
     );

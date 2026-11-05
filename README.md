@@ -59,11 +59,15 @@ Commit both. Then make your Gemini key available:
 
 - **Cloud sessions (claude.ai/code):** open the environment settings, add `GEMINI_API_KEY=<your key>` to the
   environment variables, and keep network access on **Trusted** (it already allows GitHub and `*.googleapis.com`).
-  Cloud sessions only load what is in the repository, which is why the files go into the project.
+  Without a plugin, cloud sessions only load what is in the repository, which is why the files go into the project.
+  If you added ytlens as a plugin in claude.ai, cloud sessions load it from your account and only the key is needed.
+  Start a new session after adding the key: running sessions keep the old variables.
 - **On your computer:** set `GEMINI_API_KEY` as an environment variable for your user (on Windows:
   `setx GEMINI_API_KEY "<your key>"`, then restart Claude Code).
 
 Everyone who works in the repository gets ytlens; each person needs their own key.
+
+No key yet? The server still starts, and every tool answers with these steps, so the agent can tell you what to do.
 
 ### Claude Code on your computer, in every project (plugin)
 

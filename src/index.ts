@@ -3,10 +3,11 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { createGeminiAnalyzer } from "./analyzer.js";
 import { CachedAnalyzer } from "./cache.js";
 import { loadConfig } from "./config.js";
-import { ConfigError, InvalidInputError } from "./errors.js";
+import { ConfigError, InvalidInputError, MissingKeyError } from "./errors.js";
 import { INIT_NEXT_STEPS, initProject } from "./init.js";
 import { createLogger } from "./logger.js";
 import { createServer } from "./server.js";
+import { createSetupAnalyzer } from "./setup.js";
 import { VERSION } from "./version.js";
 
 async function main(): Promise<void> {
@@ -24,7 +25,19 @@ async function main(): Promise<void> {
     throw new ConfigError(`Unknown command "${command}". Run without arguments to start the MCP server, or "init" to add ytlens to the current project.`);
   }
 
-  const config = loadConfig(process.env);
+  let config;
+  try {
+    config = loadConfig(process.env);
+  } catch (error) {
+    if (!(error instanceof MissingKeyError)) throw error;
+    // Start anyway: every tool answers with the setup steps, so the agent can pass them on
+    // instead of the tools silently missing from the session.
+    const setupLogger = createLogger("info");
+    const setupServer = createServer({ analyzer: createSetupAnalyzer(error.message), logger: setupLogger });
+    await setupServer.connect(new StdioServerTransport());
+    setupLogger.warn(`ytlens ${VERSION} started without a Gemini key; every tool explains how to add one`);
+    return;
+  }
   const logger = createLogger(config.logLevel, undefined, [config.apiKey]);
   const analyzer = new CachedAnalyzer(createGeminiAnalyzer(config, logger), { ttlMs: config.cacheTtlMs });
   const server = createServer({ analyzer, logger });

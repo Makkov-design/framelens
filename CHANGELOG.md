@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.1 — 2026-11-05
+
+- Starts without a Gemini key instead of exiting. Every tool then answers with the steps to add one, for a computer
+  and for a Claude cloud session, so the agent can pass them on; before, the tools were just missing from the session.
+
 ## 1.1.0 — 2026-10-26
 
 - `ytlens init`: adds ytlens to any project in one command (`.mcp.json` entry plus the skill), so Claude Code cloud

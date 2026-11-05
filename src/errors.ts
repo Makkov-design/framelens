@@ -8,6 +8,11 @@ export class ConfigError extends Error {
   override name = "ConfigError";
 }
 
+/** No Gemini key in the environment. The server still starts and every tool explains how to add one. */
+export class MissingKeyError extends ConfigError {
+  override name = "MissingKeyError";
+}
+
 export type AnalyzerErrorKind =
   | "auth"
   | "quota"
