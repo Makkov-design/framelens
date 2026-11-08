@@ -3,7 +3,8 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { createGeminiAnalyzer } from "./analyzer.js";
 import { CachedAnalyzer } from "./cache.js";
 import { loadConfig } from "./config.js";
-import { ConfigError, InvalidInputError, MissingKeyError } from "./errors.js";
+import { runDoctor } from "./doctor.js";
+import { ConfigError,InvalidInputError, MissingKeyError } from "./errors.js";
 import { INIT_NEXT_STEPS, initProject } from "./init.js";
 import { createLogger } from "./logger.js";
 import { createServer } from "./server.js";
@@ -15,6 +16,10 @@ async function main(): Promise<void> {
   if (command === "init") {
     const { files } = initProject(process.cwd());
     process.stderr.write(`framelens ${VERSION}: added ${files.join(" and ")} to ${process.cwd()}\n${INIT_NEXT_STEPS}`);
+    return;
+  }
+  if (command === "doctor") {
+    process.exitCode = await runDoctor({ prepare: process.argv.slice(3).includes("--prepare") });
     return;
   }
   if (command === "--version" || command === "-v") {
