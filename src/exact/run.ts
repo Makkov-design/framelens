@@ -78,7 +78,7 @@ export async function runExact(o: ExactOptions): Promise<ExactResult> {
   let exported: ExactResult["exported"];
   if (o.exportTarget) {
     const dir = ws.ensure("export", o.exportTarget);
-    exported = { dir, files: exportSpec(spec, o.exportTarget, dir) };
+    exported = { dir, files: exportSpec(spec, o.exportTarget, dir, { workspace: ws.dir }) };
   }
   return { ws, analysis, spec, files, ...(exported && { exported }) };
 }
