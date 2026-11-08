@@ -106,18 +106,47 @@ export function classifyChanges(
     return best;
   };
   const spikes = candidates.map((c) => ({ ...c, index: peakIndex(c.t) }));
-  return spikes.map((c, i) => {
+  const seen = new Set<number>();
+  const out: ClassifiedChange[] = [];
+  for (const c of spikes) {
     const index = c.index;
-    if (index === undefined) return { t: c.t, score: c.score, kind: "cut" as const };
+    if (index === undefined) {
+      out.push({ t: c.t, score: c.score, kind: "cut" });
+      continue;
+    }
+    // Two samples of one flash often land on the same peak frame: one change, not two.
+    if (seen.has(index)) continue;
+    seen.add(index);
     const peak = energy[index]!.energy;
     const before = energy[index - 1]?.energy ?? 0;
     const after = energy[index + 1]?.energy ?? 0;
-    const neighbour = spikes.find((d, j) => j !== i && d.index !== undefined && d.index !== index && Math.abs(d.index - index) <= 3);
     let kind: ClassifiedChange["kind"] = "cut";
     if (peak > 0 && (before >= peak * 0.3 || after >= peak * 0.3)) kind = "motion";
-    else if (neighbour) kind = "flash";
-    return { t: Math.round(energy[index]!.t * 1000) / 1000, score: c.score, kind };
-  });
+    // The other half of a flash is in the energy itself, whether or not a sample landed on it.
+    else if (flashPartner(energy, index) !== undefined) kind = "flash";
+    out.push({ t: Math.round(energy[index]!.t * 1000) / 1000, score: c.score, kind });
+  }
+  return out;
+}
+
+/** A spike standing alone: far above the frames on both sides of it. */
+function isolated(energy: EnergySample[], i: number): boolean {
+  const e = energy[i]?.energy ?? 0;
+  return e > 0 && (energy[i - 1]?.energy ?? 0) < e * 0.3 && (energy[i + 1]?.energy ?? 0) < e * 0.3;
+}
+
+/**
+ * The other spike of a flash: a 2–3 frame flash is a jump in and a jump back out a few frames later, each standing
+ * alone. Returns its index, if there is one within 3 frames.
+ */
+function flashPartner(energy: EnergySample[], i: number): number | undefined {
+  const e = energy[i]!.energy;
+  for (let d = 2; d <= 3; d++) {
+    for (const j of [i - d, i + d]) {
+      if (j >= 0 && j < energy.length && energy[j]!.energy >= e * 0.5 && energy[j]!.energy <= e * 2 && isolated(energy, j)) return j;
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -132,7 +161,8 @@ export function energySpikeCuts(energy: EnergySample[], minimum = 6): { t: numbe
     const e = energy[i]!.energy;
     const before = energy[i - 1]!.energy;
     const after = energy[i + 1]!.energy;
-    if (e >= Math.max(minimum, median * 6) && before < e * 0.3 && after < e * 0.3) cuts.push({ t: energy[i]!.t, score: Math.min(1, e / 64) });
+    // A flash is two such spikes a few frames apart (in, then back out): neither is a cut.
+    if (e >= Math.max(minimum, median * 6) && before < e * 0.3 && after < e * 0.3 && flashPartner(energy, i) === undefined) cuts.push({ t: energy[i]!.t, score: Math.min(1, e / 64) });
   }
   return cuts;
 }
