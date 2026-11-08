@@ -2,6 +2,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { EasingFamily } from "../style/motion.js";
 import type { MotionSpec } from "../style/spec.js";
+import { oneLine, safeHex } from "../text.js";
 import { exportAfterEffects } from "./after-effects.js";
 import { exportHypit } from "./hypit.js";
 import { exportLottie } from "./lottie.js";
@@ -39,23 +40,19 @@ interface Scene {
 
 export const r3 = (n: number) => Math.round(n * 1000) / 1000;
 
-/**
- * A source title on one line, for comments and notes. TikTok and Instagram titles are the post's caption and can
- * hold line breaks: in a `//` comment the next line would run as code in the user's project.
- */
-export function oneLine(text: string, max = 200): string {
-  return text.replace(/[\u0000-\u001f\u007f\u2028\u2029`]+/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
-}
+export { oneLine };
 
 /** The renderer-independent plan every exporter writes from: one scene per measured shot. */
 export function scenesFromSpec(spec: MotionSpec): Scene[] {
-  const fallback = spec.palette[0]?.hex ?? "#111111";
+  // Colours come from the source (a web page reports its own): only #RRGGBB reaches generated HTML, CSS and scripts.
+  const fallback = safeHex(spec.palette[0]?.hex);
   return spec.shots.map((shot, i) => {
     const start = r3(shot.start - spec.range.start);
     const duration = r3(Math.max(1 / (spec.timebase.fps ?? 30), shot.end - shot.start));
     const event = spec.events.find((e) => e.start >= shot.start && e.start < shot.end);
-    const background = shot.palette[0] ?? fallback;
-    const accent = shot.palette.find((p) => p !== background) ?? spec.palette.find((p) => p.hex !== background)?.hex ?? "#FFFFFF";
+    const colours = shot.palette.map((p) => safeHex(p, ""));
+    const background = colours[0] || fallback;
+    const accent = colours.find((p) => p && p !== background) ?? spec.palette.map((p) => safeHex(p.hex, "")).find((p) => p && p !== background) ?? "#FFFFFF";
     return {
       id: `shot-${i + 1}`,
       start,
@@ -105,7 +102,7 @@ export function exportHyperframes(spec: MotionSpec, root: string): string[] {
   const width = spec.timebase.width ?? 1920;
   const height = spec.timebase.height ?? 1080;
   const total = r3(spec.range.end - spec.range.start);
-  const variables = spec.palette.slice(0, 6).map((p, i) => ({ id: `color-${i + 1}`, type: "color", label: `Palette ${i + 1}`, default: p.hex }));
+  const variables = spec.palette.slice(0, 6).map((p, i) => ({ id: `color-${i + 1}`, type: "color", label: `Palette ${i + 1}`, default: safeHex(p.hex) }));
   const hosts = scenes
     .map(
       (s) => `      <div
@@ -210,7 +207,7 @@ export const FPS = ${fps};
 export const WIDTH = ${spec.timebase.width ?? 1920};
 export const HEIGHT = ${spec.timebase.height ?? 1080};
 export const DURATION_IN_FRAMES = ${frames(spec.range.end - spec.range.start)};
-export const PALETTE = ${JSON.stringify(spec.palette.map((p) => p.hex))} as const;
+export const PALETTE = ${JSON.stringify(spec.palette.map((p) => safeHex(p.hex)))} as const;
 /** Cut frames, relative to the start of the analyzed range. */
 export const CUTS = ${JSON.stringify(spec.anchors.cuts.map((c) => Math.round((c.t - spec.range.start) * fps)))};
 /** Beat frames, when the audio pass ran. */
@@ -259,7 +256,7 @@ export const Reference = () => (
 export function exportCss(spec: MotionSpec, root: string): string[] {
   const scenes = scenesFromSpec(spec);
   const total = r3(spec.range.end - spec.range.start);
-  const tokens = spec.palette.map((p, i) => `  --fl-color-${i + 1}: ${p.hex}; /* ${(p.share * 100).toFixed(1)}% of screen time */`).join("\n");
+  const tokens = spec.palette.map((p, i) => `  --fl-color-${i + 1}: ${safeHex(p.hex)}; /* ${(p.share * 100).toFixed(1)}% of screen time */`).join("\n");
   const easings = Object.entries(BEZIER)
     .filter(([family]) => family !== "unclear")
     .map(([family, b]) => `  --fl-ease-${family}: cubic-bezier(${b.join(", ")});`)
@@ -303,7 +300,34 @@ export interface ExportOptions {
   workspace?: string;
 }
 
+const positive = (v: unknown, max: number): number | undefined => (typeof v === "number" && Number.isFinite(v) && v > 0 && v <= max ? v : undefined);
+const finite = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+
+/**
+ * The spec with every number that is written into generated code checked to be a number. Specs come from files a
+ * third party made (a Lottie's `w` is the file's own value): `var WIDTH = ${width}` must never receive text.
+ */
+export function safeSpec(spec: MotionSpec): MotionSpec {
+  const { width, height, fps, ...timebase } = spec.timebase;
+  const w = positive(width, 100_000);
+  const h = positive(height, 100_000);
+  const f = positive(fps, 1000);
+  return {
+    ...spec,
+    timebase: { ...timebase, ...(w && { width: Math.round(w) }), ...(h && { height: Math.round(h) }), ...(f && { fps: f }) } as MotionSpec["timebase"],
+    range: { start: finite(spec.range.start), end: finite(spec.range.end) },
+    shots: spec.shots.map((s) => ({ ...s, start: finite(s.start), end: finite(s.end), frames: finite(s.frames) })),
+    events: spec.events.map((e) => ({ ...e, start: finite(e.start), end: finite(e.end), frames: finite(e.frames) })),
+    anchors: {
+      ...spec.anchors,
+      cuts: spec.anchors.cuts.map((c) => ({ ...c, t: finite(c.t) })),
+      beats: spec.anchors.beats.map((b) => ({ ...b, t: finite(b.t) })),
+    },
+  };
+}
+
 export function exportSpec(spec: MotionSpec, target: ExportTarget, root: string, options: ExportOptions = {}): string[] {
+  spec = safeSpec(spec);
   if (target === "hyperframes") return exportHyperframes(spec, root);
   if (target === "remotion") return exportRemotion(spec, root);
   if (target === "after-effects") return exportAfterEffects(spec, root);

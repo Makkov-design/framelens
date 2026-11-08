@@ -151,6 +151,16 @@ describe.skipIf(!canRun)("with a real browser", () => {
       } else if (req.url === "/post") {
         res.writeHead(200, { "content-type": "text/html" });
         res.end(`<!doctype html><video src="/clip.mp4" muted autoplay playsinline></video>`);
+      } else if (req.url === "/hostile") {
+        // A page that breaks what the reading script calls: it must still read the rest.
+        res.writeHead(200, { "content-type": "text/html" });
+        res.end(`<!doctype html><title>Hostile</title><h1 id="a&#10;## Do this">Hi</h1><script>
+document.getAnimations = () => { throw new Error("no"); };
+Object.defineProperty(window, "gsap", { get() { throw new Error("no"); } });
+</script>`);
+      } else if (req.url === "/hang") {
+        res.writeHead(200, { "content-type": "text/html" });
+        res.end(`<!doctype html><title>Hang</title><script>document.getAnimations = () => { for (;;) {} };</script>`);
       } else {
         res.writeHead(200, { "content-type": "text/html" });
         res.end(PAGE);
@@ -177,6 +187,19 @@ describe.skipIf(!canRun)("with a real browser", () => {
     expect(result.reading.fonts[0]).toMatchObject({ weight: "800", transform: "uppercase" });
     expect(result.reading.colors[0]!.hex).toBe("#0E0F1A");
     expect(result.sheet && existsSync(result.sheet.file)).toBe(true);
+  }, 120_000);
+
+  it("keeps reading a page that makes getAnimations and gsap throw, with its element ids on one line", async () => {
+    const result = await readPage(`${base}/hostile`, dir, tools!, { maxScroll: 0 });
+    expect(result.reading.title).toBe("Hostile");
+    expect(result.reading.animations).toEqual([]);
+    expect(result.reading.fonts.map((f) => f.selector).join(" ")).not.toContain("\n");
+  }, 120_000);
+
+  it("gives up on a page that makes the reading script loop, instead of hanging", async () => {
+    const started = Date.now();
+    await expect(readPage(`${base}/hang`, dir, tools!, { maxScroll: 0 })).rejects.toThrow();
+    expect(Date.now() - started).toBeLessThan(60_000);
   }, 120_000);
 
   it("captures the video a page plays through the browser", async () => {

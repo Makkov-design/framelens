@@ -24,9 +24,26 @@ export function findBrowser(env: Record<string, string | undefined> = process.en
   return candidates.find((path) => path && existsSync(path));
 }
 
-/** Where `framelens login` keeps its own browser profile: never the user's everyday one. */
+/** A browser's own everyday profile folder (Chrome, Edge, Chromium, Brave on Windows, macOS and Linux). */
+export function isEverydayProfile(path: string): boolean {
+  const p = path.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+  return (
+    /\/(google\/chrome( beta| dev| sxs)?|microsoft\/edge( beta| dev| sxs)?|chromium|bravesoftware\/brave-browser)\/user data(\/|$)/.test(p) ||
+    /\/library\/application support\/(google\/chrome|microsoft edge|chromium|bravesoftware\/brave-browser)(\/|$)/.test(p) ||
+    /\/\.config\/(google-chrome|chromium|microsoft-edge|bravesoftware\/brave-browser)(\/|$)/.test(p)
+  );
+}
+
+/**
+ * Where `framelens login` keeps its own browser profile: never the user's everyday one. `logout` deletes this folder
+ * and capture drives it, so a FRAMELENS_BROWSER_PROFILE pointing at the browser's own profile is refused.
+ */
 export function profileDir(env: Record<string, string | undefined> = process.env): string {
-  return env.FRAMELENS_BROWSER_PROFILE?.trim() || join(homedir(), ".framelens", "browser-profile");
+  const configured = env.FRAMELENS_BROWSER_PROFILE?.trim();
+  if (configured && isEverydayProfile(configured)) {
+    throw new InvalidInputError("FRAMELENS_BROWSER_PROFILE points at your everyday browser profile. Frame Lens uses a separate folder only; unset it or choose a new empty folder.");
+  }
+  return configured || join(homedir(), ".framelens", "browser-profile");
 }
 
 type Handler = (params: Record<string, unknown>, sessionId?: string) => void;
@@ -131,8 +148,29 @@ export interface BrowserSession {
   close(): Promise<void>;
 }
 
+/** Browsers this process started and has not closed yet, so they can be ended if Frame Lens itself is stopped. */
+const running = new Set<ChildProcess>();
+let exitHooks = false;
+
+function endAllOnExit(): void {
+  if (exitHooks) return;
+  exitHooks = true;
+  process.once("exit", () => {
+    for (const child of running) killTree(child);
+  });
+  // A client that stops the server sends a signal; Node's default exits without running "exit" handlers, and a
+  // headless browser left behind runs until the computer restarts.
+  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
+    process.once(signal, () => {
+      for (const child of running) killTree(child);
+      process.exit(signal === "SIGINT" ? 130 : 143);
+    });
+  }
+}
+
 /** Ends the browser and every process it started (Chrome spawns helpers that outlive a plain kill). */
 function killTree(child: ChildProcess): void {
+  running.delete(child);
   if (child.pid === undefined || child.exitCode !== null) return;
   if (process.platform === "win32") spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
   else {
@@ -176,6 +214,9 @@ export async function launchBrowser(options: {
     ],
     { stdio: "ignore", windowsHide: true, detached: process.platform !== "win32" },
   );
+  running.add(child);
+  child.once("exit", () => running.delete(child));
+  endAllOnExit();
   const lifetime = setTimeout(() => killTree(child), options.maxLifetimeMs ?? 5 * 60_000);
   lifetime.unref();
   const fail = (message: string) => {
@@ -219,7 +260,9 @@ export async function launchBrowser(options: {
 export async function evaluate<T>(session: BrowserSession, expression: string, timeoutMs = 30_000): Promise<T> {
   const result = await session.cdp.send<{ result: { value?: unknown }; exceptionDetails?: { text?: string; exception?: { description?: string } } }>(
     "Runtime.evaluate",
-    { expression, returnByValue: true, awaitPromise: true },
+    // `timeout` stops our own script if the page made it loop (a redefined getAnimations, say); the send timeout
+    // covers a page whose own scripts keep the tab busy.
+    { expression, returnByValue: true, awaitPromise: true, timeout: Math.max(1_000, timeoutMs - 5_000) },
     session.sessionId,
     timeoutMs,
   );

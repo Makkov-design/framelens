@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { formatTimestamp } from "../youtube.js";
+import { oneLine } from "../text.js";
 
 export interface Word {
   t: number;
@@ -163,7 +164,7 @@ export function findPhrase(transcript: Transcript, phrase: string, occurrence = 
 
 /** A readable transcript with [m:ss] marks. */
 export function toMarkdown(transcript: Transcript, title?: string): string {
-  const lines = [`# Transcript${title ? `: ${title}` : ""}`, "", `Source: ${transcript.source}${transcript.language ? `, language ${transcript.language}` : ""}.`, ""];
+  const lines = [`# Transcript${title ? `: ${oneLine(title)}` : ""}`, "", `Source: ${transcript.source}${transcript.language ? `, language ${transcript.language}` : ""}.`, ""];
   for (const s of transcript.segments) lines.push(`[${formatTimestamp(s.start)}]${s.speaker ? ` **${s.speaker}:**` : ""} ${s.text}`);
   return `${lines.join("\n")}\n`;
 }
