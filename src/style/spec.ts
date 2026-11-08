@@ -66,7 +66,7 @@ export async function framePixels(source: string, t: number, probe: ProbeInfo, t
     } else {
       await run(base);
     }
-    return readFileSync(out);
+    return existsSync(out) ? readFileSync(out) : Buffer.alloc(0); // empty when no frame is at or after t
   } finally {
     rmSync(out, { force: true });
   }

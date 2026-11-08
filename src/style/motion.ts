@@ -83,31 +83,40 @@ export interface ClassifiedChange {
 /**
  * Tells cuts from fast motion and flashes using the per-frame energy: a cut is a one-frame spike, motion keeps
  * changing on the neighbouring frames, and a flash is two spikes close together (in, then back out).
+ * `sampleInterval` is the spacing of the samples the candidates came from: the change can be on any frame since
+ * the previous sample (six frames back at 60 fps with 10 samples a second), so all of them are searched.
+ * Neighbours are the adjacent energy samples, not times computed from the rate, so variable-rate files work too.
  */
-export function classifyChanges(candidates: { t: number; score: number }[], energy: EnergySample[], fps: number): ClassifiedChange[] {
-  const frame = 1 / fps;
-  const at = (t: number) => {
-    let best: EnergySample | undefined;
-    for (const s of energy) if (!best || Math.abs(s.t - t) < Math.abs(best.t - t)) best = s;
-    return best && Math.abs(best.t - t) <= frame * 0.6 ? best.energy : 0;
-  };
-  const spikeTimes = (c: { t: number }) => {
-    // The sampled time can sit a frame or two after the frame where the change happened.
-    let peakT = c.t;
+export function classifyChanges(
+  candidates: { t: number; score: number }[],
+  energy: EnergySample[],
+  fps: number,
+  sampleInterval = 0.1,
+): ClassifiedChange[] {
+  const half = 0.5 / fps;
+  const peakIndex = (t: number): number | undefined => {
+    let best: number | undefined;
     // Walk back from the sample; on equal spikes the one nearest the sample wins.
-    for (let k = -1; k >= -3; k--) if (at(c.t + k * frame) > at(peakT)) peakT = c.t + k * frame;
-    return peakT;
+    for (let i = energy.length - 1; i >= 0; i--) {
+      const s = energy[i]!;
+      if (s.t > t + half) continue;
+      if (s.t < t - sampleInterval - half) break;
+      if (best === undefined || s.energy > energy[best]!.energy) best = i;
+    }
+    return best;
   };
-  const spikes = candidates.map((c) => ({ ...c, peakT: spikeTimes(c) }));
+  const spikes = candidates.map((c) => ({ ...c, index: peakIndex(c.t) }));
   return spikes.map((c, i) => {
-    const peak = at(c.peakT);
-    const before = at(c.peakT - frame);
-    const after = at(c.peakT + frame);
-    const neighbour = spikes.find((d, j) => j !== i && Math.abs(d.peakT - c.peakT) <= frame * 3.5);
+    const index = c.index;
+    if (index === undefined) return { t: c.t, score: c.score, kind: "cut" as const };
+    const peak = energy[index]!.energy;
+    const before = energy[index - 1]?.energy ?? 0;
+    const after = energy[index + 1]?.energy ?? 0;
+    const neighbour = spikes.find((d, j) => j !== i && d.index !== undefined && d.index !== index && Math.abs(d.index - index) <= 3);
     let kind: ClassifiedChange["kind"] = "cut";
     if (peak > 0 && (before >= peak * 0.3 || after >= peak * 0.3)) kind = "motion";
     else if (neighbour) kind = "flash";
-    return { t: Math.round(c.peakT * 1000) / 1000, score: c.score, kind };
+    return { t: Math.round(energy[index]!.t * 1000) / 1000, score: c.score, kind };
   });
 }
 

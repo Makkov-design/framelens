@@ -28,9 +28,14 @@ export function findFont(platform = process.platform): string | undefined {
   return candidates.find((path) => existsSync(path));
 }
 
-/** Quotes a value for an ffmpeg filter option. */
-export function filterValue(value: string): string {
-  return `'${value.replaceAll("\\", "/").replaceAll(":", "\\:").replaceAll("'", "'\\''")}'`;
+/**
+ * Escapes a path for an ffmpeg filter option. A filtergraph is unescaped twice, first as the graph (where `[ ] , ;`
+ * split filters) and then as one filter's options (where `:` splits options), so each level gets its own
+ * backslashes. Single quotes do not survive both levels: an apostrophe in a folder name broke the old form.
+ */
+export function filterValue(value: string, platform: NodeJS.Platform = process.platform): string {
+  const path = platform === "win32" ? value.replaceAll("\\", "/") : value;
+  return path.replace(/[\\':]/g, "\\$&").replace(/[\\'[\],;]/g, "\\$&");
 }
 
 let drawtextSupport: Promise<boolean> | undefined;
