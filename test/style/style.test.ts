@@ -53,12 +53,13 @@ describe("motion", () => {
       ...[0, 1, 2, 3].map((i) => quiet(i / 25)),
       { t: 0.16, energy: 40 }, // a cut: one frame
       ...[5, 6, 7].map((i) => quiet(i / 25)),
-      ...[2, 9, 7, 5, 3, 2].map((energy, i) => ({ t: (8 + i) / 25, energy })),
+      ...[4, 10, 6, 3, 1.5, 1].map((energy, i) => ({ t: (8 + i) / 25, energy })),
       ...[14, 15, 16, 17].map((i) => quiet(i / 25)),
     ];
     const events = motionEvents(samples, [0.16], 25);
     expect(events).toHaveLength(1);
-    expect(events[0]).toMatchObject({ start: 0.32, frames: 6, easing: "ease-out", suggestion: "cubic-bezier(0.16, 1, 0.3, 1)" });
+    // The first changed frame is 0.32 s, so the move began on the frame before it.
+    expect(events[0]).toMatchObject({ start: 0.28, frames: 6, easing: "ease-out", suggestion: "cubic-bezier(0.16, 1, 0.3, 1)" });
   });
 
   it("tells cuts from fast motion and flashes", () => {
