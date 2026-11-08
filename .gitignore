@@ -12,3 +12,6 @@ coverage/
 Thumbs.db
 .vscode/
 .idea/
+
+# Frame Lens workspaces (analysis results)
+.framelens/

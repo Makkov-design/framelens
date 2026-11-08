@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- A per-minute input-token limit is waited out once before giving up: it is often used up by earlier requests,
+  not by this one. The message no longer claims the request is too large when that is not known.
+- A 429 without quota details (Google short of capacity) is retried with backoff again, as before 1.2.0.
+- When the deadline would cut a retry wait short, the error says what was being waited out (rate limit, server
+  error) instead of a timeout that suggests raising `FRAMELENS_TIMEOUT_MS`; such waits are no longer started.
+- A missing fallback model no longer hides the used-up daily quota of the main model.
+- An empty `FRAMELENS_FALLBACK_MODELS` turns fallback models off; before, it silently meant the default.
+- A numeric quota limit of `0` is recognised like the usual string.
+
 ## 1.2.0 — 2026-11-09
 
 - Default model is now `gemini-flash-lite-latest`: on the free tier it allows about 500 requests a day, against 20
