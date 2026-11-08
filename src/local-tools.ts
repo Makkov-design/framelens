@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { Engine, Source } from "./engine.js";
 import { AnalyzerError, InvalidInputError } from "./errors.js";
 import type { Logger } from "./logger.js";
+import { EXPORT_TARGETS } from "./export/exporters.js";
 import { GOALS } from "./router/plan.js";
 
 /** Seconds with decimals (12.48), or M:SS(.mmm) / H:MM:SS(.mmm). */
@@ -314,6 +315,73 @@ export function registerLocalTools(server: McpServer, engine: Engine, logger: Lo
             { type: "image", data: readFileSync(files.spectrogram!).toString("base64"), mimeType: "image/png" },
           ],
           structuredContent: { workspace: ws.dir, files, analysis: { ...analysis, loudness: analysis.loudness.length }, cut_on_beat_ratio: cutOnBeat ?? null },
+        };
+      }),
+  );
+
+  server.registerTool(
+    "export",
+    {
+      title: "Starter project from the reference",
+      description:
+        "Turns the reference's motion-spec.json into a starter project for a renderer: `hyperframes` (index.html + one scene per " +
+        "shot with GSAP eases), `remotion` (Sequences per shot with Easing.bezier) or `css` (tokens, keyframes and a preview page). " +
+        "It carries structure, cut times, colours and move timing; replace the placeholders with the user's own content. Runs " +
+        "`style` first when needed. Afterwards render it and check it with `compare`.",
+      inputSchema: {
+        source: sourceInput,
+        target: z.enum(EXPORT_TARGETS).describe("Renderer to write for."),
+      },
+      annotations: { readOnlyHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    (args) =>
+      run("export", async () => {
+        const { source, dir, files } = await engine.export(args.source, args.target, options.version ?? "dev");
+        const ws = source.ws;
+        const text = [
+          sourceLine(source),
+          "",
+          `${args.target} starter written to ${ws.display(dir)}:`,
+          ...files.map((f) => `- ${ws.display(f)}`),
+          "",
+          "Read REFERENCE.md there. Replace the placeholder titles with the user's content, refine each move against `frames` every_frame, then render and run `compare`.",
+        ].join("\n");
+        return { content: [{ type: "text", text }], structuredContent: { workspace: ws.dir, dir, files } };
+      }),
+  );
+
+  server.registerTool(
+    "compare",
+    {
+      title: "Compare a render with the reference",
+      description:
+        "Checks how close a render is to the reference: duration, cuts matched within 3 frames (missing, extra, late), palette " +
+        "distance, and picture similarity over time with the least similar moments shown side by side. Writes COMPARE.md to the " +
+        "reference's workspace. Fix what it names, render again and compare once more.",
+      inputSchema: {
+        reference: sourceInput.describe("The reference video."),
+        render: z.string().min(1).max(4000).describe("Path to the rendered video to check."),
+      },
+      annotations: READ_ONLY,
+    },
+    (args) =>
+      run("compare", async () => {
+        const { source, comparison, files, sheet } = await engine.compare(args.reference, args.render, options.version ?? "dev");
+        const ws = source.ws;
+        const text = [
+          sourceLine(source),
+          "",
+          ...comparison.verdict.map((v) => `- ${v}`),
+          "",
+          `Duration ${comparison.durations.reference.toFixed(2)} s vs ${comparison.durations.render.toFixed(2)} s · cuts matched ${comparison.cuts.matched.length - comparison.cuts.missing.length}/${comparison.cuts.matched.length} · palette distance ${comparison.palette.distance} · mean SSIM ${comparison.similarity.mean}.`,
+          `Report: ${ws.display(files.report!)}.`,
+        ].join("\n");
+        return {
+          content: [
+            { type: "text", text },
+            ...(sheet ? [{ type: "image" as const, data: readFileSync(sheet.file).toString("base64"), mimeType: "image/jpeg" }] : []),
+          ],
+          structuredContent: { workspace: ws.dir, files, comparison: { ...comparison } },
         };
       }),
   );

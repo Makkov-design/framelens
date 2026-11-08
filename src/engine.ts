@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, statSync } from "node:fs";
-import { basename, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { InvalidInputError } from "./errors.js";
 import type { Logger } from "./logger.js";
 import { findBoundaries, type Boundaries } from "./media/boundaries.js";
@@ -11,6 +11,8 @@ import { buildSheets, type Sheet } from "./media/sheets.js";
 import { buildPlan, type Goal, type Plan } from "./router/plan.js";
 import { findPhrase, readCaptions, toMarkdown, wordsAt, type Transcript } from "./speech/transcript.js";
 import { analyzeAudio, spectrogram, type AudioAnalysis } from "./audio/analyze.js";
+import { matchCuts, paletteDistance, similarity, verdict, type Comparison } from "./compare/compare.js";
+import { exportSpec, type ExportTarget } from "./export/exporters.js";
 import { onBeatRatio } from "./audio/dsp.js";
 import { classifyChanges, motionEnergy, motionEvents } from "./style/motion.js";
 import { mergePalettes, palette } from "./style/palette.js";
@@ -294,6 +296,72 @@ export class Engine {
     }
     this.progress(ws, `audio: ${analysis.tempo ? `${analysis.tempo.bpm} BPM (confidence ${analysis.tempo.confidence})` : "no steady tempo"}, ${analysis.onsets.length} onsets, ${analysis.silences.length} silences${cutOnBeat !== undefined ? `, ${Math.round(cutOnBeat * 100)}% of cuts on a beat` : ""}`);
     return { source, analysis, ...(cutOnBeat !== undefined && { cutOnBeat }), files };
+  }
+
+  /** Writes a starter project for a renderer from the source's motion-spec.json (running `style` first if needed). */
+  async export(input: string, target: ExportTarget, version: string): Promise<{ source: Source; dir: string; files: string[] }> {
+    const source = await this.source(input);
+    let spec = source.ws.readJson<MotionSpec>("motion-spec.json");
+    if (!spec) spec = (await this.style(input, { version })).spec;
+    const dir = source.ws.ensure("export", target);
+    const files = exportSpec(spec, target, dir);
+    this.progress(source.ws, `export: ${target} starter with ${spec.shots.length} scenes → ${source.ws.display(dir)}`);
+    return { source, dir, files };
+  }
+
+  /**
+   * Checks a render against the reference: duration, cuts (matched within 3 frames), palette distance and picture
+   * similarity over time, with a side-by-side sheet of the least similar moments. Writes COMPARE.md.
+   */
+  async compare(reference: string, render: string, version: string): Promise<{ source: Source; comparison: Comparison; files: Record<string, string>; sheet?: Sheet }> {
+    const ref = await this.style(reference, { version });
+    const out = await this.style(render, { version });
+    const fps = ref.source.probe.fps ?? 30;
+    const samples = await similarity(ref.source.record.mediaPath, out.source.record.mediaPath, this.options.tools);
+    const worst = [...samples].sort((a, b) => a.ssim - b.ssim).slice(0, 6).sort((a, b) => a.t - b.t);
+    const partial = {
+      durations: {
+        reference: ref.source.probe.duration,
+        render: out.source.probe.duration,
+        differenceSeconds: Math.round((out.source.probe.duration - ref.source.probe.duration) * 1000) / 1000,
+      },
+      cuts: matchCuts(ref.spec.anchors.cuts.map((c) => c.t), out.spec.anchors.cuts.map((c) => c.t), fps),
+      palette: {
+        distance: paletteDistance(ref.spec.palette, out.spec.palette),
+        reference: ref.spec.palette.map((p) => p.hex),
+        render: out.spec.palette.map((p) => p.hex),
+      },
+      similarity: {
+        mean: samples.length ? Math.round((samples.reduce((s, x) => s + x.ssim, 0) / samples.length) * 1000) / 1000 : 0,
+        worst,
+      },
+    };
+    const comparison: Comparison = { ...partial, verdict: verdict(partial, fps) };
+
+    const ws = ref.source.ws;
+    let sheet: Sheet | undefined;
+    const times = worst.map((w) => w.t).filter((t) => t <= Math.min(ref.source.probe.duration, out.source.probe.duration));
+    if (times.length) {
+      const dir = ws.ensure("frames", "compare");
+      const a = await extractFrames(ref.source.record.mediaPath, join(dir, "reference"), { at: times, width: 480 }, ref.source.probe, this.options.tools);
+      const b = await extractFrames(out.source.record.mediaPath, join(dir, "render"), { at: times, width: 480 }, out.source.probe, this.options.tools);
+      const pairs = a.flatMap((f, i) => [{ ...f, side: "reference" }, { ...b[i]!, side: "render" }]);
+      [sheet] = await buildSheets(pairs, ws.ensure("sheets"), "compare", { columns: 2, rows: Math.min(8, times.length), label: (f) => `${(f as { side?: string }).side} · ${f.t.toFixed(3)} s` }, this.options.tools);
+    }
+    const md = [
+      `# Compare: ${ref.source.record.title ?? reference} vs ${out.source.record.title ?? render}`,
+      "",
+      ...comparison.verdict.map((v) => `- ${v}`),
+      "",
+      `Duration: reference ${comparison.durations.reference.toFixed(3)} s, render ${comparison.durations.render.toFixed(3)} s.`,
+      `Cuts: ${comparison.cuts.matched.length - comparison.cuts.missing.length} of ${comparison.cuts.matched.length} matched within 3 frames.`,
+      `Palette distance (OKLab, 0 = same): ${comparison.palette.distance}.`,
+      `Mean picture similarity (SSIM): ${comparison.similarity.mean}.`,
+      sheet ? `\nSide by side at the least similar moments: ${ws.display(sheet.file)}` : "",
+    ].join("\n");
+    const files: Record<string, string> = { report: ws.writeText("COMPARE.md", `${md}\n`), json: ws.writeJson("compare.json", comparison) };
+    this.progress(ws, `compare: with ${render}: ${comparison.verdict.join(" ")}`);
+    return { source: ref.source, comparison, files, ...(sheet && { sheet }) };
   }
 
   /** Appends a line to PROGRESS.md so a later session can see what was already done. */
