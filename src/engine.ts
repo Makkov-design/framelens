@@ -16,7 +16,7 @@ import { specFromPage } from "./browser/web.js";
 import { matchCuts, paletteDistance, similarity, verdict, type Comparison } from "./compare/compare.js";
 import { exportSpec, type ExportTarget } from "./export/exporters.js";
 import { onBeatRatio } from "./audio/dsp.js";
-import { classifyChanges, motionEnergy, motionEvents } from "./style/motion.js";
+import { classifyChanges, energySpikeCuts, motionEnergy, motionEvents } from "./style/motion.js";
 import { mergePalettes, palette } from "./style/palette.js";
 import {
   ANALYSIS_SKELETON,
@@ -239,7 +239,12 @@ export class Engine {
     const fps = probe.fps ?? probe.nominalFps ?? 30;
     const energy = await motionEnergy(record.mediaPath, this.options.tools, range);
     ws.writeJson(`energy-${start.toFixed(2)}-${end.toFixed(2)}.json`, energy);
-    const changes = classifyChanges(boundaries.candidates, energy, fps);
+    const classified = classifyChanges(boundaries.candidates, energy, fps);
+    // Isolated per-frame spikes catch the cuts the sampled score missed (similar-looking shots).
+    const extra = energySpikeCuts(energy)
+      .filter((s) => !classified.some((c) => Math.abs(c.t - s.t) <= 2 / fps))
+      .map((s) => ({ ...s, kind: "cut" as const }));
+    const changes = [...classified, ...extra].sort((a, b) => a.t - b.t);
     const cutTimes = changes.filter((c) => c.kind === "cut").map((c) => c.t);
 
     const tmp = ws.ensure("frames", "palette");
