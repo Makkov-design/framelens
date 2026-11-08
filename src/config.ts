@@ -67,7 +67,8 @@ export function loadConfig(env: Env): Config {
   }
 
   const model = read(env, "GEMINI_MODEL_NAME") ?? DEFAULT_MODEL;
-  const fallbacks = read(env, "FRAMELENS_FALLBACK_MODELS");
+  // Unlike the other settings, an empty value is meaningful here: it turns fallback models off.
+  const fallbacks = env.FRAMELENS_FALLBACK_MODELS ?? env.YTLENS_FALLBACK_MODELS;
   const fallbackModels = (fallbacks === undefined ? DEFAULT_FALLBACK_MODELS : fallbacks.split(","))
     .map((name) => name.trim())
     .filter((name, i, all) => name && name !== model && all.indexOf(name) === i);

@@ -118,7 +118,7 @@ docker run -i --rm -e GEMINI_API_KEY=<your key> framelens
 |---|---|---|
 | `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) | required | Gemini API key |
 | `GEMINI_MODEL_NAME` | `gemini-flash-lite-latest` | Model used for analysis; `list_supported_models` shows the choices. Flash-Lite has the largest free daily quota |
-| `FRAMELENS_FALLBACK_MODELS` | `gemini-flash-latest` | Comma-separated models tried when the main model's daily quota is used up or the model is unavailable |
+| `FRAMELENS_FALLBACK_MODELS` | `gemini-flash-latest` | Comma-separated models tried when the main model's daily quota is used up or the model is unavailable; an empty value turns this off |
 | `FRAMELENS_TIMEOUT_MS` | `300000` | Time limit for one tool call, retries included |
 | `FRAMELENS_MAX_RETRIES` | `3` | Retries on per-minute rate limits, timeouts and server errors. A used-up daily quota is never retried |
 | `FRAMELENS_CACHE_TTL_MINUTES` | `60` | How long identical requests are answered from memory; `0` turns the cache off |
