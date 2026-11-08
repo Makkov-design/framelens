@@ -144,6 +144,15 @@ describe("GeminiAnalyzer error mapping", () => {
     expect(error.message).toMatch(/Details: You exceeded your current quota\.$/);
   });
 
+  it("redacts the key anywhere in the longer details", async () => {
+    const { analyzer } = setup(async () => {
+      throw apiError(500, `${"x ".repeat(400)}key ${KEY} at the end`);
+    });
+    const error = (await analyzer.analyze(base).catch((e: unknown) => e)) as AnalyzerError;
+    expect(error.message).toContain("[redacted] at the end");
+    expect(error.message).not.toContain(KEY);
+  });
+
   it("keeps details bounded", async () => {
     const { analyzer } = setup(async () => {
       throw apiError(500, "x".repeat(5000));
@@ -242,14 +251,103 @@ describe("quotas, retries and fallback models", () => {
     expect(wait.mock.calls[0]![0]).toBe(12_500);
   });
 
-  it("does not retry a request bigger than the per-minute token limit", async () => {
-    const { analyzer, generateContent } = chain(async () => {
-      throw quota429("GenerateContentInputTokensPerModelPerMinute-FreeTier", { metric: "generate_content_free_tier_input_token_count", value: "250000" });
+  const tokenLimit = () =>
+    quota429("GenerateContentInputTokensPerModelPerMinute-FreeTier", {
+      metric: "generate_content_free_tier_input_token_count",
+      value: "250000",
+      retryDelay: "20s",
+    });
+
+  it("waits out a per-minute token limit only once: a request bigger than the limit never fits", async () => {
+    const { analyzer, generateContent, wait } = chain(async () => {
+      throw tokenLimit();
     });
     const error = (await analyzer.analyze(base).catch((e: unknown) => e)) as AnalyzerError;
     expect(error.quota).toMatchObject({ scope: "minute", tooLarge: true });
     expect(error.message).toMatch(/30 minutes or less/);
+    expect(generateContent).toHaveBeenCalledTimes(2);
+    expect(wait.mock.calls.map((c) => c[0])).toEqual([20_000]);
+  });
+
+  it("succeeds after a per-minute token limit that earlier requests used up", async () => {
+    let calls = 0;
+    const { analyzer } = chain(async () => {
+      if (calls++ === 0) throw tokenLimit();
+      return response({ text: "ok" });
+    });
+    expect((await analyzer.analyze(base)).text).toBe("ok");
+  });
+
+  it("retries a 429 without quota details, and one whose body is not JSON", async () => {
+    for (const thrown of [apiError(429, "Resource has been exhausted (e.g. check quota)."), apiError(429, "got status: 429 Too Many Requests")]) {
+      let calls = 0;
+      const { analyzer, wait } = chain(async () => {
+        if (calls++ === 0) throw thrown;
+        return response({ text: "ok" });
+      });
+      expect((await analyzer.analyze(base)).text).toBe("ok");
+      expect(wait.mock.calls.map((c) => c[0])).toEqual([1000]);
+    }
+  });
+
+  it("reads a daily quota from a body that is not JSON", async () => {
+    const { analyzer, generateContent } = chain(async () => {
+      throw apiError(429, "Quota exceeded: requests per day for this model");
+    });
+    await expect(analyzer.analyze(base)).rejects.toMatchObject({ quota: { scope: "day" } });
     expect(generateContent).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not wait longer than a minute for a per-minute limit", async () => {
+    const { analyzer, generateContent, wait } = chain(async () => {
+      throw quota429("GenerateRequestsPerMinutePerProjectPerModel-FreeTier", { retryDelay: "75s", value: "5" });
+    });
+    await expect(analyzer.analyze(base)).rejects.toMatchObject({ kind: "quota", quota: { scope: "minute", retryDelayMs: 75_000 } });
+    expect(generateContent).toHaveBeenCalledTimes(1);
+    expect(wait).not.toHaveBeenCalled();
+  });
+
+  it("treats a numeric limit of 0 like the string Google usually sends", async () => {
+    const { analyzer } = chain(async () => {
+      throw apiError(429, quota429("GenerateRequestsPerDayPerProjectPerModel-FreeTier").message.replace('"quotaValue":"20"', '"quotaValue":0'));
+    });
+    const error = (await analyzer.analyze(base).catch((e: unknown) => e)) as AnalyzerError;
+    expect(error.quota).toMatchObject({ scope: "day", limit: "0" });
+    expect(error.message).toMatch(/not available on your Gemini plan/);
+  });
+
+  it("reports the daily quota, not a missing fallback model, when the fallback does not exist", async () => {
+    const { analyzer, generateContent } = chain(async (params) => {
+      if (params.model === "gemini-test") throw quota429("GenerateRequestsPerDayPerProjectPerModel-FreeTier");
+      throw apiError(404, "models/gemini-typo is not found");
+    }, ["gemini-typo"]);
+    const error = (await analyzer.analyze(base).catch((e: unknown) => e)) as AnalyzerError;
+    expect(error.quota).toMatchObject({ scope: "day", model: "gemini-test" });
+    expect(generateContent).toHaveBeenCalledTimes(2);
+  });
+
+  it("with no fallback models, a used-up daily quota fails at once", async () => {
+    const { analyzer, generateContent } = chain(async () => {
+      throw quota429("GenerateRequestsPerDayPerProjectPerModel-FreeTier");
+    }, []);
+    await expect(analyzer.analyze(base)).rejects.toMatchObject({ quota: { scope: "day" } });
+    expect(generateContent).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes the same deadline signal to every attempt and every model", async () => {
+    let calls = 0;
+    const { analyzer, generateContent } = chain(async (params) => {
+      if (params.model === "gemini-test") {
+        if (calls++ === 0) throw apiError(503, "busy");
+        throw quota429("GenerateRequestsPerDayPerProjectPerModel-FreeTier");
+      }
+      return response({ text: "ok" });
+    }, ["gemini-backup"]);
+    await expect(analyzer.analyze(base)).resolves.toMatchObject({ model: "gemini-backup" });
+    const signals = generateContent.mock.calls.map((c) => c[0].config?.abortSignal);
+    expect(signals).toHaveLength(3);
+    expect(signals[0]).toBeInstanceOf(AbortSignal);
+    expect(new Set(signals).size).toBe(1);
   });
 
   it("retries server errors with backoff up to the retry limit", async () => {
@@ -270,7 +368,7 @@ describe("quotas, retries and fallback models", () => {
     expect(generateContent).toHaveBeenCalledTimes(1);
   });
 
-  it("reports the deadline as a timeout when it fires during a wait", async () => {
+  it("reports why it was waiting when the deadline cuts a wait short", async () => {
     const client: GenAiClient = {
       models: {
         generateContent: async () => {
@@ -289,7 +387,25 @@ describe("quotas, retries and fallback models", () => {
         throw new Error("aborted");
       },
     });
-    await expect(analyzer.analyze(base)).rejects.toMatchObject({ kind: "timeout" });
+    await expect(analyzer.analyze(base)).rejects.toMatchObject({ kind: "unavailable", message: expect.stringMatching(/busy/) });
+  });
+
+  it("does not start a wait that would outlast the deadline", async () => {
+    const generateContent = vi.fn(async (_params: GenerateContentParameters): Promise<GenerateContentResponse> => {
+      throw quota429("GenerateRequestsPerMinutePerProjectPerModel-FreeTier", { retryDelay: "45s", value: "5" });
+    });
+    const wait = vi.fn(async () => {});
+    const analyzer = new GeminiAnalyzer({
+      client: { models: { generateContent, list: async () => (async function* () {})() } },
+      model: "gemini-test",
+      maxRetries: 3,
+      timeoutMs: 30_000,
+      logger: silentLogger,
+      wait,
+    });
+    await expect(analyzer.analyze(base)).rejects.toMatchObject({ kind: "quota", quota: { scope: "minute" } });
+    expect(wait).not.toHaveBeenCalled();
+    expect(generateContent).toHaveBeenCalledTimes(1);
   });
 });
 
