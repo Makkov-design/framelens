@@ -43,7 +43,7 @@ function sourceLine(source: Source): string {
 }
 
 /** The analysis tools that run on the user's computer (ffmpeg and friends) instead of Gemini. */
-export function registerLocalTools(server: McpServer, engine: Engine, logger: Logger, options: { inlineSheets?: number } = {}): void {
+export function registerLocalTools(server: McpServer, engine: Engine, logger: Logger, options: { inlineSheets?: number; version?: string } = {}): void {
   const inlineLimit = options.inlineSheets ?? 2;
 
   async function run(tool: string, body: () => Promise<CallToolResult>): Promise<CallToolResult> {
@@ -226,6 +226,51 @@ export function registerLocalTools(server: McpServer, engine: Engine, logger: Lo
             index: result.index,
             sheets: result.sheets.map((s) => ({ file: s.file, cells: s.cells })),
           },
+        };
+      }),
+  );
+
+  server.registerTool(
+    "style",
+    {
+      title: "Measure the motion style",
+      description:
+        "For replicating a look: finds cuts and shots, measures each shot's palette (OKLab, weighted by screen time), reads how much " +
+        "the picture changes on every frame, and lists the moves with their duration in frames and easing family. Writes " +
+        "motion-spec.json (machine-readable, with word and cut anchors), STYLE.md, TIMELINE.md and ANALYSIS.md to the workspace. " +
+        "Then look at the moves with `frames` every_frame, and complete the typography, systems and 'why it works' sections in those " +
+        "files; re-running `style` only refreshes their measured blocks.",
+      inputSchema: {
+        source: sourceInput,
+        start: time.optional().describe("Range start (default 0)."),
+        end: time.optional().describe(`Range end (default the end, at most 180 s at a time).`),
+      },
+      annotations: READ_ONLY,
+    },
+    (args) =>
+      run("style", async () => {
+        const { source, spec, files } = await engine.style(args.source, {
+          ...(args.start !== undefined && { start: parseTime(args.start) }),
+          ...(args.end !== undefined && { end: parseTime(args.end) }),
+          version: options.version ?? "dev",
+        });
+        const ws = source.ws;
+        const families = new Map<string, number>();
+        for (const e of spec.events) families.set(e.easing, (families.get(e.easing) ?? 0) + 1);
+        const text = [
+          sourceLine(source),
+          "",
+          `Range ${spec.range.start.toFixed(2)}–${spec.range.end.toFixed(2)} s: ${spec.rhythm.cuts} cuts (${spec.rhythm.cutsPerMinute}/min), ${spec.shots.length} shots, median shot ${spec.rhythm.medianShotSeconds} s, ${spec.events.length} moves.`,
+          `Palette: ${spec.palette.map((p) => `${p.hex} ${(p.share * 100).toFixed(0)}%`).join(", ")}.`,
+          `Easing families (derived): ${[...families.entries()].map(([k, v]) => `${v} ${k}`).join(", ") || "no moves found"}.`,
+          ...spec.events.slice(0, 12).map((e) => `- move ${e.start.toFixed(3)}–${e.end.toFixed(3)} s, ${e.frames} frames, ${e.easing}${e.suggestion ? ` (start from ${e.suggestion})` : ""}`),
+          "",
+          `Files: ${Object.values(files).map((f) => ws.display(f)).join(", ")}.`,
+          "Next: frames every_frame around the moves that matter, then fill typography, systems and why-it-works in STYLE.md and ANALYSIS.md.",
+        ].join("\n");
+        return {
+          content: [{ type: "text", text }],
+          structuredContent: { workspace: ws.dir, files, rhythm: spec.rhythm, palette: spec.palette, events: spec.events },
         };
       }),
   );

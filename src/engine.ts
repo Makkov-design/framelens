@@ -10,7 +10,23 @@ import { probeMedia, type ProbeInfo } from "./media/probe.js";
 import { buildSheets, type Sheet } from "./media/sheets.js";
 import { buildPlan, type Goal, type Plan } from "./router/plan.js";
 import { findPhrase, readCaptions, toMarkdown, wordsAt, type Transcript } from "./speech/transcript.js";
+import { classifyChanges, motionEnergy, motionEvents } from "./style/motion.js";
+import { mergePalettes, palette } from "./style/palette.js";
+import {
+  ANALYSIS_SKELETON,
+  buildSpec,
+  framePixels,
+  shotsFromCuts,
+  styleMarkdown,
+  timelineMarkdown,
+  writeWithMeasuredBlock,
+  type MotionSpec,
+  type Shot,
+} from "./style/spec.js";
 import { Workspace, type SourceRecord } from "./workspace/workspace.js";
+
+/** The style pass reads every frame; longer references are analyzed in parts. */
+export const MAX_STYLE_SECONDS = 180;
 
 /** Turns user input (link, path, ID) into a local media file inside a workspace folder. */
 export type SourceResolver = (input: string, options: { workspaceRoot: string; signal?: AbortSignal }) => Promise<SourceRecord>;
@@ -191,6 +207,52 @@ export class Engine {
     source.ws.writeJson("plan.json", plan);
     this.progress(source.ws, `plan: goal ${plan.goal}${plan.goalInferred ? " (inferred)" : ""}, video type ${plan.videoType}, ${plan.steps.length} steps`);
     return { source, plan };
+  }
+
+  /**
+   * Replicate-style analysis: cuts, shots with palettes, per-frame motion energy and the moves in it with their
+   * easing family. Writes motion-spec.json, STYLE.md, TIMELINE.md and ANALYSIS.md (only the measured blocks are
+   * refreshed on later runs; the agent's own writing is kept).
+   */
+  async style(input: string, options: { start?: number; end?: number; version: string }): Promise<{ source: Source; spec: MotionSpec; files: Record<string, string> }> {
+    const source = await this.source(input);
+    const { probe, record, ws } = source;
+    if (!probe.hasVideo) throw new InvalidInputError("This source has no picture to analyze for style.");
+    const start = Math.max(0, options.start ?? 0);
+    let end = Math.min(probe.duration, options.end ?? probe.duration);
+    const notes: string[] = [];
+    if (end - start > MAX_STYLE_SECONDS && options.end === undefined) {
+      end = start + MAX_STYLE_SECONDS;
+      notes.push(`Analyzed the first ${MAX_STYLE_SECONDS} s; pass start/end for other parts.`);
+    }
+    const range = { start, end };
+    const { transcript } = await this.transcript(source);
+    const { boundaries } = await this.boundaries(input, { start, end, rate: 10, threshold: 0.3 });
+    const fps = probe.fps ?? probe.nominalFps ?? 30;
+    const energy = await motionEnergy(record.mediaPath, this.options.tools, range);
+    ws.writeJson(`energy-${start.toFixed(2)}-${end.toFixed(2)}.json`, energy);
+    const changes = classifyChanges(boundaries.candidates, energy, fps);
+    const cutTimes = changes.filter((c) => c.kind === "cut").map((c) => c.t);
+
+    const tmp = ws.ensure("frames", "palette");
+    const shots: Shot[] = [];
+    for (const [i, s] of shotsFromCuts(cutTimes, range, fps).entries()) {
+      const pixels = await framePixels(record.mediaPath, (s.start + s.end) / 2, probe, this.options.tools, tmp);
+      shots.push({ id: `s${i + 1}`, start: s.start, end: s.end, frames: Math.round((s.end - s.start) * fps), palette: palette(pixels, 5) });
+    }
+    const overall = mergePalettes(shots.map((s) => ({ swatches: s.palette, weight: s.end - s.start })));
+    const events = motionEvents(energy, cutTimes, fps);
+
+    const spec = buildSpec({ record, probe, range, changes, shots, overall, events, version: options.version, ...(transcript && { transcript }) });
+    const files: Record<string, string> = {
+      spec: ws.writeJson("motion-spec.json", spec),
+      style: writeWithMeasuredBlock(ws, "STYLE.md", styleMarkdown(spec).measured, styleMarkdown(spec).skeleton),
+      timeline: writeWithMeasuredBlock(ws, "TIMELINE.md", timelineMarkdown(spec, transcript).measured, timelineMarkdown(spec, transcript).skeleton),
+    };
+    const analysis = ws.path("ANALYSIS.md");
+    files.analysis = existsSync(analysis) ? analysis : ws.writeText("ANALYSIS.md", ANALYSIS_SKELETON(record.title ?? record.input));
+    this.progress(ws, `style: ${shots.length} shots, ${events.length} moves, ${overall.length} palette colours (${start.toFixed(2)}–${end.toFixed(2)} s)${notes.length ? `; ${notes.join(" ")}` : ""}`);
+    return { source, spec, files };
   }
 
   /** Appends a line to PROGRESS.md so a later session can see what was already done. */

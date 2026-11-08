@@ -113,7 +113,7 @@ export function createServer({ analyzer, logger, engine, now = Date.now }: Serve
     { name: "framelens", version: VERSION },
     { instructions: SERVER_INSTRUCTIONS },
   );
-  if (engine) registerLocalTools(server, engine, logger);
+  if (engine) registerLocalTools(server, engine, logger, { version: VERSION });
 
   /** Shared plumbing: input parsing, logging and turning failures into tool errors. */
   async function runTool(
