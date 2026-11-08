@@ -5,6 +5,7 @@ import type { AnalyzeResult, Detail, VideoAnalyzer } from "./analyzer.js";
 import type { Engine } from "./engine.js";
 import { AnalyzerError, InvalidInputError } from "./errors.js";
 import { registerLocalTools } from "./local-tools.js";
+import { registerExactTools } from "./local-tools-exact.js";
 import type { Logger } from "./logger.js";
 import {
   askPrompt,
@@ -114,6 +115,7 @@ export function createServer({ analyzer, logger, engine, now = Date.now }: Serve
     { instructions: SERVER_INSTRUCTIONS },
   );
   if (engine) registerLocalTools(server, engine, logger, { version: VERSION });
+  if (engine) registerExactTools(server, engine, logger, { version: VERSION });
 
   /** Shared plumbing: input parsing, logging and turning failures into tool errors. */
   async function runTool(
