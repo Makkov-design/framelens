@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { Transcript } from "../speech/transcript.js";
 import type { MotionSpec } from "../style/spec.js";
 import { oneLine, write } from "./exporters.js";
+import { safeHex } from "../text.js";
 
 const START = "<!-- framelens:measured:start -->";
 const END = "<!-- framelens:measured:end -->";
@@ -80,7 +81,7 @@ function phaseName(index: number, count: number, length: number, median: number)
 export function hypitAnalysis(spec: MotionSpec, workspace?: string): string {
   const title = oneLine(spec.source.title ?? spec.source.input);
   const fps = spec.timebase.fps;
-  const swatches = spec.palette.map((p) => `| \`${p.hex}\` | ${(p.share * 100).toFixed(1)}% | ${p.evidence} |`);
+  const swatches = spec.palette.map((p) => `| \`${safeHex(p.hex)}\` | ${(p.share * 100).toFixed(1)}% | ${p.evidence} |`);
   const kinds = new Map<string, number>();
   for (const e of spec.events) kinds.set(e.easing, (kinds.get(e.easing) ?? 0) + 1);
   const unclear = spec.events.filter((e) => e.easing === "unclear");
@@ -93,7 +94,7 @@ export function hypitAnalysis(spec: MotionSpec, workspace?: string): string {
   return `# Analysis: ${title}
 
 Prepared by ${spec.generatedBy} for Hypit. Facts are measured or read from the source; interpretation is marked as such and comes only from notes written in the Frame Lens workspace.
-Source: ${spec.source.url ?? spec.source.input}, source time ${span(spec.range.start, spec.range.end)} s.
+Source: ${oneLine(spec.source.url ?? spec.source.input, 2000)}, source time ${span(spec.range.start, spec.range.end)} s.
 
 ## Measured facts
 
@@ -111,7 +112,7 @@ ${swatches.join("\n") || "| — | — | — |"}
 
 ${analysisNotes ?? "No interpretation has been written yet in the Frame Lens workspace (ANALYSIS.md is still the template). Everything above is measurement; read the frames and the TIMELINE before deciding what the piece is trying to do."}
 
-${spec.typography.length ? `## Typography\n\n${spec.typography.map((t) => `- ${t.role}: ${t.family_guess ?? "family unknown"}${t.weight ? ` ${t.weight}` : ""}${t.case ? `, ${t.case}` : ""} (${t.evidence})`).join("\n")}\n` : ""}${spec.systems.length ? `## Systems\n\n${spec.systems.map((y) => `- ${y.id} (${y.role}) from ${s2(y.start)} s to ${s2(y.end)} s`).join("\n")}\n` : ""}${styleBody ? `## Style notes from the workspace\n\n${styleBody}\n\n` : ""}## What to keep, what to redesign
+${spec.typography.length ? `## Typography\n\n${spec.typography.map((t) => `- ${oneLine(t.role, 120)}: ${t.family_guess ? oneLine(t.family_guess, 120) : "family unknown"}${t.weight ? ` ${Number(t.weight)}` : ""}${t.case ? `, ${oneLine(t.case, 20)}` : ""} (${t.evidence})`).join("\n")}\n` : ""}${spec.systems.length ? `## Systems\n\n${spec.systems.map((y) => `- ${y.id} (${y.role}) from ${s2(y.start)} s to ${s2(y.end)} s`).join("\n")}\n` : ""}${styleBody ? `## Style notes from the workspace\n\n${styleBody}\n\n` : ""}## What to keep, what to redesign
 
 Keep the structure: the cut times and shot lengths in TIMELINE.md, the order of colours, and the timing and easing family of each move. Redesign the content: wording, imagery, typography and exact curves are the new work's own. This is a reference for style transfer, not a copy.
 
@@ -134,10 +135,10 @@ export function hypitTimeline(spec: MotionSpec, workspace?: string): string {
     const cut = i > 0 ? spec.anchors.cuts.find((c) => Math.abs(c.t - shot.start) < 0.05) : undefined;
     const lines = [
       `- Shot ${shot.id}: in ${s2(shot.start)} s, out ${s2(shot.end)} s, length ${s2(shot.end - shot.start)} s (${shot.frames} frames).`,
-      `- Colours: ${shot.palette.map((p) => `\`${p}\``).join(" ") || "none measured"}.`,
+      `- Colours: ${shot.palette.map((p) => `\`${safeHex(p)}\``).join(" ") || "none measured"}.`,
       ...(cut ? [`- Entered by a cut at ${s2(cut.t)} s (score ${cut.score}, ${cut.evidence}).`] : []),
-      ...moves.map((m) => `- Move at ${s2(m.start)} s to ${s2(m.end)} s (${m.frames} frames, ${m.easing}${m.suggestion ? `, starting curve ${m.suggestion}` : ""}, fastest at ${Math.round(m.peakAt * 100)}% of the move; ${m.evidence}).`),
-      ...(words.length ? [`- Words: ${words.slice(0, 40).map((w) => `“${w.text}” ${s2(w.t)}–${s2(w.end)}`).join(", ")}${words.length > 40 ? `, … ${words.length - 40} more` : ""}.`] : []),
+      ...moves.map((m) => `- Move at ${s2(m.start)} s to ${s2(m.end)} s (${m.frames} frames, ${m.easing}${m.suggestion ? `, starting curve ${oneLine(m.suggestion, 120)}` : ""}, fastest at ${Math.round(m.peakAt * 100)}% of the move; ${m.evidence}).`),
+      ...(words.length ? [`- Words: ${words.slice(0, 40).map((w) => `“${oneLine(w.text, 60)}” ${s2(w.t)}–${s2(w.end)}`).join(", ")}${words.length > 40 ? `, … ${words.length - 40} more` : ""}.`] : []),
       ...(beats.length ? [`- Beats at ${beats.map((b) => s2(b.t)).join(", ")} s.`] : []),
       ...(hits.length ? [`- Strong audio hits at ${hits.map((h) => `${s2(h.t)} s (${h.strength.toFixed(2)})`).join(", ")}.`] : []),
     ];
