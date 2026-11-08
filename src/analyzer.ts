@@ -139,6 +139,7 @@ export class GeminiAnalyzer implements VideoAnalyzer {
 
     // One deadline for the whole call, retries and fallback models included.
     const deadline = AbortSignal.timeout(this.timeoutMs);
+    const deadlineAt = Date.now() + this.timeoutMs;
     const config: GenerateContentConfig = {
       systemInstruction: SYSTEM_INSTRUCTION,
       abortSignal: deadline,
@@ -152,6 +153,7 @@ export class GeminiAnalyzer implements VideoAnalyzer {
     const { response, model } = await this.generate(
       { contents: [{ role: "user", parts: [videoPart, { text: request.prompt }] }], config },
       deadline,
+      deadlineAt,
     );
 
     const blockReason = response.promptFeedback?.blockReason;
@@ -192,43 +194,53 @@ export class GeminiAnalyzer implements VideoAnalyzer {
   private async generate(
     params: Omit<GenerateContentParameters, "model">,
     deadline: AbortSignal,
+    deadlineAt: number,
   ): Promise<{ response: GenerateContentResponse; model: string }> {
     const models = [this.model, ...this.fallbackModels];
-    let lastError: AnalyzerError | undefined;
+    // Why the previous model was left behind; it explains a failure better than a missing fallback model does.
+    let previous: AnalyzerError | undefined;
     for (const [index, model] of models.entries()) {
+      let tokenLimitRetried = false;
       for (let attempt = 0; ; attempt++) {
         try {
           return { response: await this.client.models.generateContent({ ...params, model }), model };
         } catch (error) {
           const mapped = this.toAnalyzerError(error, model);
-          lastError = mapped;
           const next = models[index + 1];
           if ((mapped.quota?.scope === "day" || mapped.kind === "model_not_found") && next) {
             this.logger.warn(`model ${model} unavailable, trying ${next}`, { reason: mapped.quota?.scope ?? mapped.kind });
+            previous = mapped;
             break;
           }
-          const delay = this.retryDelay(mapped, attempt);
-          if (delay === undefined) throw mapped;
+          if (mapped.kind === "model_not_found" && previous) throw previous;
+          const delay = this.retryDelay(mapped, attempt, tokenLimitRetried);
+          // Waiting past the deadline cannot help; the error being waited out is the real cause, not a timeout.
+          if (delay === undefined || Date.now() + delay >= deadlineAt) throw mapped;
+          if (mapped.quota?.tooLarge) tokenLimitRetried = true;
           this.logger.info("retrying gemini call", { model, attempt: attempt + 1, delayMs: delay, kind: mapped.kind });
           try {
             await this.wait(delay, deadline);
           } catch {
-            throw this.toAnalyzerError(Object.assign(new Error("deadline"), { name: "TimeoutError" }), model);
+            throw mapped;
           }
         }
       }
     }
-    throw lastError ?? new AnalyzerError("unknown", "No Gemini model to call.");
+    throw previous ?? new AnalyzerError("unknown", "No Gemini model to call.");
   }
 
   /** How long to wait before retrying, or undefined when retrying cannot help. */
-  private retryDelay(error: AnalyzerError, attempt: number): number | undefined {
+  private retryDelay(error: AnalyzerError, attempt: number, tokenLimitRetried: boolean): number | undefined {
     if (attempt >= this.maxRetries) return undefined;
     const backoff = Math.min(1000 * 2 ** attempt, 16_000);
     if (error.kind === "quota") {
-      // A daily quota or a request larger than the per-minute token budget fails the same way every time.
-      if (error.quota?.scope !== "minute" || error.quota.tooLarge) return undefined;
-      const delay = error.quota.retryDelayMs ?? backoff;
+      // A daily quota fails the same way until it resets.
+      if (error.quota?.scope === "day") return undefined;
+      // A token-per-minute limit is hit either by earlier requests (waiting helps) or by this request alone
+      // (it never will): one wait tells them apart.
+      if (error.quota?.tooLarge && tokenLimitRetried) return undefined;
+      // Without QuotaFailure details (scope "unknown") Google is usually short of capacity: back off and retry.
+      const delay = error.quota?.retryDelayMs ?? backoff;
       return delay <= MAX_RETRY_DELAY_MS ? delay : undefined;
     }
     if (error.kind === "unavailable" || (error.kind === "timeout" && error.status !== undefined)) return backoff;
@@ -347,7 +359,7 @@ export function quotaInfo(raw: string, model: string): QuotaInfo {
       // Not JSON: the text checks below still apply.
     }
   }
-  type Violation = { quotaId?: string; quotaMetric?: string; quotaValue?: string; quotaDimensions?: { model?: string } };
+  type Violation = { quotaId?: string; quotaMetric?: string; quotaValue?: string | number; quotaDimensions?: { model?: string } };
   const violations: Violation[] = [];
   for (const item of details) {
     const d = item as { "@type"?: string; violations?: Violation[]; retryDelay?: string };
@@ -364,7 +376,8 @@ export function quotaInfo(raw: string, model: string): QuotaInfo {
     violations[0];
   if (chosen) {
     info.quotaId = chosen.quotaId;
-    info.limit = chosen.quotaValue;
+    // Google sends the value as a string, but a number must not slip past the "0" check below.
+    if (chosen.quotaValue !== undefined) info.limit = String(chosen.quotaValue);
     info.model = chosen.quotaDimensions?.model ?? model;
     if (/PerDay/i.test(chosen.quotaId ?? "")) info.scope = "day";
     else if (/PerMinute/i.test(chosen.quotaId ?? "")) info.scope = "minute";
@@ -392,8 +405,8 @@ function quotaMessage(quota: QuotaInfo, model: string): string {
   }
   if (quota.tooLarge) {
     return (
-      "This request needs more input tokens than the per-minute limit allows, so retrying will not help. " +
-      "A video costs about 100 tokens per second; analyze about 30 minutes or less at a time with `start`/`end`."
+      "Gemini's per-minute input-token limit was reached: earlier requests used it up, or this request alone is larger than the limit. " +
+      "A video costs about 100 tokens per second; analyze about 30 minutes or less at a time with `start`/`end`, or wait a minute."
     );
   }
   if (quota.scope === "minute") return "Too many Gemini requests this minute. Wait a minute and try again.";

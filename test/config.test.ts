@@ -52,6 +52,13 @@ describe("loadConfig", () => {
     expect(loadConfig({ GEMINI_API_KEY: "k", GEMINI_MODEL_NAME: "gemini-flash-latest" }).fallbackModels).toEqual([]);
   });
 
+  it("turns fallback models off with an empty value, also under the ytlens name", () => {
+    expect(loadConfig({ GEMINI_API_KEY: "k", FRAMELENS_FALLBACK_MODELS: "" }).fallbackModels).toEqual([]);
+    expect(loadConfig({ GEMINI_API_KEY: "k", YTLENS_FALLBACK_MODELS: " " }).fallbackModels).toEqual([]);
+    expect(loadConfig({ GEMINI_API_KEY: "k", YTLENS_FALLBACK_MODELS: "gemini-z" }).fallbackModels).toEqual(["gemini-z"]);
+    expect(loadConfig({ GEMINI_API_KEY: "k", FRAMELENS_FALLBACK_MODELS: "", YTLENS_FALLBACK_MODELS: "gemini-z" }).fallbackModels).toEqual([]);
+  });
+
   it("treats empty values as unset", () => {
     expect(loadConfig({ GEMINI_API_KEY: "k", GEMINI_MODEL_NAME: "" }).model).toBe(DEFAULT_MODEL);
   });
