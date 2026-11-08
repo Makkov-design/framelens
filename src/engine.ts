@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { appendFileSync, existsSync, statSync } from "node:fs";
+import { appendFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { InvalidInputError } from "./errors.js";
 import type { Logger } from "./logger.js";
@@ -320,11 +320,22 @@ export class Engine {
     return { ws, title: spec!.source.title ?? input, dir, files };
   }
 
-  /** The workspace of a page already read with `web`, if any. */
+  /** The workspace of a page read with `web`, or a Lottie or Figma source read with `exact`, if any. */
   private webWorkspace(input: string): Workspace | undefined {
-    if (!/^https?:\/\//i.test(input.trim())) return undefined;
-    const ws = new Workspace(this.options.root, `web-${createHash("sha1").update(input).digest("hex").slice(0, 10)}`);
-    return existsSync(ws.path("motion-spec.json")) ? ws : undefined;
+    const wanted = input.trim();
+    if (/^https?:\/\//i.test(wanted)) {
+      const ws = new Workspace(this.options.root, `web-${createHash("sha1").update(input).digest("hex").slice(0, 10)}`);
+      if (existsSync(ws.path("motion-spec.json"))) return ws;
+    }
+    if (!existsSync(this.options.root)) return undefined;
+    for (const name of readdirSync(this.options.root)) {
+      if (!/^(web|lottie|figma)-/.test(name)) continue;
+      const ws = new Workspace(this.options.root, name);
+      const record = ws.readJson<{ input?: string; url?: string; mediaPath?: string }>("source.json");
+      const same = record && [record.input, record.url, record.mediaPath].some((v) => v && (v === wanted || resolve(v) === resolve(wanted)));
+      if (same && existsSync(ws.path("motion-spec.json"))) return ws;
+    }
+    return undefined;
   }
 
   /**
