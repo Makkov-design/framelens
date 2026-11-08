@@ -47,7 +47,43 @@ export async function probeMedia(path: string, tools: MediaTools): Promise<Probe
     ["-v", "error", "-show_streams", "-show_format", "-of", "json", path],
     { timeoutMs: 60_000 },
   );
-  return parseProbe(stdout);
+  const info = parseProbe(stdout);
+  if (!info.hasVideo || info.frameCount !== undefined) return info;
+  // Matroska/WebM (and images, MPEG-TS) store no frame count, and ffprobe then reports the nominal rate as the
+  // average, so a variable-rate screen recording looked constant. Reading the packet times (no decoding) tells.
+  const packets = await tools.exec(
+    tools.ffprobe,
+    ["-v", "error", "-select_streams", "v:0", "-show_entries", "packet=pts_time,duration_time", "-of", "csv=p=0", path],
+    { timeoutMs: 5 * 60_000 },
+  );
+  return withPacketTimes(info, packets.stdout);
+}
+
+/** Frame count, average rate and VFR from `pts_time,duration_time` lines of the video packets. */
+export function withPacketTimes(info: ProbeInfo, csv: string): ProbeInfo {
+  let count = 0;
+  let first = Infinity;
+  let last = -Infinity;
+  for (const line of csv.split("\n")) {
+    const [ptsText, durText] = line.trim().split(",");
+    if (!ptsText) continue;
+    const pts = Number(ptsText);
+    const dur = Number(durText);
+    if (!Number.isFinite(pts)) continue;
+    count++;
+    first = Math.min(first, pts);
+    last = Math.max(last, pts + (Number.isFinite(dur) ? dur : 0));
+  }
+  if (!count) return info;
+  const span = last - first;
+  const fps = count > 1 && span > 0 ? Math.round((count / span) * 1000) / 1000 : info.fps;
+  const nominal = info.nominalFps;
+  return {
+    ...info,
+    frameCount: count,
+    ...(fps && { fps }),
+    vfr: Boolean(fps && nominal && Math.abs(fps - nominal) / nominal > 0.01),
+  };
 }
 
 export function parseProbe(json: string): ProbeInfo {

@@ -99,10 +99,16 @@ export function buildPlan(input: {
   const { probe, boundaries, hasSpeech } = input;
   const { type, reasons } = classify(probe, boundaries, hasSpeech);
   const explicit = input.goal ?? inferGoal(input.request);
-  const goal = explicit ?? DEFAULT_GOAL[type];
+  const notes: string[] = [];
+  let goal = explicit ?? DEFAULT_GOAL[type];
+  // Without a picture every frames, boundaries and style step would fail: plan for the sound instead.
+  if (!probe.hasVideo && goal !== "listen" && goal !== "sound") {
+    if (explicit) notes.push(`This source has no picture, so the ${explicit} goal is planned as ${hasSpeech ? "listen" : "sound"}.`);
+    goal = hasSpeech ? "listen" : "sound";
+  }
+  const still = type === "still" && probe.hasVideo;
   const d = probe.duration;
   const steps: PlanStep[] = [];
-  const notes: string[] = [];
   let frames = 0;
   let sheets = 0;
   let imageTokens = 0;
@@ -119,6 +125,7 @@ export function buildPlan(input: {
 
   switch (goal) {
     case "listen":
+      if (!probe.hasVideo) break;
       steps.push({ tool: "frames", args: { every: overviewEvery, columns: 4, rows: 6 }, why: "one overview sheet: who is speaking, slides, setting" });
       addSheets(Math.min(24, Math.ceil(d / overviewEvery)));
       notes.push("The transcript carries the content; frames are only context.");
@@ -134,6 +141,13 @@ export function buildPlan(input: {
       addSheets(12);
       break;
     case "style": {
+      if (still) {
+        // One picture: nothing moves, so there are no cuts to find or ranges to sample.
+        steps.push({ tool: "frames", args: { at: [0], columns: 1, rows: 1 }, why: "the picture itself" });
+        addSheets(1);
+        steps.push({ tool: "style", args: {}, why: "palette, STYLE.md and motion-spec.json" });
+        break;
+      }
       steps.push({ tool: "boundaries", args: { rate: 10, threshold: 0.3 }, why: "every cut and abrupt change, to a tenth of a second" });
       const overview = Math.min(120, Math.ceil(d / 0.5));
       steps.push({ tool: "frames", args: { every: Math.max(0.5, Math.round((d / 120) * 10) / 10), columns: 4, rows: 4 }, why: "loupe ×1: the whole piece, its systems and rhythm" });
@@ -153,7 +167,7 @@ export function buildPlan(input: {
     }
     case "sound":
       steps.push({ tool: "audio", args: {}, why: "loudness, hits, tempo and beat grid, spectrogram (2.2)" });
-      steps.push({ tool: "boundaries", args: { rate: 10, threshold: 0.3 }, why: "cuts, to compare with the beat" });
+      if (probe.hasVideo && !still) steps.push({ tool: "boundaries", args: { rate: 10, threshold: 0.3 }, why: "cuts, to compare with the beat" });
       break;
     case "production":
       steps.push({ tool: "boundaries", args: { rate: 4, threshold: 0.3 }, why: "split into shots" });
