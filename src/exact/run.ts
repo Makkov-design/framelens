@@ -8,6 +8,7 @@ import { downloadFile, isHttpUrl, type FetchLike } from "./http.js";
 import { loadLottieFile, parseLottie } from "./lottie.js";
 import { writeExact, type ExactSpec } from "./spec.js";
 import type { ExactAnalysis } from "./types.js";
+import { oneLine } from "../text.js";
 
 export { FigmaTokenError, FIGMA_TOKEN_HELP };
 
@@ -74,6 +75,7 @@ export async function runExact(o: ExactOptions): Promise<ExactResult> {
     throw new Error("Pass `source` (a Lottie file or link, or a Figma link) or `figma_json`.");
   }
 
+  analysis = cleanAnalysis(analysis);
   const { spec, files } = writeExact(ws, analysis, o.version);
   let exported: ExactResult["exported"];
   if (o.exportTarget) {
@@ -81,4 +83,21 @@ export async function runExact(o: ExactOptions): Promise<ExactResult> {
     exported = { dir, files: exportSpec(spec, o.exportTarget, dir, { workspace: ws.dir }) };
   }
   return { ws, analysis, spec, files, ...(exported && { exported }) };
+}
+
+/**
+ * Names in a Lottie or Figma file (layers, nodes, fonts, texts) are the author's free text and land in STYLE.md, the
+ * tool's summary and starter files: one short line each.
+ */
+export function cleanAnalysis(a: ExactAnalysis): ExactAnalysis {
+  const t = (v: unknown, max = 160) => oneLine(v, max);
+  return {
+    ...a,
+    title: t(a.title, 200),
+    shots: a.shots.map((s) => ({ ...s, name: t(s.name) })),
+    moves: a.moves.map((m) => ({ ...m, target: t(m.target, 240), property: t(m.property, 60), type: t(m.type, 60), curve: t(m.curve, 120), from: m.from.map((v) => (typeof v === "string" ? t(v, 60) : v)), to: m.to.map((v) => (typeof v === "string" ? t(v, 60) : v)), ...(m.trigger !== undefined && { trigger: t(m.trigger, 60) }) })),
+    texts: a.texts.map((x) => ({ ...x, text: t(x.text, 200), where: t(x.where, 240), ...(x.family !== undefined && { family: t(x.family, 120) }), ...(x.case !== undefined && { case: t(x.case, 20) }) })),
+    fonts: a.fonts.map((f) => t(f, 120)),
+    unknowns: a.unknowns.map((u) => t(u, 240)),
+  };
 }
