@@ -38,7 +38,15 @@ export interface MotionSpec {
   systems: { id: string; role: string; start: number; end: number; states: unknown[] }[];
   events: (MotionEvent & { kind: "move"; anchor?: string; evidence: Evidence })[];
   rhythm: { cuts: number; cutsPerMinute: number; meanShotSeconds: number; medianShotSeconds: number; movesPerMinute: number };
-  audio: { tempo_bpm?: number; cut_on_beat_ratio?: number; sfx: unknown[] };
+  audio: {
+    tempo_bpm?: number;
+    cut_on_beat_ratio?: number;
+    integrated_lufs?: number;
+    /** Strong onsets: hits and impacts the motion may be synced to. */
+    hits?: { t: number; strength: number; evidence: Evidence }[];
+    /** Named sound effects (whoosh, riser, click), added by the agent or a tagger. */
+    sfx: unknown[];
+  };
 }
 
 /** Grabs one frame as raw RGB pixels at 64×36 (tone-mapped when HDR, so colours are not washed out). */
