@@ -26,6 +26,20 @@ export type AnalyzerErrorKind =
   | "unavailable"
   | "unknown";
 
+/** What a 429 says about the limit that was hit. */
+export interface QuotaInfo {
+  /** "day" resets at midnight Pacific time; "minute" within a minute. */
+  scope: "day" | "minute" | "unknown";
+  /** The limit counts input tokens and this one request is bigger than it, so waiting cannot help. */
+  tooLarge?: boolean;
+  /** Google's quota id, e.g. GenerateRequestsPerDayPerProjectPerModel-FreeTier. */
+  quotaId?: string;
+  /** The limit's value; "0" means the model is not available on this tier. */
+  limit?: string;
+  model?: string;
+  retryDelayMs?: number;
+}
+
 /** A failed call to the video model, with a message safe to show to the caller. */
 export class AnalyzerError extends Error {
   override name = "AnalyzerError";
@@ -34,6 +48,7 @@ export class AnalyzerError extends Error {
     readonly kind: AnalyzerErrorKind,
     message: string,
     readonly status?: number,
+    readonly quota?: QuotaInfo,
   ) {
     super(message);
   }

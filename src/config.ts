@@ -1,6 +1,9 @@
 import { ConfigError, MissingKeyError } from "./errors.js";
 
-export const DEFAULT_MODEL = "gemini-flash-latest";
+/** Flash-Lite: the free tier allows about 500 requests a day for it, against 20 for Flash. */
+export const DEFAULT_MODEL = "gemini-flash-lite-latest";
+/** Tried in order when a model's daily quota is used up or the model is unavailable. */
+export const DEFAULT_FALLBACK_MODELS = ["gemini-flash-latest"];
 
 export const LOG_LEVELS = ["error", "warn", "info", "debug"] as const;
 export type LogLevel = (typeof LOG_LEVELS)[number];
@@ -8,8 +11,10 @@ export type LogLevel = (typeof LOG_LEVELS)[number];
 export interface Config {
   apiKey: string;
   model: string;
+  /** Models tried after `model` when its daily quota is used up or it does not exist. */
+  fallbackModels: string[];
   timeoutMs: number;
-  /** Retries after the first attempt on 408/429/5xx. */
+  /** Retries after the first attempt on timeouts, server errors and per-minute rate limits. */
   maxRetries: number;
   /** 0 disables the result cache. */
   cacheTtlMs: number;
@@ -55,9 +60,16 @@ export function loadConfig(env: Env): Config {
     throw new ConfigError(`YTLENS_LOG_LEVEL must be one of ${LOG_LEVELS.join(", ")}.`);
   }
 
+  const model = read(env, "GEMINI_MODEL_NAME") ?? DEFAULT_MODEL;
+  const fallbacks = read(env, "YTLENS_FALLBACK_MODELS");
+  const fallbackModels = (fallbacks === undefined ? DEFAULT_FALLBACK_MODELS : fallbacks.split(","))
+    .map((name) => name.trim())
+    .filter((name, i, all) => name && name !== model && all.indexOf(name) === i);
+
   return {
     apiKey,
-    model: read(env, "GEMINI_MODEL_NAME") ?? DEFAULT_MODEL,
+    model,
+    fallbackModels,
     timeoutMs: readInt(env, "YTLENS_TIMEOUT_MS", 300_000, 1_000, 3_600_000),
     maxRetries: readInt(env, "YTLENS_MAX_RETRIES", 3, 0, 10),
     cacheTtlMs: readInt(env, "YTLENS_CACHE_TTL_MINUTES", 60, 0, 7 * 24 * 60) * 60_000,

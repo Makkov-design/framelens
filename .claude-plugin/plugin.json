@@ -1,6 +1,6 @@
 {
   "name": "ytlens",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "description": "Let Claude watch YouTube videos (frames + audio) through Google Gemini: summaries, Q&A, key moments, transcripts.",
   "author": {
     "name": "Makkov",
@@ -16,7 +16,7 @@
       "args": ["${CLAUDE_PLUGIN_ROOT}/dist/ytlens.mjs"],
       "env": {
         "GEMINI_API_KEY": "${GEMINI_API_KEY}",
-        "GEMINI_MODEL_NAME": "${GEMINI_MODEL_NAME:-gemini-flash-latest}"
+        "GEMINI_MODEL_NAME": "${GEMINI_MODEL_NAME:-gemini-flash-lite-latest}"
       }
     }
   }

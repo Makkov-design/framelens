@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.2.0 — 2026-11-09
+
+- Default model is now `gemini-flash-lite-latest`: on the free tier it allows about 500 requests a day, against 20
+  for Flash.
+- When the daily quota of a model is used up, or the model does not exist, ytlens moves on to the models in
+  `YTLENS_FALLBACK_MODELS` (default `gemini-flash-latest`).
+- Quota errors name the limit that was hit (daily, per-minute, or a request too large for the per-minute token
+  budget), its model and when it resets. Retrying only happens where it can help: a used-up daily quota or an
+  oversized request is no longer retried, and per-minute limits wait the delay Google asks for.
+- Error details are no longer cut off before the name of the quota.
+- `detail: "low"` is documented as saving tokens only on Gemini 2.5 models.
+
 ## 1.1.1 — 2026-11-05
 
 - Starts without a Gemini key instead of exiting. Every tool then answers with the steps to add one, for a computer

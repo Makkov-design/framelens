@@ -26,7 +26,7 @@ Options shared by the video tools:
 |---|---|
 | `youtube_url` | Any YouTube video link (`watch`, `youtu.be`, `shorts`, `live`, `embed`, mobile, music) or the 11-character video ID |
 | `start`, `end` | Analyze only part of the video: seconds (`90`), `MM:SS` or `H:MM:SS` |
-| `detail` | `low` sends frames at low resolution: about 4x fewer tokens, good for long videos |
+| `detail` | `low` sends frames at low resolution; it saves tokens only on Gemini 2.5 models |
 | `response_language` | Answer language, e.g. `Russian` (the transcript keeps the spoken language) |
 
 ## You need
@@ -117,16 +117,20 @@ docker run -i --rm -e GEMINI_API_KEY=<your key> ytlens
 | Variable | Default | Meaning |
 |---|---|---|
 | `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) | required | Gemini API key |
-| `GEMINI_MODEL_NAME` | `gemini-flash-latest` | Model used for analysis; `list_supported_models` shows the choices |
+| `GEMINI_MODEL_NAME` | `gemini-flash-lite-latest` | Model used for analysis; `list_supported_models` shows the choices. Flash-Lite has the largest free daily quota |
+| `YTLENS_FALLBACK_MODELS` | `gemini-flash-latest` | Comma-separated models tried when the main model's daily quota is used up or the model is unavailable |
 | `YTLENS_TIMEOUT_MS` | `300000` | Time limit for one tool call, retries included |
-| `YTLENS_MAX_RETRIES` | `3` | Retries on rate limits (429), timeouts and server errors, with backoff |
+| `YTLENS_MAX_RETRIES` | `3` | Retries on per-minute rate limits, timeouts and server errors. A used-up daily quota is never retried |
 | `YTLENS_CACHE_TTL_MINUTES` | `60` | How long identical requests are answered from memory; `0` turns the cache off |
 | `YTLENS_LOG_LEVEL` | `info` | `error`, `warn`, `info` or `debug`. Logs go to stderr and never contain questions or answers |
 
 ## Tips for long videos
 
-- Gemini samples about one frame per second. A one-hour video at default detail is roughly 1M tokens, the limit of
-  most models, so use `detail: "low"` or split it with `start` / `end`.
+- Gemini samples about one frame per second, roughly 100 tokens per second of video. The free tier allows about
+  250,000 input tokens per minute, so one request can hold about 40 minutes: analyze longer videos in parts with
+  `start` / `end`.
+- Free-tier limits are counted per Google Cloud project and reset at midnight Pacific time. When the daily quota of
+  the main model is used up, ytlens switches to the fallback model and says so; the error names the exact limit.
 - Transcripts are limited by the model's output size; request videos longer than about 30 minutes in parts.
 
 ## Security

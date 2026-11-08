@@ -21,14 +21,14 @@ If they are deferred, load them with ToolSearch query `ytlens` first.
 - `list_supported_models` — only after a model error.
 
 Every video tool accepts `start` / `end` (seconds, `MM:SS` or `H:MM:SS`) to analyze part of a video,
-`detail: "low"` for long videos, and (except the transcript) `response_language`, e.g. `"Russian"`.
+`detail: "low"` (saves tokens only on Gemini 2.5 models), and (except the transcript) `response_language`, e.g. `"Russian"`.
 
 ## Workflow
 
 1. Run `summarize_youtube_video` for the overview, then `extract_key_moments` for the structure and timestamps.
 2. For what the user cares about, call `ask_about_youtube_video` with several specific questions rather than one broad
    one. Ask explicitly about visuals: what is on screen, UI elements, code, slide text, numbers, charts, step order.
-3. Videos longer than about 45 minutes: use `detail: "low"` for the overview, then `start` / `end` per segment for
+3. Videos longer than about 30 minutes: analyze them in parts with `start` / `end` (one request holds about 40 minutes on the free tier), per segment for
    details. Request transcripts of long videos in parts of about 30 minutes.
 4. Use `get_video_transcript` when exact wording matters (quotes, names, numbers read aloud).
 5. Report with timestamps. Keep apart what was **seen** on screen from what was **said**, and say so when something
