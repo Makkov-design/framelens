@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { InvalidInputError } from "../errors.js";
 
 export interface ExecResult {
   stdout: string;
@@ -25,8 +26,13 @@ export const execTool: Exec = (file, args, options = {}) =>
       },
       (error, stdout, stderr) => {
         if (error) {
+          const name = file.split(/[\\/]/).pop();
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+            reject(new InvalidInputError(`${name} was not found on this computer. Run \`npx framelens doctor\` to see how to install it.`));
+            return;
+          }
           const tail = String(stderr).trim().split("\n").slice(-6).join("\n");
-          reject(new Error(`${file.split(/[\\/]/).pop()} failed: ${tail || error.message}`));
+          reject(new Error(`${name} failed: ${tail || error.message}`));
         } else {
           resolve({ stdout: String(stdout), stderr: String(stderr) });
         }
