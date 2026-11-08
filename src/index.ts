@@ -9,6 +9,25 @@ import { createLogger } from "./logger.js";
 import { createServer } from "./server.js";
 import { createSetupAnalyzer } from "./setup.js";
 import { VERSION } from "./version.js";
+import { Engine, localFileResolver, type TranscriptFallback } from "./engine.js";
+import { execTool } from "./media/exec.js";
+import { geminiTranscriptFallback } from "./speech/gemini.js";
+import { workspaceRoot } from "./workspace/workspace.js";
+import type { Logger } from "./logger.js";
+
+function createEngine(logger: Logger, transcriptFallback?: TranscriptFallback): Engine {
+  return new Engine({
+    tools: {
+      ffmpeg: process.env.FRAMELENS_FFMPEG?.trim() || "ffmpeg",
+      ffprobe: process.env.FRAMELENS_FFPROBE?.trim() || "ffprobe",
+      exec: execTool,
+    },
+    resolve: localFileResolver,
+    root: workspaceRoot(),
+    logger,
+    ...(transcriptFallback && { transcriptFallback }),
+  });
+}
 
 async function main(): Promise<void> {
   const command = process.argv[2];
@@ -30,17 +49,21 @@ async function main(): Promise<void> {
     config = loadConfig(process.env);
   } catch (error) {
     if (!(error instanceof MissingKeyError)) throw error;
-    // Start anyway: every tool answers with the setup steps, so the agent can pass them on
-    // instead of the tools silently missing from the session.
+    // Start anyway: local tools work without a key, and every Gemini tool answers with the setup steps,
+    // so the agent can pass them on instead of the tools silently missing from the session.
     const setupLogger = createLogger("info");
-    const setupServer = createServer({ analyzer: createSetupAnalyzer(error.message), logger: setupLogger });
+    const setupServer = createServer({
+      analyzer: createSetupAnalyzer(error.message),
+      logger: setupLogger,
+      engine: createEngine(setupLogger),
+    });
     await setupServer.connect(new StdioServerTransport());
-    setupLogger.warn(`framelens ${VERSION} started without a Gemini key; every tool explains how to add one`);
+    setupLogger.warn(`framelens ${VERSION} started without a Gemini key; local tools work, Gemini tools explain how to add one`);
     return;
   }
   const logger = createLogger(config.logLevel, undefined, [config.apiKey]);
   const analyzer = new CachedAnalyzer(createGeminiAnalyzer(config, logger), { ttlMs: config.cacheTtlMs });
-  const server = createServer({ analyzer, logger });
+  const server = createServer({ analyzer, logger, engine: createEngine(logger, geminiTranscriptFallback(analyzer)) });
 
   await server.connect(new StdioServerTransport());
   logger.info(`framelens ${VERSION} ready`, { model: config.model });
