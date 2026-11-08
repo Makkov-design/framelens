@@ -1,92 +1,117 @@
-# framelens
+# Frame Lens
 
-**Let your AI assistant actually watch YouTube.** framelens is an [MCP](https://modelcontextprotocol.io) server that
-sends a YouTube video to Google Gemini, which looks at the frames *and* listens to the audio. Answers cover slides,
-code on screen, UI walkthroughs, charts and demos, not just the captions.
+**Eyes and ears for AI agents.** Give your agent any video or animation (a YouTube link, a TikTok, a screen recording,
+a GIF, a file) and a goal in plain words. Frame Lens picks the right way to look at it and returns **measurements,
+not retellings**: word-timed transcripts, frames with their real timestamps, cuts to the frame, palettes, the duration
+and easing of every move, tempo and beats, and a machine-readable motion spec that starts a project in HyperFrames,
+Remotion or CSS.
 
-Works with Claude Code (local and cloud sessions), Claude Desktop, Cursor and any other MCP client.
+It is an [MCP](https://modelcontextprotocol.io) server for Claude Code, Claude Desktop, Cursor, Codex and any other MCP
+client. The core is free, runs on your computer and needs no API key.
 
 [![npm](https://img.shields.io/npm/v/framelens)](https://www.npmjs.com/package/framelens)
 [![CI](https://github.com/Makkov-design/framelens/actions/workflows/ci.yml/badge.svg)](https://github.com/Makkov-design/framelens/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
+## What you can ask
+
+| You want | Say something like | Frame Lens does |
+|---|---|---|
+| **Listen**: a podcast, lecture, interview | "Summarize this 3-hour podcast and find where they talk about pricing" | Word-timed transcript, one overview sheet; no wasted frames |
+| **Learn**: a tutorial into steps | "Turn this tutorial into a step-by-step guide" | Finds every screen change, frames with the words spoken there, text read from the screen |
+| **Find** a moment | "Where does he set up DNS?" | Frames around the phrase in the transcript |
+| **Style**: replicate the motion | "Use this as a reference for my product promo" | Cuts to the frame, shots, OKLab palette, every move with its duration and easing family, `STYLE.md` and `motion-spec.json`, then a starter project and a check of your render |
+| **Sound** design | "What is the sound design here?" | Loudness, silences, hits, tempo and beat grid, how many cuts land on the beat, a spectrogram picture |
+| **Production** | "How was this shot?" | Shots with key frames for camera, light and source |
+| **A website's motion** | "Make my landing animate like this site" | The page's real animation curves, durations, fonts and colours, then a CSS or Motion starter |
+| **A Lottie or Figma prototype** | "Rebuild this Lottie in Remotion" | Exact keyframes and curves from the file, then a starter in any target |
+
+Start with `plan`: it classifies the video (talking head, screen, motion graphics, music video, live action), reads
+the goal from the request and lists the steps with an estimate of how many image tokens they cost.
+
 ## Tools
+
+**Local, measured** (needs ffmpeg; links need yt-dlp, which `framelens doctor --prepare` installs):
 
 | Tool | What it does |
 |---|---|
-| `summarize_youtube_video` | Short, medium or long summary with timestamps |
-| `ask_about_youtube_video` | Answers a question with timestamped evidence; without a question, a detailed description |
-| `extract_key_moments` | Key moments as structured data: seconds, `H:MM:SS` timestamp, title, description, deep link |
-| `get_video_transcript` | Timestamped transcript with speaker labels, plus on-screen text (slides, titles, code); works without captions |
-| `list_supported_models` | Gemini models your key can use; marks the one in use |
+| `probe` | Fetches the source if needed; duration, size, frame rate (variable or not), HDR, audio, captions, workspace folder |
+| `plan` | Goal-based plan: which passes, how dense, which ranges, image-token estimate |
+| `transcript` | Word-timed transcript from captions (Gemini as a fallback for YouTube) |
+| `frames` | Frames and contact sheets with time, frame number and spoken words under each picture. `at`, `every`, `fps`, `every_frame` (real timestamps, for transitions), or `around` a phrase |
+| `boundaries` | Where the picture changes abruptly, scored, plus how dynamic the video is |
+| `style` | Cuts told apart from fast motion and flashes, shots with palettes, moves with their easing family; writes `motion-spec.json`, `STYLE.md`, `TIMELINE.md`, `ANALYSIS.md` |
+| `audio` | Loudness (LUFS), silences, onsets, tempo and beats, cuts on the beat, spectrogram |
+| `export` | Starter project from the motion spec for `hyperframes`, `remotion`, `css`, `after-effects` (ExtendScript), `lottie`, or a `hypit` handoff: structure, timing, colours and eases carried over, content left to you |
+| `compare` | Your render against the reference: duration, cuts matched within 3 frames, palette distance, picture similarity, worst moments side by side |
+| `web` | A live page's animations read exactly from the browser (CSS, Web Animations, Motion, GSAP): target, delay, duration, curve, keyframes, scroll-triggered ones too, plus real fonts and colours (needs Chrome or Edge and Node 22+) |
+| `exact` | Lottie / dotLottie keyframes and curves, and Figma prototype transitions (`FIGMA_TOKEN`, or the Figma MCP's motion context), read from the source's own data |
 
-Options shared by the video tools:
+**Gemini** (YouTube links, needs `GEMINI_API_KEY`, works in cloud sessions without ffmpeg):
+`summarize_youtube_video`, `ask_about_youtube_video`, `extract_key_moments`, `get_video_transcript`,
+`list_supported_models`.
 
-| Option | Meaning |
-|---|---|
-| `youtube_url` | Any YouTube video link (`watch`, `youtu.be`, `shorts`, `live`, `embed`, mobile, music) or the 11-character video ID |
-| `start`, `end` | Analyze only part of the video: seconds (`90`), `MM:SS` or `H:MM:SS` |
-| `detail` | `low` sends frames at low resolution; it saves tokens only on Gemini 2.5 models |
-| `response_language` | Answer language, e.g. `Russian` (the transcript keeps the spoken language) |
+Everything a local tool produces is written to a workspace folder (`.framelens/<id>/` in the current directory), so
+results stay small, can be reopened by path, and a later session can continue from `PROGRESS.md`.
 
-## You need
+## How it looks at a video: the loupe
 
-- A Gemini API key from [Google AI Studio](https://aistudio.google.com/apikey) (the free tier works)
-- Node.js 20 or newer
+Ten frames per second over a ten-minute video is 6,000 frames and about 450,000 image tokens. Frame Lens never does
+that. It works like a loupe:
 
-Only public and unlisted videos can be analyzed. The free tier allows about 8 hours of YouTube video per day, and
-free-tier data may be used by Google to improve its products.
+1. **×1 overview**: a sheet of the whole piece, its rhythm and recurring elements.
+2. **×10 passage**: 10 frames per second over the 5–20 seconds that matter.
+3. **×60 transition**: every native frame ±0.5 s around each move, because a typical transition lasts 6–12 frames
+   and sheets a second apart miss 1–3-frame timing.
 
-The server is a single self-contained file with no dependencies, published on
-[npm](https://www.npmjs.com/package/framelens), so `npx` starts it in seconds.
+Frame times are the real times of the frames shown: sampling keeps the first frame at or after each point (ffmpeg's
+`fps` filter would keep the last one, up to half an interval late), and `every_frame` reads timestamps from the
+stream, so variable-frame-rate screen recordings stay exact.
 
-## Setup
+Every number in `motion-spec.json` says how it was obtained: `measured` (from pixels, audio or the source's data),
+`derived` (fitted from measurements, such as an easing family) or `inferred` (a model's judgement, such as a font
+guess).
 
-### Add framelens to any project (works in Claude Code cloud sessions too)
+**How accurate?** On ground-truth videos (known cuts, moves of 8–30 frames with known easing, at 24, 30 and 60 fps)
+Frame Lens finds every cut on its exact frame, every move, and the right easing family for each, with a mean move
+start error of about one frame: see [docs/ACCURACY.md](docs/ACCURACY.md) and run `node scripts/benchmark.mjs`
+yourself. Web pages, Lottie and Figma need no estimate: their curves are read from the source.
 
-Run this in the project's root folder, or just ask Claude Code to run it and commit the result:
+## Install
+
+You need **Node.js 20+** and, for the local tools, **ffmpeg** (on Windows: `winget install Gyan.FFmpeg`; macOS:
+`brew install ffmpeg`; Linux: your package manager). Check what you have:
 
 ```bash
-npx -y framelens@1.1.0 init
+npx -y framelens@2.0.0 doctor
 ```
 
-It adds two files to the project:
+`doctor --prepare` downloads a pinned, checksum-verified yt-dlp for links.
 
-- `.mcp.json` with the framelens server (other servers already in the file are kept);
-- `.claude/skills/framelens/SKILL.md`, the skill that teaches Claude how to use the tools.
+### Claude Code, every project on your computer
 
-Commit both. Then make your Gemini key available:
+```bash
+claude mcp add framelens --scope user -- npx -y framelens@2.0.0
+```
 
-- **Cloud sessions (claude.ai/code):** open the environment settings, add `GEMINI_API_KEY=<your key>` to the
-  environment variables, and keep network access on **Trusted** (it already allows GitHub and `*.googleapis.com`).
-  Without a plugin, cloud sessions only load what is in the repository, which is why the files go into the project.
-  If you added framelens as a plugin in claude.ai, cloud sessions load it from your account and only the key is needed.
-  Start a new session after adding the key: running sessions keep the old variables.
-- **On your computer:** set `GEMINI_API_KEY` as an environment variable for your user (on Windows:
-  `setx GEMINI_API_KEY "<your key>"`, then restart Claude Code).
-
-Everyone who works in the repository gets framelens; each person needs their own key.
-
-No key yet? The server still starts, and every tool answers with these steps, so the agent can tell you what to do.
-
-### Claude Code on your computer, in every project (plugin)
-
-The plugin bundles the server and the skill:
+On Windows, put `cmd /c` before `npx`. Add `--env GEMINI_API_KEY=<key>` to enable the Gemini tools. Or install the
+plugin, which also brings the skill:
 
 ```text
 /plugin install framelens --marketplace Makkov-design/framelens
 ```
 
-Set `GEMINI_API_KEY` as an environment variable for your user (on Windows: `setx GEMINI_API_KEY "<your key>"`, then
-restart Claude Code). Optionally set `GEMINI_MODEL_NAME`.
+### One project, including Claude Code cloud sessions
 
-Or add only the server, without the plugin:
+Run in the project's root folder (or ask Claude Code to run it and commit the result):
 
 ```bash
-claude mcp add framelens --scope user --env GEMINI_API_KEY=<your key> -- npx -y framelens@1.1.0
+npx -y framelens@2.0.0 init
 ```
 
-On Windows, put `cmd /c` before `npx` in the command.
+It adds `.mcp.json` with the server and `.claude/skills/framelens/SKILL.md`, and replaces an old `ytlens` entry. In
+cloud sessions, which have no ffmpeg by default, the Gemini tools do the work: add `GEMINI_API_KEY` to the cloud
+environment's variables and start a new session.
 
 ### Claude Desktop, Cursor and other clients
 
@@ -95,51 +120,63 @@ On Windows, put `cmd /c` before `npx` in the command.
   "mcpServers": {
     "framelens": {
       "command": "npx",
-      "args": ["-y", "framelens@1.1.0"],
-      "env": { "GEMINI_API_KEY": "<your key>" }
+      "args": ["-y", "framelens@2.0.0"],
+      "env": { "GEMINI_API_KEY": "<optional, for the Gemini tools>" }
     }
   }
 }
 ```
 
-Always pin the version (`framelens@1.1.0`), so a new release never runs on your machine without you choosing it.
-Without npm, the same works straight from GitHub: `npx -y github:Makkov-design/framelens#v1.1.0`.
+Pin the version so a new release never runs without you choosing it. Without npm the same works from GitHub:
+`npx -y github:Makkov-design/framelens#v2.0.0`.
 
-### Docker
+## Sources
 
-```bash
-docker build -t framelens https://github.com/Makkov-design/framelens.git#v1.1.0
-docker run -i --rm -e GEMINI_API_KEY=<your key> framelens
-```
+| Source | How |
+|---|---|
+| YouTube, TikTok, Loom, Twitch, Google Drive, Dropbox, direct media links and hundreds of other sites | Public links through the pinned yt-dlp |
+| Local files: mp4, mov (ProRes), webm, mkv, GIF, APNG | A path |
+| Your phone or a platform's own download button | Put the file in the inbox folder (`FRAMELENS_INBOX`) and use the source `inbox` |
+| Sites that ask you to log in (Instagram, Facebook, X, Threads, Vimeo) | Your own access only, in this order: save the video with the platform's own download button or a screen recording and give the file; opt in to your browser's cookies with `FRAMELENS_COOKIES_FROM_BROWSER=firefox` or `FRAMELENS_COOKIES_FILE=<cookies.txt>` (Chrome and Edge on Windows encrypt cookies so they cannot be used); or run `npx framelens login instagram` once: a browser window with a separate Frame Lens profile opens, you log in yourself (a second account is wiser), and links that need the login are then played there and saved. `framelens logout` deletes that profile |
+| A live website | `web` with its address |
+| Lottie, dotLottie, Figma | `exact` with the file, link or Figma URL |
+
+Frame Lens never bypasses logins, CAPTCHAs or bot checks, never uses online downloader sites or scraping services,
+and downloads one video at a time at your request. Platforms' terms may forbid automated downloading, and a platform
+can restrict an account it sees doing it: analyze videos you are allowed to watch and use, for reference.
 
 ## Configuration
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) | required | Gemini API key |
-| `GEMINI_MODEL_NAME` | `gemini-flash-lite-latest` | Model used for analysis; `list_supported_models` shows the choices. Flash-Lite has the largest free daily quota |
-| `FRAMELENS_FALLBACK_MODELS` | `gemini-flash-latest` | Comma-separated models tried when the main model's daily quota is used up or the model is unavailable; an empty value turns this off |
-| `FRAMELENS_TIMEOUT_MS` | `300000` | Time limit for one tool call, retries included |
-| `FRAMELENS_MAX_RETRIES` | `3` | Retries on per-minute rate limits, timeouts and server errors. A used-up daily quota is never retried |
-| `FRAMELENS_CACHE_TTL_MINUTES` | `60` | How long identical requests are answered from memory; `0` turns the cache off |
-| `FRAMELENS_LOG_LEVEL` | `info` | `error`, `warn`, `info` or `debug`. Logs go to stderr and never contain questions or answers |
+| `FRAMELENS_WORKSPACE` | `./.framelens` | Where workspaces go |
+| `FRAMELENS_INBOX` | — | Folder whose newest video is the source `inbox` |
+| `FRAMELENS_FFMPEG`, `FRAMELENS_FFPROBE`, `FRAMELENS_YTDLP` | found automatically | Paths to the tools |
+| `FRAMELENS_MAX_DOWNLOAD_MB` | `2048` | Largest download |
+| `FRAMELENS_COOKIES_FROM_BROWSER`, `FRAMELENS_COOKIES_FILE` | — | Opt-in cookies for sites that need your login |
+| `FRAMELENS_BROWSER`, `FRAMELENS_BROWSER_PROFILE` | found automatically, `~/.framelens/browser-profile` | Chrome or Edge for `web` and `login`, and where the login profile lives |
+| `FIGMA_TOKEN` | — | A read-only Figma personal access token for `exact` on Figma links |
+| `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) | — | Enables the Gemini tools |
+| `GEMINI_MODEL_NAME` | `gemini-flash-lite-latest` | Flash-Lite has the largest free daily quota |
+| `FRAMELENS_FALLBACK_MODELS` | `gemini-flash-latest` | Tried when the main model's daily quota is used up; empty turns this off |
+| `FRAMELENS_TIMEOUT_MS`, `FRAMELENS_MAX_RETRIES`, `FRAMELENS_CACHE_TTL_MINUTES`, `FRAMELENS_LOG_LEVEL` | `300000`, `3`, `60`, `info` | Gemini call limits, cache and logging |
 
-## Tips for long videos
+Settings named `YTLENS_*` from the earlier name still work.
 
-- Gemini samples about one frame per second, roughly 100 tokens per second of video. The free tier allows about
-  250,000 input tokens per minute, so one request can hold about 40 minutes: analyze longer videos in parts with
-  `start` / `end`.
-- Free-tier limits are counted per Google Cloud project and reset at midnight Pacific time. When the daily quota of
-  the main model is used up, framelens switches to the fallback model and says so; the error names the exact limit.
-- Transcripts are limited by the model's output size; request videos longer than about 30 minutes in parts.
+## Gemini notes
+
+Free-tier limits count per Google Cloud project (more keys in one project do not help) and reset at midnight Pacific
+time; on Flash they are small (about 20 requests a day), which is why Flash-Lite is the default. Quota errors name the
+exact limit. One request holds about 40 minutes of video; analyze longer videos in parts with `start` / `end`. A
+Google One / AI Pro subscription does not raise API limits; enabling billing on the key does.
 
 ## Security
 
-- Only YouTube video URLs are accepted; anything else is rejected before a request is made.
-- The API key travels only in request headers to Google and is removed from every error message and log line.
-- Video content is untrusted. Gemini is told never to follow instructions found in a video, and every result is
-  labelled as third-party content so the calling assistant treats it as information, not commands.
-- Nothing is written to disk; the cache lives in memory only.
+- External programs run without a shell, with timeouts, and are killed with their process tree on abort.
+- The pinned yt-dlp is verified against its SHA-256 before it is used.
+- Cookies are opt-in and never logged; the Gemini key is removed from every error and log line.
+- Video content is untrusted: every result is labelled as third-party content so the agent treats it as information,
+  never as commands.
 
 See [SECURITY.md](SECURITY.md) to report a vulnerability.
 
@@ -147,19 +184,13 @@ See [SECURITY.md](SECURITY.md) to report a vulnerability.
 
 ```bash
 npm ci
-npm test            # unit and in-memory MCP integration tests
+npm test            # unit, media (real ffmpeg fixtures) and in-memory MCP tests
 npm run typecheck
-npm run bundle      # writes dist/framelens.mjs; commit it together with the source change
-GEMINI_API_KEY=... npm run smoke                                  # live check of every tool on a short public video
-GEMINI_API_KEY=... npm run smoke -- <url> --long <url-over-1h>    # also checks clip timestamps past one hour
+npm run bundle      # writes dist/framelens.mjs; commit it with the source change
 ```
 
-Inside this repository, `npx framelens` resolves to the checkout itself rather than the published package, so an
-MCP client configured with `npx framelens` cannot start it here; point it at `dist/framelens.mjs` while developing.
-
-Code layout: `src/youtube.ts` (URLs and timestamps), `src/prompts.ts` (prompts and response schemas),
-`src/analyzer.ts` (Gemini client and error mapping), `src/cache.ts`, `src/server.ts` (MCP tools), `src/index.ts`
-(entry). The Claude Code plugin lives in `.claude-plugin/` and `skills/`.
+Design and module layout: [docs/DESIGN.md](docs/DESIGN.md). Inside this repository, `npx framelens` resolves to the
+checkout itself; point an MCP client at `dist/framelens.mjs` while developing.
 
 ## License
 

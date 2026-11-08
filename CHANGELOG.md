@@ -1,30 +1,46 @@
 # Changelog
 
-## Unreleased
+## 2.0.0 — 2026-11-09
 
+**ytlens is now Frame Lens** (`framelens`): eyes and ears for AI agents for any video or animation. It measures
+instead of retelling, runs locally for free, and picks how to look at a video from the user's goal. The Gemini tools
+of 1.x keep working unchanged; settings named `YTLENS_*` are still read, and `framelens init` replaces an old
+`ytlens` entry in `.mcp.json`.
+
+New local tools (ffmpeg; links through a pinned, checksum-verified yt-dlp):
+- `probe`, `plan`: fetch and probe any source, classify the video and plan the analysis for a goal (listen, learn,
+  find, style, sound, production) with an image-token estimate.
+- `transcript`: word-timed transcripts from captions (json3, VTT with inline word times), Gemini as a fallback.
+- `frames`: frames with their real timestamps (the first frame at or after each sample point, every frame for
+  transitions, VFR-safe) in contact sheets with time, frame number and the words spoken under each picture; `around`
+  a phrase.
+- `boundaries`: picture-change candidates and how dynamic a video is.
+- `style`: cuts told apart from fast motion and flashes, shots with OKLab palettes, moves with their duration in
+  frames and easing family; `motion-spec.json`, `STYLE.md`, `TIMELINE.md`, `ANALYSIS.md`.
+- `audio`: loudness, silences, onsets, tempo and beat grid, cuts on the beat, spectrogram.
+- `export`: starter projects for HyperFrames, Remotion, CSS, After Effects (ExtendScript), Lottie, and a handoff for
+  Hypit; `compare`: a render against the reference (cuts, colour, picture similarity, worst moments).
+- `web`: a live page's animations read exactly (CSS, Web Animations, Motion, GSAP), with real fonts and colours.
+- `exact`: Lottie and dotLottie keyframes and curves, Figma prototype transitions.
+- `framelens doctor [--prepare]`, `framelens login <site>` / `logout` (a separate browser profile for sites that
+  need the user's own login), the `inbox` source and opt-in cookies.
+- Accuracy is measured on ground-truth videos: [docs/ACCURACY.md](docs/ACCURACY.md).
+
+Fixes found by independent audits before the release:
 - `frames` `at` names each frame by the time of the frame shown, not the moment asked for, and a moment inside the
   last frame (up to the duration) returns that frame instead of an ffmpeg error.
 - Variable frame rate is detected in Matroska/WebM files, which store no frame count.
 - Folder names with an apostrophe (and `, ; [ ]`) no longer break contact-sheet labels and measurements.
-- `style` times a cut on its own frame at 60 fps and above (it could be up to three frames late), and reads the
-  palette of a one-frame video.
-- `audio` onsets and the beat grid sit on the attack; before they were about 80 ms early. No cuts no longer
-  reads as "0% of cuts on a beat".
-- `plan` no longer proposes picture steps for audio files, and plans a still image as one frame; `frames` on an
-  audio file says there is no picture.
-- Exports: the HyperFrames index loads GSAP (without it no animation ran) and uses a bundled Inter weight; CSS
-  preview scenes show only during their own slot; a multi-line source title can no longer turn into code in the
-  Remotion starter.
+- `style` times a cut on its own frame at 60 fps and above, and reads the palette of a one-frame video.
+- `audio` onsets and the beat grid sit on the attack; before they were about 80 ms early.
+- `plan` no longer proposes picture steps for audio files; `frames` on an audio file says there is no picture.
+- Exports: the HyperFrames index loads GSAP and uses a bundled Inter weight; CSS preview scenes show only during
+  their own slot; a multi-line source title can no longer turn into code in the Remotion or After Effects starters.
 - Every tool result that shows a title from a site carries the third-party notice.
-
-- A per-minute input-token limit is waited out once before giving up: it is often used up by earlier requests,
-  not by this one. The message no longer claims the request is too large when that is not known.
-- A 429 without quota details (Google short of capacity) is retried with backoff again, as before 1.2.0.
-- When the deadline would cut a retry wait short, the error says what was being waited out (rate limit, server
-  error) instead of a timeout that suggests raising `FRAMELENS_TIMEOUT_MS`; such waits are no longer started.
-- A missing fallback model no longer hides the used-up daily quota of the main model.
-- An empty `FRAMELENS_FALLBACK_MODELS` turns fallback models off; before, it silently meant the default.
-- A numeric quota limit of `0` is recognised like the usual string.
+- Gemini: a per-minute input-token limit is waited out once before giving up; a 429 without quota details is
+  retried with backoff; a deadline during a retry wait reports what was being waited out; a missing fallback model
+  no longer hides the used-up daily quota; an empty `FRAMELENS_FALLBACK_MODELS` turns fallbacks off; a numeric quota
+  limit of `0` is recognised.
 
 ## 1.2.0 — 2026-11-09
 
