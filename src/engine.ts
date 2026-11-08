@@ -315,7 +315,7 @@ export class Engine {
       spec = ws.readJson<MotionSpec>("motion-spec.json") ?? (await this.style(input, { version })).spec;
     }
     const dir = ws.ensure("export", target);
-    const files = exportSpec(spec!, target, dir);
+    const files = exportSpec(spec!, target, dir, { workspace: ws.dir });
     this.progress(ws, `export: ${target} starter with ${spec!.shots.length} scenes → ${ws.display(dir)}`);
     return { ws, title: spec!.source.title ?? input, dir, files };
   }

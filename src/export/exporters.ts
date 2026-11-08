@@ -2,8 +2,11 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { EasingFamily } from "../style/motion.js";
 import type { MotionSpec } from "../style/spec.js";
+import { exportAfterEffects } from "./after-effects.js";
+import { exportHypit } from "./hypit.js";
+import { exportLottie } from "./lottie.js";
 
-export const EXPORT_TARGETS = ["hyperframes", "remotion", "css"] as const;
+export const EXPORT_TARGETS = ["hyperframes", "remotion", "css", "after-effects", "lottie", "hypit"] as const;
 export type ExportTarget = (typeof EXPORT_TARGETS)[number];
 
 /** GSAP names for each easing family (HyperFrames and plain GSAP). */
@@ -16,7 +19,7 @@ const GSAP_EASE: Record<EasingFamily, string> = {
 };
 
 /** cubic-bezier control points per family (Remotion's Easing.bezier and CSS). */
-const BEZIER: Record<EasingFamily, [number, number, number, number]> = {
+export const BEZIER: Record<EasingFamily, [number, number, number, number]> = {
   "ease-out": [0.16, 1, 0.3, 1],
   "ease-in": [0.7, 0, 0.84, 0],
   "ease-in-out": [0.65, 0, 0.35, 1],
@@ -34,7 +37,7 @@ interface Scene {
   move?: { offset: number; seconds: number; easing: EasingFamily };
 }
 
-const r3 = (n: number) => Math.round(n * 1000) / 1000;
+export const r3 = (n: number) => Math.round(n * 1000) / 1000;
 
 /** The renderer-independent plan every exporter writes from: one scene per measured shot. */
 export function scenesFromSpec(spec: MotionSpec): Scene[] {
@@ -62,7 +65,7 @@ export function scenesFromSpec(spec: MotionSpec): Scene[] {
   });
 }
 
-function write(root: string, files: Record<string, string>): string[] {
+export function write(root: string, files: Record<string, string>): string[] {
   return Object.entries(files).map(([name, content]) => {
     const file = join(root, name);
     mkdirSync(dirname(file), { recursive: true });
@@ -71,7 +74,7 @@ function write(root: string, files: Record<string, string>): string[] {
   });
 }
 
-function referenceNotes(spec: MotionSpec, target: string): string {
+export function referenceNotes(spec: MotionSpec, target: string): string {
   const fps = spec.timebase.fps ?? 30;
   return `# Starter from a Frame Lens reference
 
@@ -283,8 +286,16 @@ ${scenes.map((s) => `  <section class="fl-scene" id="${s.id}"><h1>${s.id.replace
   return write(root, files);
 }
 
-export function exportSpec(spec: MotionSpec, target: ExportTarget, root: string): string[] {
+export interface ExportOptions {
+  /** The source's workspace folder; the Hypit target reads ANALYSIS.md, TIMELINE.md, STYLE.md and transcript.json from it. */
+  workspace?: string;
+}
+
+export function exportSpec(spec: MotionSpec, target: ExportTarget, root: string, options: ExportOptions = {}): string[] {
   if (target === "hyperframes") return exportHyperframes(spec, root);
   if (target === "remotion") return exportRemotion(spec, root);
+  if (target === "after-effects") return exportAfterEffects(spec, root);
+  if (target === "lottie") return exportLottie(spec, root);
+  if (target === "hypit") return exportHypit(spec, root, options);
   return exportCss(spec, root);
 }

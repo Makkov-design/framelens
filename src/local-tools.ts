@@ -325,7 +325,10 @@ export function registerLocalTools(server: McpServer, engine: Engine, logger: Lo
       title: "Starter project from the reference",
       description:
         "Turns the reference's motion-spec.json into a starter project for a renderer: `hyperframes` (index.html + one scene per " +
-        "shot with GSAP eases), `remotion` (Sequences per shot with Easing.bezier) or `css` (tokens, keyframes and a preview page). " +
+        "shot with GSAP eases), `remotion` (Sequences per shot with Easing.bezier), `css` (tokens, keyframes and a preview page), " +
+        "`after-effects` (framelens-reference.jsx: run it in After Effects to build the comp with eased keyframes and cut/beat markers), " +
+        "`lottie` (reference.json with solids, placeholder shapes and bezier easing) or `hypit` (references/<slug>/ANALYSIS.md, " +
+        "TIMELINE.md and transcript.json plus HANDOFF.md for the Hypit video tool, filled from the workspace notes). " +
         "It carries structure, cut times, colours and move timing; replace the placeholders with the user's own content. Runs " +
         "`style` first when needed. Afterwards render it and check it with `compare`.",
       inputSchema: {
@@ -344,7 +347,7 @@ export function registerLocalTools(server: McpServer, engine: Engine, logger: Lo
           `${args.target} starter written to ${ws.display(dir)}:`,
           ...files.map((f) => `- ${ws.display(f)}`),
           "",
-          "Read REFERENCE.md there. Replace the placeholder titles with the user's content, refine each move against `frames` every_frame, then render and run `compare`.",
+          "Read REFERENCE.md there (HANDOFF.md for hypit). Replace the placeholder titles with the user's content, refine each move against `frames` every_frame, then render and run `compare`.",
         ].join("\n");
         return { content: [{ type: "text", text }], structuredContent: { workspace: ws.dir, dir, files } };
       }),
