@@ -36,43 +36,71 @@ export function chooseMedia(candidates: MediaCandidate[]): { video?: MediaCandid
   return { ...(video && { video }), ...(audio && { audio }) };
 }
 
-/** Downloads a URL to a file (following redirects), stopping at `maxBytes`. */
-export function download(url: string, file: string, maxBytes: number, redirects = 5): Promise<void> {
+const isLocal = (url: string) => /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?\//.test(url);
+
+/**
+ * Downloads a URL to a file (following redirects), stopping at `maxBytes`. Always settles: over the cap, on a stalled
+ * or failed transfer, the partial file is removed and the promise rejects.
+ */
+export function download(url: string, file: string, maxBytes: number, redirects = 5, origin = url): Promise<void> {
   return new Promise((resolve, reject) => {
-    // Plain http only for a page on this computer (tests, local previews); everything remote goes over https.
-    const local = /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?\//.test(url);
-    if (!local && !url.startsWith("https://")) {
+    // Plain http only for a page on this computer (tests, local previews); everything remote goes over https, and a
+    // remote server cannot redirect us to this computer.
+    const local = isLocal(url);
+    if (!(local ? isLocal(origin) : url.startsWith("https://"))) {
       reject(new Error("Only https media links are downloaded."));
       return;
     }
+    let settled = false;
+    const fail = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      req.destroy();
+      out?.destroy();
+      rmSync(file, { force: true });
+      reject(error);
+    };
+    let out: ReturnType<typeof createWriteStream> | undefined;
     const get = local ? httpGet : httpsGet;
     const req = get(url, { headers: { "user-agent": "Mozilla/5.0 (framelens)" } }, (res) => {
       if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location && redirects > 0) {
         res.resume();
-        download(new URL(res.headers.location, url).toString(), file, maxBytes, redirects - 1).then(resolve, reject);
+        settled = true;
+        download(new URL(res.headers.location, url).toString(), file, maxBytes, redirects - 1, origin).then(resolve, reject);
         return;
       }
       if (res.statusCode !== 200) {
         res.resume();
-        reject(new Error(`The media server answered ${res.statusCode}.`));
+        fail(new Error(`The media server answered ${res.statusCode}.`));
+        return;
+      }
+      const tooLarge = () => new Error("The video is larger than FRAMELENS_MAX_DOWNLOAD_MB.");
+      if (Number(res.headers["content-length"] ?? 0) > maxBytes) {
+        fail(tooLarge());
         return;
       }
       let size = 0;
-      const out = createWriteStream(file);
+      out = createWriteStream(file);
       res.on("data", (chunk: Buffer) => {
         size += chunk.length;
-        if (size > maxBytes) {
-          req.destroy(new Error("The video is larger than FRAMELENS_MAX_DOWNLOAD_MB."));
-          out.destroy();
-        }
+        if (size > maxBytes) fail(tooLarge());
+      });
+      res.on("error", (e) => fail(e));
+      res.on("aborted", () => fail(new Error("The media download was cut off.")));
+      out.on("error", (e) => fail(e));
+      out.on("finish", () => {
+        if (settled) return;
+        settled = true;
+        resolve();
       });
       res.pipe(out);
-      out.on("finish", () => resolve());
-      out.on("error", reject);
-      res.on("error", reject);
     });
-    req.on("error", reject);
-    req.setTimeout(120_000, () => req.destroy(new Error("The media download timed out.")));
+    req.on("error", (e) => fail(e));
+    // An idle socket for 2 minutes, or 15 minutes in all, ends the transfer.
+    req.setTimeout(120_000, () => fail(new Error("The media download stalled.")));
+    const total = setTimeout(() => fail(new Error("The media download timed out.")), 15 * 60_000);
+    total.unref();
+    req.on("close", () => clearTimeout(total));
   });
 }
 
@@ -123,6 +151,8 @@ export function hasLoginProfile(): boolean {
  * the same file the user would watch, fetched once, at their request. Separate sound is merged with ffmpeg.
  */
 export async function captureVideo(url: string, outDir: string, tools: MediaTools, maxBytes: number): Promise<string> {
+  // Only web addresses: a YouTube ID or a local path that reached this tier must not be opened as a page.
+  if (!/^https?:\/\//i.test(url)) throw new InvalidInputError(`"${url}" is not a web page address (http or https).`);
   const executable = findBrowser();
   if (!executable) throw new InvalidInputError("Capturing needs Chrome or Edge on this computer.");
   mkdirSync(outDir, { recursive: true });
