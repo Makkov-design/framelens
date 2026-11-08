@@ -30,7 +30,7 @@ export type AnalyzerErrorKind =
 export interface QuotaInfo {
   /** "day" resets at midnight Pacific time; "minute" within a minute. */
   scope: "day" | "minute" | "unknown";
-  /** The limit counts input tokens and this one request is bigger than it, so waiting cannot help. */
+  /** The limit counts input tokens per minute. If it is hit again after one wait, this request alone is bigger than it. */
   tooLarge?: boolean;
   /** Google's quota id, e.g. GenerateRequestsPerDayPerProjectPerModel-FreeTier. */
   quotaId?: string;
