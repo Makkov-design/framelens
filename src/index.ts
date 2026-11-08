@@ -12,10 +12,12 @@ import { createSetupAnalyzer } from "./setup.js";
 import { VERSION } from "./version.js";
 import { Engine, type TranscriptFallback } from "./engine.js";
 import { execTool } from "./media/exec.js";
-import { resolveSource } from "./sources/index.js";
+import { createHash } from "node:crypto";
+import { captureVideo, hasLoginProfile, login, logout } from "./browser/capture.js";
+import { maxDownloadMb, resolveSource, SourceError } from "./sources/index.js";
 import { geminiTranscriptFallback } from "./speech/gemini.js";
 import { findTool } from "./tools/index.js";
-import { workspaceRoot } from "./workspace/workspace.js";
+import { Workspace, workspaceRoot } from "./workspace/workspace.js";
 import type { Logger } from "./logger.js";
 
 function createEngine(logger: Logger, transcriptFallback?: TranscriptFallback): Engine {
@@ -23,9 +25,24 @@ function createEngine(logger: Logger, transcriptFallback?: TranscriptFallback): 
   // clear tool error on first use, pointing at `framelens doctor`.
   const ffmpeg = findTool("ffmpeg")?.path ?? "ffmpeg";
   const ffprobe = findTool("ffprobe")?.path ?? "ffprobe";
+  const tools = { ffmpeg, ffprobe, exec: execTool };
   return new Engine({
-    tools: { ffmpeg, ffprobe, exec: execTool },
-    resolve: (input, options) => resolveSource(input, { ...options, log: (line) => logger.info(line) }),
+    tools,
+    resolve: async (input, options) => {
+      try {
+        return await resolveSource(input, { ...options, log: (line) => logger.info(line) });
+      } catch (error) {
+        // Tier 3: a site that needs a login, and the user has logged in to the Frame Lens browser profile.
+        if (!(error instanceof SourceError) || error.code !== "login_required" || !hasLoginProfile()) throw error;
+        const id = `url-${createHash("sha1").update(input.trim()).digest("hex").slice(0, 10)}`;
+        const ws = new Workspace(options.workspaceRoot, id);
+        logger.info("login required; capturing through the Frame Lens browser profile", { id });
+        const mediaPath = await captureVideo(input.trim(), ws.ensure("media"), tools, maxDownloadMb(process.env) * 1024 * 1024);
+        const record = { id, kind: "url" as const, input, url: input.trim(), mediaPath, fetchedAt: new Date().toISOString(), tools: {} };
+        ws.writeJson("source.json", record);
+        return record;
+      }
+    },
     root: workspaceRoot(),
     logger,
     ...(transcriptFallback && { transcriptFallback }),
@@ -41,6 +58,16 @@ async function main(): Promise<void> {
   }
   if (command === "doctor") {
     process.exitCode = await runDoctor({ prepare: process.argv.slice(3).includes("--prepare") });
+    return;
+  }
+  if (command === "login") {
+    const site = process.argv[3];
+    if (!site) throw new InvalidInputError("Say which site: framelens login instagram (or facebook, x, threads, linkedin, vimeo, tiktok).");
+    await login(site, (line) => process.stderr.write(line));
+    return;
+  }
+  if (command === "logout") {
+    process.stderr.write(logout() ? "The Frame Lens browser profile and its logins were deleted.\n" : "There was no Frame Lens browser profile.\n");
     return;
   }
   if (command === "--version" || command === "-v") {

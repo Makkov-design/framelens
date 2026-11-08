@@ -8,6 +8,8 @@ export interface SheetOptions {
   rows: number;
   /** Text under each cell, e.g. its time and the words spoken at that moment. */
   label?: (frame: ExtractedFrame) => string;
+  /** Cell width in pixels; by default the frames keep their own width. */
+  width?: number;
 }
 
 export interface Sheet {
@@ -83,7 +85,7 @@ export async function buildSheets(
       const file = join(outDir, `${baseName}-${String(page + 1).padStart(2, "0")}.jpg`);
       const inputs = chunk.flatMap((frame) => ["-i", frame.file]);
       const chains = chunk.map((_frame, i) => {
-        const parts = [`[${i}:v]scale=iw:-2`, "pad=iw:ih+56:0:0:color=0x111111"];
+        const parts = [`[${i}:v]scale=${options.width ?? "iw"}:-2`, "pad=iw:ih+56:0:0:color=0x111111"];
         if (labels) {
           const textFile = join(tmp, `${page}-${i}.txt`);
           writeFileSync(textFile, cells[i]!.label, "utf8");
