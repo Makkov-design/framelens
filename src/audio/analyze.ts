@@ -2,7 +2,7 @@ import { readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { MediaTools } from "../media/exec.js";
-import { estimateTempo, pickPeaks, spectralFlux } from "./dsp.js";
+import { estimateTempo, pickPeaks, refineOnset, spectralFlux } from "./dsp.js";
 
 export interface AudioAnalysis {
   range: { start: number; end: number };
@@ -70,14 +70,19 @@ export async function analyzeAudio(source: string, tools: MediaTools, range: { s
   const levels = parseLoudnessLog(stderr, range.start);
   const pcm = await readPcm(source, tools, range);
   const { hopSeconds, flux } = spectralFlux(pcm, SAMPLE_RATE);
-  const onsets = pickPeaks(flux, hopSeconds).map((o) => ({ t: Math.round((o.t + range.start) * 1000) / 1000, strength: o.strength }));
+  const peaks = pickPeaks(flux, hopSeconds);
+  const attacks = peaks.map((o) => refineOnset(pcm, SAMPLE_RATE, o.t));
+  const onsets = peaks.map((o, i) => ({ t: Math.round((attacks[i]! + range.start) * 1000) / 1000, strength: o.strength }));
   const tempo = estimateTempo(flux, hopSeconds);
+  // The beat grid comes from the same flux frames, so it carries the same lead; shift it by the typical one.
+  const leads = peaks.map((o, i) => attacks[i]! - o.t).sort((a, b) => a - b);
+  const lead = leads.length ? leads[Math.floor(leads.length / 2)]! : 0;
   return {
     range,
     ...levels,
     onsets,
     ...(tempo && { tempo: { bpm: tempo.bpm, confidence: tempo.confidence } }),
-    beats: tempo ? tempo.beats.map((b) => Math.round((b + range.start) * 1000) / 1000) : [],
+    beats: tempo ? tempo.beats.map((b) => Math.round((b + lead + range.start) * 1000) / 1000) : [],
   };
 }
 

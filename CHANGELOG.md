@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- `frames` `at` names each frame by the time of the frame shown, not the moment asked for, and a moment inside the
+  last frame (up to the duration) returns that frame instead of an ffmpeg error.
+- Variable frame rate is detected in Matroska/WebM files, which store no frame count.
+- Folder names with an apostrophe (and `, ; [ ]`) no longer break contact-sheet labels and measurements.
+- `style` times a cut on its own frame at 60 fps and above (it could be up to three frames late), and reads the
+  palette of a one-frame video.
+- `audio` onsets and the beat grid sit on the attack; before they were about 80 ms early. No cuts no longer
+  reads as "0% of cuts on a beat".
+- `plan` no longer proposes picture steps for audio files, and plans a still image as one frame; `frames` on an
+  audio file says there is no picture.
+- Exports: the HyperFrames index loads GSAP (without it no animation ran) and uses a bundled Inter weight; CSS
+  preview scenes show only during their own slot; a multi-line source title can no longer turn into code in the
+  Remotion starter.
+- Every tool result that shows a title from a site carries the third-party notice.
+
 - A per-minute input-token limit is waited out once before giving up: it is often used up by earlier requests,
   not by this one. The message no longer claims the request is too large when that is not known.
 - A 429 without quota details (Google short of capacity) is retried with backoff again, as before 1.2.0.

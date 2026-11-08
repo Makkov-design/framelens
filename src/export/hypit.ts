@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Transcript } from "../speech/transcript.js";
 import type { MotionSpec } from "../style/spec.js";
-import { write } from "./exporters.js";
+import { oneLine, write } from "./exporters.js";
 
 const START = "<!-- framelens:measured:start -->";
 const END = "<!-- framelens:measured:end -->";
@@ -78,7 +78,7 @@ function phaseName(index: number, count: number, length: number, median: number)
 }
 
 export function hypitAnalysis(spec: MotionSpec, workspace?: string): string {
-  const title = spec.source.title ?? spec.source.input;
+  const title = oneLine(spec.source.title ?? spec.source.input);
   const fps = spec.timebase.fps;
   const swatches = spec.palette.map((p) => `| \`${p.hex}\` | ${(p.share * 100).toFixed(1)}% | ${p.evidence} |`);
   const kinds = new Map<string, number>();
@@ -122,7 +122,7 @@ ${spec.palette.length === 0 ? "- No palette was measured.\n" : ""}`;
 }
 
 export function hypitTimeline(spec: MotionSpec, workspace?: string): string {
-  const title = spec.source.title ?? spec.source.input;
+  const title = oneLine(spec.source.title ?? spec.source.input);
   const ownTimeline = readText(workspace, "TIMELINE.md");
   const notes = shotNotes(ownTimeline);
   const median = spec.rhythm.medianShotSeconds;

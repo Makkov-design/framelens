@@ -33,7 +33,9 @@ describe("parsers", () => {
   });
 
   it("quotes filter values and fits labels to two lines", () => {
-    expect(filterValue("C:\\a b\\it's.txt")).toBe("'C\\:/a b/it'\\''s.txt'");
+    // Option level escapes `\ ' :`, then the graph level escapes `\ ' [ ] , ;` once more.
+    expect(filterValue("C:\\a b\\it's.txt", "win32")).toBe("C\\\\:/a b/it\\\\\\'s.txt");
+    expect(filterValue("/tmp/a,b[1]", "linux")).toBe("/tmp/a\\,b\\[1\\]");
     expect(fitLabel("one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen", 20).split("\n")).toHaveLength(2);
   });
 });
