@@ -1,4 +1,4 @@
-import { mkdirSync, readdirSync, renameSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, renameSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { InvalidInputError } from "../errors.js";
 import type { MediaTools } from "./exec.js";
@@ -81,16 +81,40 @@ export async function extractFrames(
   mkdirSync(outDir, { recursive: true });
 
   if (request.at?.length) {
-    const frames: ExtractedFrame[] = [];
-    for (const t of [...new Set(request.at)].sort((a, b) => a - b)) {
-      const file = join(outDir, frameFileName(t));
-      await tools.exec(tools.ffmpeg, [
-        "-hide_banner", "-nostdin", "-v", "error", "-y",
-        "-ss", String(t), "-i", source, "-frames:v", "1", "-vf", scale, "-q:v", "3", file,
-      ]);
-      frames.push({ t, file });
+    // Each frame is named by the time of the frame actually shown (the first at or after the moment), not the
+    // moment asked for: at 25 fps, 0.01 s shows the frame at 0.04 s.
+    const tmp = join(outDir, `.tmp-${process.pid}-${Date.now()}`);
+    mkdirSync(tmp, { recursive: true });
+    try {
+      const frames: ExtractedFrame[] = [];
+      for (const t of [...new Set(request.at)].sort((a, b) => a - b)) {
+        const shot = join(tmp, "f.jpg");
+        const grab = async (seek: number, last: boolean) => {
+          const { stderr } = await tools.exec(tools.ffmpeg, [
+            "-hide_banner", "-nostdin", "-y",
+            "-ss", String(seek), "-i", source, "-an",
+            ...(last ? [] : ["-frames:v", "1"]),
+            "-vf", `${scale},showinfo`, "-fps_mode", "passthrough", "-q:v", "3",
+            ...(last ? ["-update", "1"] : []),
+            shot,
+          ]);
+          const times = parseShowinfo(stderr);
+          return existsSync(shot) && times.length ? seek + times[last ? times.length - 1 : 0]! : undefined;
+        };
+        // A moment inside the last frame's display time (up to the duration) has no frame at or after it: the
+        // frame on screen then is the last one, so decode the end of the file and keep its final frame.
+        // ffmpeg fails ("Could not open encoder before EOF") when the seek finds no frame.
+        const real = (await grab(t, false).catch(() => undefined)) ?? (await grab(Math.max(0, t - 10), true));
+        if (real === undefined) throw new InvalidInputError(`No frame could be read at ${t} s.`);
+        const time = Math.round(real * 1000) / 1000;
+        const file = join(outDir, frameFileName(time));
+        renameSync(shot, file);
+        frames.push({ t: time, file });
+      }
+      return frames;
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
     }
-    return frames;
   }
 
   // One continuous decode of the range; showinfo reports each written frame's real timestamp.
@@ -110,9 +134,11 @@ export async function extractFrames(
     ]);
     const times = parseShowinfo(stderr);
     const written = readdirSync(tmp).filter((f) => f.endsWith(".jpg")).sort();
+    // Times are measured, never computed from the rate: a mismatch means the log cannot be trusted.
+    if (times.length !== written.length) throw new Error(`ffmpeg reported ${times.length} frame times for ${written.length} frames.`);
     const frames: ExtractedFrame[] = [];
     written.forEach((name, i) => {
-      const t = Math.round((start + (times[i] ?? i / (request.fps ?? 1))) * 1000) / 1000;
+      const t = Math.round((start + times[i]!) * 1000) / 1000;
       const file = join(outDir, frameFileName(t));
       renameSync(join(tmp, name), file);
       frames.push({ t, file });

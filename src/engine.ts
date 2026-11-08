@@ -156,6 +156,7 @@ export class Engine {
 
   async frames(input: string, request: FramesInput): Promise<FramesResult> {
     const source = await this.source(input);
+    if (!source.probe.hasVideo) throw new InvalidInputError("This source has no picture, only sound: use `audio` or `transcript`.");
     const wantsWords = request.words !== false;
     const { transcript } = request.around || wantsWords ? await this.transcript(source, { required: Boolean(request.around) }) : {};
 
@@ -237,13 +238,15 @@ export class Engine {
     const fps = probe.fps ?? probe.nominalFps ?? 30;
     const energy = await motionEnergy(record.mediaPath, this.options.tools, range);
     ws.writeJson(`energy-${start.toFixed(2)}-${end.toFixed(2)}.json`, energy);
-    const changes = classifyChanges(boundaries.candidates, energy, fps);
+    const changes = classifyChanges(boundaries.candidates, energy, fps, 1 / boundaries.rate);
     const cutTimes = changes.filter((c) => c.kind === "cut").map((c) => c.t);
 
     const tmp = ws.ensure("frames", "palette");
     const shots: Shot[] = [];
     for (const [i, s] of shotsFromCuts(cutTimes, range, fps).entries()) {
-      const pixels = await framePixels(record.mediaPath, (s.start + s.end) / 2, probe, this.options.tools, tmp);
+      let pixels = await framePixels(record.mediaPath, (s.start + s.end) / 2, probe, this.options.tools, tmp);
+      // A one-frame shot has no frame at or after its middle; its only frame is at the start.
+      if (!pixels.length) pixels = await framePixels(record.mediaPath, s.start, probe, this.options.tools, tmp);
       shots.push({ id: `s${i + 1}`, start: s.start, end: s.end, frames: Math.round((s.end - s.start) * fps), palette: palette(pixels, 5) });
     }
     const overall = mergePalettes(shots.map((s) => ({ swatches: s.palette, weight: s.end - s.start })));
@@ -283,7 +286,8 @@ export class Engine {
     const spec = ws.readJson<MotionSpec>("motion-spec.json");
     if (spec) {
       const cuts = spec.anchors.cuts.map((c) => c.t).filter((t) => t >= start && t <= end);
-      cutOnBeat = analysis.beats.length ? onBeatRatio(cuts, analysis.beats) : undefined;
+      // No cuts is not "0% on the beat": leave the ratio out.
+      cutOnBeat = analysis.beats.length && cuts.length ? onBeatRatio(cuts, analysis.beats) : undefined;
       spec.anchors.beats = analysis.beats.map((t, i) => ({ id: `b${i + 1}`, t }));
       spec.audio = {
         ...spec.audio,

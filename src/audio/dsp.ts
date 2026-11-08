@@ -95,6 +95,33 @@ export function pickPeaks(signal: Float64Array, hopSeconds: number, options: { m
 }
 
 /**
+ * The time of the attack behind a flux peak. A flux frame is labelled by its first sample, but a hit raises the
+ * flux most while it is still in the window's later part, so peak times came out 70–80 ms (two video frames)
+ * before the sound. This finds the steepest rise of a 3 ms energy envelope around the frame instead.
+ */
+export function refineOnset(samples: Float32Array, sampleRate: number, t: number, frameSize = 1024, hop = 256): number {
+  const block = Math.max(1, Math.round(sampleRate * 0.003));
+  const center = Math.floor(t * sampleRate);
+  const from = Math.max(0, center - hop);
+  const to = Math.min(samples.length, center + frameSize + hop);
+  const recent: number[] = [];
+  let best = { rise: -Infinity, t };
+  for (let s = from; s + block <= to; s += block) {
+    let energy = 0;
+    for (let k = s; k < s + block; k++) energy += samples[k]! * samples[k]!;
+    energy /= block;
+    if (recent.length) {
+      const base = recent.reduce((sum, v) => sum + v, 0) / recent.length;
+      const rise = Math.log10((energy + 1e-10) / (base + 1e-10));
+      if (rise > best.rise) best = { rise, t: s / sampleRate };
+    }
+    recent.push(energy);
+    if (recent.length > 4) recent.shift();
+  }
+  return best.t;
+}
+
+/**
  * Tempo by autocorrelation of the onset strength over 60–200 BPM, preferring the 80–160 range people tap to.
  * Returns the period, a confidence 0–1, and the beat phase that lines up best with the onsets.
  */
