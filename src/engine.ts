@@ -10,6 +10,8 @@ import { probeMedia, type ProbeInfo } from "./media/probe.js";
 import { buildSheets, type Sheet } from "./media/sheets.js";
 import { buildPlan, type Goal, type Plan } from "./router/plan.js";
 import { findPhrase, readCaptions, toMarkdown, wordsAt, type Transcript } from "./speech/transcript.js";
+import { analyzeAudio, spectrogram, type AudioAnalysis } from "./audio/analyze.js";
+import { onBeatRatio } from "./audio/dsp.js";
 import { classifyChanges, motionEnergy, motionEvents } from "./style/motion.js";
 import { mergePalettes, palette } from "./style/palette.js";
 import {
@@ -27,6 +29,8 @@ import { Workspace, type SourceRecord } from "./workspace/workspace.js";
 
 /** The style pass reads every frame; longer references are analyzed in parts. */
 export const MAX_STYLE_SECONDS = 180;
+/** Audio analysis decodes the whole range into memory. */
+export const MAX_AUDIO_SECONDS = 600;
 
 /** Turns user input (link, path, ID) into a local media file inside a workspace folder. */
 export type SourceResolver = (input: string, options: { workspaceRoot: string; signal?: AbortSignal }) => Promise<SourceRecord>;
@@ -253,6 +257,43 @@ export class Engine {
     files.analysis = existsSync(analysis) ? analysis : ws.writeText("ANALYSIS.md", ANALYSIS_SKELETON(record.title ?? record.input));
     this.progress(ws, `style: ${shots.length} shots, ${events.length} moves, ${overall.length} palette colours (${start.toFixed(2)}–${end.toFixed(2)} s)${notes.length ? `; ${notes.join(" ")}` : ""}`);
     return { source, spec, files };
+  }
+
+  /**
+   * Sound: loudness, silences, onsets, tempo and beat grid, how many cuts land on a beat, and a spectrogram picture.
+   * When motion-spec.json exists, its beat anchors and audio block are filled in.
+   */
+  async audio(input: string, options: { start?: number; end?: number } = {}): Promise<{ source: Source; analysis: AudioAnalysis; cutOnBeat?: number; files: Record<string, string> }> {
+    const source = await this.source(input);
+    const { probe, record, ws } = source;
+    if (!probe.hasAudio) throw new InvalidInputError("This source has no sound.");
+    const start = Math.max(0, options.start ?? 0);
+    const end = Math.min(probe.duration, options.end ?? Math.min(probe.duration, start + MAX_AUDIO_SECONDS));
+    const range = { start, end };
+    const analysis = await analyzeAudio(record.mediaPath, this.options.tools, range);
+    const name = `audio-${start.toFixed(2)}-${end.toFixed(2)}`;
+    const files: Record<string, string> = {
+      audio: ws.writeJson(`${name}.json`, analysis),
+      spectrogram: await spectrogram(record.mediaPath, ws.path(`${name}-spectrogram.png`), this.options.tools, range),
+    };
+
+    let cutOnBeat: number | undefined;
+    const spec = ws.readJson<MotionSpec>("motion-spec.json");
+    if (spec) {
+      const cuts = spec.anchors.cuts.map((c) => c.t).filter((t) => t >= start && t <= end);
+      cutOnBeat = analysis.beats.length ? onBeatRatio(cuts, analysis.beats) : undefined;
+      spec.anchors.beats = analysis.beats.map((t, i) => ({ id: `b${i + 1}`, t }));
+      spec.audio = {
+        ...spec.audio,
+        ...(analysis.tempo && { tempo_bpm: analysis.tempo.bpm }),
+        ...(cutOnBeat !== undefined && { cut_on_beat_ratio: cutOnBeat }),
+        ...(analysis.integratedLufs !== undefined && { integrated_lufs: analysis.integratedLufs }),
+        hits: analysis.onsets.filter((o) => o.strength >= 0.5).map((o) => ({ t: o.t, strength: o.strength, evidence: "measured" })),
+      };
+      files.spec = ws.writeJson("motion-spec.json", spec);
+    }
+    this.progress(ws, `audio: ${analysis.tempo ? `${analysis.tempo.bpm} BPM (confidence ${analysis.tempo.confidence})` : "no steady tempo"}, ${analysis.onsets.length} onsets, ${analysis.silences.length} silences${cutOnBeat !== undefined ? `, ${Math.round(cutOnBeat * 100)}% of cuts on a beat` : ""}`);
+    return { source, analysis, ...(cutOnBeat !== undefined && { cutOnBeat }), files };
   }
 
   /** Appends a line to PROGRESS.md so a later session can see what was already done. */

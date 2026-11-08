@@ -276,6 +276,49 @@ export function registerLocalTools(server: McpServer, engine: Engine, logger: Lo
   );
 
   server.registerTool(
+    "audio",
+    {
+      title: "Analyze the sound",
+      description:
+        "Sound design and music: loudness (LUFS) over time, silences, onsets (hits, impacts, clicks), tempo and beat grid, and how " +
+        "many cuts land on a beat (when `style` ran first). Returns a spectrogram picture: rising sweeps are risers or whooshes, " +
+        "vertical lines are hits, horizontal bands are tones and music beds. Writes audio-*.json and adds beats to motion-spec.json.",
+      inputSchema: {
+        source: sourceInput,
+        start: time.optional(),
+        end: time.optional().describe("Range end (default the end, at most 10 minutes at a time)."),
+      },
+      annotations: READ_ONLY,
+    },
+    (args) =>
+      run("audio", async () => {
+        const { source, analysis, cutOnBeat, files } = await engine.audio(args.source, {
+          ...(args.start !== undefined && { start: parseTime(args.start) }),
+          ...(args.end !== undefined && { end: parseTime(args.end) }),
+        });
+        const ws = source.ws;
+        const strong = analysis.onsets.filter((o) => o.strength >= 0.5);
+        const text = [
+          sourceLine(source),
+          "",
+          `Range ${analysis.range.start.toFixed(2)}–${analysis.range.end.toFixed(2)} s.`,
+          `Loudness: ${analysis.integratedLufs !== undefined ? `${analysis.integratedLufs} LUFS integrated` : "not measured"}; ${analysis.silences.length} silences${analysis.silences.length ? ` (${analysis.silences.slice(0, 6).map((s) => `${s.start.toFixed(2)}–${s.end.toFixed(2)}`).join(", ")})` : ""}.`,
+          `Tempo: ${analysis.tempo ? `${analysis.tempo.bpm} BPM, confidence ${analysis.tempo.confidence}${analysis.tempo.confidence < 0.3 ? " (weak: speech or free rhythm)" : ""}` : "no steady beat"}; ${analysis.beats.length} beats.`,
+          cutOnBeat !== undefined ? `Cuts on a beat: ${Math.round(cutOnBeat * 100)}%.` : "Run `style` first to compare cuts with the beat.",
+          `Onsets: ${analysis.onsets.length}, strongest: ${strong.slice(0, 15).map((o) => o.t.toFixed(2)).join(", ") || "none"}.`,
+          `Files: ${Object.values(files).map((f) => ws.display(f)).join(", ")}.`,
+        ].join("\n");
+        return {
+          content: [
+            { type: "text", text },
+            { type: "image", data: readFileSync(files.spectrogram!).toString("base64"), mimeType: "image/png" },
+          ],
+          structuredContent: { workspace: ws.dir, files, analysis: { ...analysis, loudness: analysis.loudness.length }, cut_on_beat_ratio: cutOnBeat ?? null },
+        };
+      }),
+  );
+
+  server.registerTool(
     "boundaries",
     {
       title: "Find where the picture changes",
