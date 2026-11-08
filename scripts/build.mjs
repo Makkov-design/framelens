@@ -1,11 +1,11 @@
-// Bundles the server and all its dependencies into one file, dist/ytlens.mjs.
-// The file is committed, so `npx github:Makkov-design/ytlens` starts without installing or compiling anything.
+// Bundles the server and all its dependencies into one file, dist/framelens.mjs.
+// The file is committed, so `npx github:Makkov-design/framelens` starts without installing or compiling anything.
 // The shebang comes from src/index.ts; `.mjs` keeps the file an ES module wherever it is copied.
 import { build } from "esbuild";
 
 await build({
   entryPoints: ["src/index.ts"],
-  outfile: "dist/ytlens.mjs",
+  outfile: "dist/framelens.mjs",
   bundle: true,
   platform: "node",
   format: "esm",
@@ -15,8 +15,8 @@ await build({
   // Bundled CommonJS dependencies call require(); give them one in the ESM output.
   banner: {
     js: [
-      'import { createRequire as __ytlensCreateRequire } from "node:module";',
-      "const require = __ytlensCreateRequire(import.meta.url);",
+      'import { createRequire as __framelensCreateRequire } from "node:module";',
+      "const require = __framelensCreateRequire(import.meta.url);",
     ].join("\n"),
   },
   logLevel: "warning",

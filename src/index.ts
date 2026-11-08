@@ -14,7 +14,7 @@ async function main(): Promise<void> {
   const command = process.argv[2];
   if (command === "init") {
     const { files } = initProject(process.cwd());
-    process.stderr.write(`ytlens ${VERSION}: added ${files.join(" and ")} to ${process.cwd()}\n${INIT_NEXT_STEPS}`);
+    process.stderr.write(`framelens ${VERSION}: added ${files.join(" and ")} to ${process.cwd()}\n${INIT_NEXT_STEPS}`);
     return;
   }
   if (command === "--version" || command === "-v") {
@@ -22,7 +22,7 @@ async function main(): Promise<void> {
     return;
   }
   if (command !== undefined) {
-    throw new ConfigError(`Unknown command "${command}". Run without arguments to start the MCP server, or "init" to add ytlens to the current project.`);
+    throw new ConfigError(`Unknown command "${command}". Run without arguments to start the MCP server, or "init" to add framelens to the current project.`);
   }
 
   let config;
@@ -35,7 +35,7 @@ async function main(): Promise<void> {
     const setupLogger = createLogger("info");
     const setupServer = createServer({ analyzer: createSetupAnalyzer(error.message), logger: setupLogger });
     await setupServer.connect(new StdioServerTransport());
-    setupLogger.warn(`ytlens ${VERSION} started without a Gemini key; every tool explains how to add one`);
+    setupLogger.warn(`framelens ${VERSION} started without a Gemini key; every tool explains how to add one`);
     return;
   }
   const logger = createLogger(config.logLevel, undefined, [config.apiKey]);
@@ -43,7 +43,7 @@ async function main(): Promise<void> {
   const server = createServer({ analyzer, logger });
 
   await server.connect(new StdioServerTransport());
-  logger.info(`ytlens ${VERSION} ready`, { model: config.model });
+  logger.info(`framelens ${VERSION} ready`, { model: config.model });
 }
 
 main().catch((error: unknown) => {
@@ -51,6 +51,6 @@ main().catch((error: unknown) => {
     error instanceof ConfigError || error instanceof InvalidInputError
       ? error.message
       : `Failed to start: ${error instanceof Error ? error.message : String(error)}`;
-  process.stderr.write(`[ytlens] ERROR ${message}\n`);
+  process.stderr.write(`[framelens] ERROR ${message}\n`);
   process.exit(1);
 });

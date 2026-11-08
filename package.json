@@ -1,13 +1,13 @@
 {
-  "name": "ytlens",
+  "name": "framelens",
   "version": "1.2.0",
   "description": "MCP server that lets AI assistants watch YouTube videos (frames + audio) through Google Gemini.",
   "type": "module",
   "bin": {
-    "ytlens": "dist/ytlens.mjs"
+    "framelens": "dist/framelens.mjs"
   },
   "files": [
-    "dist/ytlens.mjs",
+    "dist/framelens.mjs",
     "skills",
     "README.md",
     "LICENSE"
@@ -36,13 +36,13 @@
   ],
   "author": "Makkov",
   "license": "MIT",
-  "homepage": "https://github.com/Makkov-design/ytlens#readme",
+  "homepage": "https://github.com/Makkov-design/framelens#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Makkov-design/ytlens.git"
+    "url": "git+https://github.com/Makkov-design/framelens.git"
   },
   "bugs": {
-    "url": "https://github.com/Makkov-design/ytlens/issues"
+    "url": "https://github.com/Makkov-design/framelens/issues"
   },
   "devDependencies": {
     "@google/genai": "^2.30.0",

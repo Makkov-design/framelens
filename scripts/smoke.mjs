@@ -19,8 +19,8 @@ if (!process.env.GEMINI_API_KEY && !process.env.GOOGLE_API_KEY) {
 
 const transport = new StdioClientTransport({
   command: process.execPath,
-  args: [fileURLToPath(new URL("../dist/ytlens.mjs", import.meta.url))],
-  env: { ...process.env, YTLENS_LOG_LEVEL: "info" },
+  args: [fileURLToPath(new URL("../dist/framelens.mjs", import.meta.url))],
+  env: { ...process.env, FRAMELENS_LOG_LEVEL: "info" },
   stderr: "inherit",
 });
 const protocolErrors = [];

@@ -23,7 +23,7 @@ export function createLogger(
   const log = (lvl: LogLevel) => (message: string, fields?: Record<string, unknown>) => {
     if (LOG_LEVELS.indexOf(lvl) > threshold) return;
     const suffix = fields ? ` ${JSON.stringify(fields, replacer)}` : "";
-    write(redact(`[ytlens] ${lvl.toUpperCase()} ${message}${suffix}`));
+    write(redact(`[framelens] ${lvl.toUpperCase()} ${message}${suffix}`));
   };
 
   return { error: log("error"), warn: log("warn"), info: log("info"), debug: log("debug") };

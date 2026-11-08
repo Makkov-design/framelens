@@ -268,7 +268,7 @@ export class GeminiAnalyzer implements VideoAnalyzer {
       if (name === "AbortError" || name === "TimeoutError" || /timed? ?out/i.test(raw)) {
         return new AnalyzerError(
           "timeout",
-          `Gemini did not answer within ${Math.round(this.timeoutMs / 1000)} s. Analyze a shorter part with \`start\`/\`end\`, or raise YTLENS_TIMEOUT_MS.`,
+          `Gemini did not answer within ${Math.round(this.timeoutMs / 1000)} s. Analyze a shorter part with \`start\`/\`end\`, or raise FRAMELENS_TIMEOUT_MS.`,
         );
       }
       if (/fetch failed|ECONNRESET|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|network/i.test(raw)) {

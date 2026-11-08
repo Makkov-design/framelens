@@ -1,13 +1,13 @@
 {
-  "name": "ytlens",
-  "description": "ytlens: let Claude watch YouTube videos through Google Gemini.",
+  "name": "framelens",
+  "description": "framelens: let Claude watch YouTube videos through Google Gemini.",
   "owner": {
     "name": "Makkov",
     "url": "https://github.com/Makkov-design"
   },
   "plugins": [
     {
-      "name": "ytlens",
+      "name": "framelens",
       "source": "./",
       "description": "Let Claude watch YouTube videos (frames + audio) through Google Gemini."
     }

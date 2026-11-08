@@ -11,7 +11,7 @@ RUN npm run bundle
 FROM node:24-alpine
 ENV NODE_ENV=production
 WORKDIR /app
-COPY --from=build /app/dist/ytlens.mjs ./ytlens.mjs
+COPY --from=build /app/dist/framelens.mjs ./framelens.mjs
 USER node
 # MCP over stdio: run with `docker run -i`.
-ENTRYPOINT ["node", "ytlens.mjs"]
+ENTRYPOINT ["node", "framelens.mjs"]

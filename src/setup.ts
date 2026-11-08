@@ -3,7 +3,7 @@ import { DEFAULT_MODEL } from "./config.js";
 import { AnalyzerError } from "./errors.js";
 
 export const SETUP_STEPS =
-  "To use ytlens, add a Gemini API key (free at https://aistudio.google.com/apikey). " +
+  "To use framelens, add a Gemini API key (free at https://aistudio.google.com/apikey). " +
   "On a computer: set GEMINI_API_KEY in the environment, or in the \"env\" section of the MCP config, then restart the client. " +
   "In a Claude cloud session (claude.ai/code): open the environment's settings, add GEMINI_API_KEY=<your key> under Environment variables, then start a new session.";
 

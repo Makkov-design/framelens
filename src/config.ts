@@ -25,7 +25,13 @@ type Env = Record<string, string | undefined>;
 
 function read(env: Env, name: string): string | undefined {
   const value = env[name]?.trim();
-  return value ? value : undefined;
+  if (value) return value;
+  // Settings written for ytlens, the earlier name of this project, keep working.
+  if (name.startsWith("FRAMELENS_")) {
+    const legacy = env[`YTLENS_${name.slice("FRAMELENS_".length)}`]?.trim();
+    if (legacy) return legacy;
+  }
+  return undefined;
 }
 
 function readInt(env: Env, name: string, fallback: number, min: number, max: number): number {
@@ -55,13 +61,13 @@ export function loadConfig(env: Env): Config {
     );
   }
 
-  const logLevel = (read(env, "YTLENS_LOG_LEVEL") ?? "info").toLowerCase();
+  const logLevel = (read(env, "FRAMELENS_LOG_LEVEL") ?? "info").toLowerCase();
   if (!(LOG_LEVELS as readonly string[]).includes(logLevel)) {
-    throw new ConfigError(`YTLENS_LOG_LEVEL must be one of ${LOG_LEVELS.join(", ")}.`);
+    throw new ConfigError(`FRAMELENS_LOG_LEVEL must be one of ${LOG_LEVELS.join(", ")}.`);
   }
 
   const model = read(env, "GEMINI_MODEL_NAME") ?? DEFAULT_MODEL;
-  const fallbacks = read(env, "YTLENS_FALLBACK_MODELS");
+  const fallbacks = read(env, "FRAMELENS_FALLBACK_MODELS");
   const fallbackModels = (fallbacks === undefined ? DEFAULT_FALLBACK_MODELS : fallbacks.split(","))
     .map((name) => name.trim())
     .filter((name, i, all) => name && name !== model && all.indexOf(name) === i);
@@ -70,9 +76,9 @@ export function loadConfig(env: Env): Config {
     apiKey,
     model,
     fallbackModels,
-    timeoutMs: readInt(env, "YTLENS_TIMEOUT_MS", 300_000, 1_000, 3_600_000),
-    maxRetries: readInt(env, "YTLENS_MAX_RETRIES", 3, 0, 10),
-    cacheTtlMs: readInt(env, "YTLENS_CACHE_TTL_MINUTES", 60, 0, 7 * 24 * 60) * 60_000,
+    timeoutMs: readInt(env, "FRAMELENS_TIMEOUT_MS", 300_000, 1_000, 3_600_000),
+    maxRetries: readInt(env, "FRAMELENS_MAX_RETRIES", 3, 0, 10),
+    cacheTtlMs: readInt(env, "FRAMELENS_CACHE_TTL_MINUTES", 60, 0, 7 * 24 * 60) * 60_000,
     logLevel: logLevel as LogLevel,
   };
 }

@@ -106,7 +106,7 @@ interface VideoArgs {
 
 export function createServer({ analyzer, logger, now = Date.now }: ServerDeps): McpServer {
   const server = new McpServer(
-    { name: "ytlens", version: VERSION },
+    { name: "framelens", version: VERSION },
     { instructions: SERVER_INSTRUCTIONS },
   );
 

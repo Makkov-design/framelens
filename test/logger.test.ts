@@ -14,13 +14,13 @@ describe("createLogger", () => {
     logger.info("i");
     logger.warn("w");
     logger.error("e");
-    expect(lines).toEqual(["[ytlens] WARN w", "[ytlens] ERROR e"]);
+    expect(lines).toEqual(["[framelens] WARN w", "[framelens] ERROR e"]);
   });
 
   it("appends fields as JSON", () => {
     const { logger, lines } = capture("info");
     logger.info("done", { videoId: "abc", ms: 12 });
-    expect(lines).toEqual(['[ytlens] INFO done {"videoId":"abc","ms":12}']);
+    expect(lines).toEqual(['[framelens] INFO done {"videoId":"abc","ms":12}']);
   });
 
   it("redacts secrets everywhere in the line", () => {

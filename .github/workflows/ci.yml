@@ -28,7 +28,7 @@ jobs:
       - run: npm test
       - run: npm run bundle
       - name: Committed bundle is up to date
-        run: git diff --exit-code --stat -- dist/ytlens.mjs || (echo "Run npm run bundle and commit dist/ytlens.mjs" && exit 1)
+        run: git diff --exit-code --stat -- dist/framelens.mjs || (echo "Run npm run bundle and commit dist/framelens.mjs" && exit 1)
       - run: npm audit --audit-level=high
 
   bundle-runs:
@@ -46,13 +46,13 @@ jobs:
           node-version: ${{ matrix.node }}
       - name: Server starts and lists its tools over stdio
         run: |
-          cp dist/ytlens.mjs "$RUNNER_TEMP/"
+          cp dist/framelens.mjs "$RUNNER_TEMP/"
           cd "$RUNNER_TEMP"
           printf '%s\n' \
             '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"0"}}}' \
             '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
             '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
-            | GEMINI_API_KEY=ci-dummy timeout 15 node ytlens.mjs > out.jsonl
+            | GEMINI_API_KEY=ci-dummy timeout 15 node framelens.mjs > out.jsonl
           node -e 'const l=require("fs").readFileSync("out.jsonl","utf8").trim().split("\n").map(JSON.parse); const t=l.find(m=>m.id===2).result.tools; if(t.length!==5) throw new Error("expected 5 tools"); console.log(t.map(x=>x.name).join(", "))'
 
   docker:
@@ -61,4 +61,4 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - run: docker build -t ytlens .
+      - run: docker build -t framelens .

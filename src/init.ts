@@ -4,9 +4,9 @@ import { InvalidInputError } from "./errors.js";
 import { VERSION } from "./version.js";
 
 /** Where projects fetch the server from: this exact version, straight from GitHub. */
-export const SERVER_SPEC = `github:Makkov-design/ytlens#v${VERSION}`;
+export const SERVER_SPEC = `github:Makkov-design/framelens#v${VERSION}`;
 
-const SKILL_SOURCE = new URL("../skills/ytlens/SKILL.md", import.meta.url);
+const SKILL_SOURCE = new URL("../skills/framelens/SKILL.md", import.meta.url);
 
 export interface InitResult {
   /** Paths written, relative to the project. */
@@ -14,8 +14,8 @@ export interface InitResult {
 }
 
 /**
- * `ytlens init`: adds ytlens to a project, so Claude Code (local or cloud) picks it up from the repository:
- * the server entry in `.mcp.json` (other servers are kept) and the skill in `.claude/skills/ytlens/`.
+ * `framelens init`: adds framelens to a project, so Claude Code (local or cloud) picks it up from the repository:
+ * the server entry in `.mcp.json` (other servers are kept) and the skill in `.claude/skills/framelens/`.
  */
 export function initProject(projectDir: string): InitResult {
   const mcpPath = join(projectDir, ".mcp.json");
@@ -27,9 +27,11 @@ export function initProject(projectDir: string): InitResult {
       throw new InvalidInputError(`${mcpPath} is not valid JSON. Fix or remove it, then run init again.`);
     }
   }
+  // A project set up with ytlens, the earlier name, gets the renamed server instead of a second copy.
+  const { ytlens: _legacy, ...servers } = config.mcpServers ?? {};
   config.mcpServers = {
-    ...config.mcpServers,
-    ytlens: {
+    ...servers,
+    framelens: {
       command: "npx",
       args: ["-y", SERVER_SPEC],
       env: { GEMINI_API_KEY: "${GEMINI_API_KEY}" },
@@ -37,16 +39,16 @@ export function initProject(projectDir: string): InitResult {
   };
   writeFileSync(mcpPath, `${JSON.stringify(config, null, 2)}\n`);
 
-  const skillDir = join(projectDir, ".claude", "skills", "ytlens");
+  const skillDir = join(projectDir, ".claude", "skills", "framelens");
   mkdirSync(skillDir, { recursive: true });
   writeFileSync(join(skillDir, "SKILL.md"), readFileSync(SKILL_SOURCE, "utf8"));
 
-  return { files: [".mcp.json", ".claude/skills/ytlens/SKILL.md"] };
+  return { files: [".mcp.json", ".claude/skills/framelens/SKILL.md"] };
 }
 
 export const INIT_NEXT_STEPS = `
 Next steps:
-  1. Commit .mcp.json and .claude/skills/ytlens/ to the repository.
+  1. Commit .mcp.json and .claude/skills/framelens/ to the repository.
   2. Make GEMINI_API_KEY available where Claude Code runs:
      - cloud sessions (claude.ai/code): add GEMINI_API_KEY=<your key> to the environment's variables;
      - on your computer: set GEMINI_API_KEY as an environment variable.

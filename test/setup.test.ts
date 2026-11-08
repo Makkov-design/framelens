@@ -11,7 +11,7 @@ describe("setup mode without a key", () => {
 
   it("keeps other config errors fatal", () => {
     let error: unknown;
-    try { loadConfig({ GEMINI_API_KEY: "k", YTLENS_LOG_LEVEL: "loud" }); } catch (e) { error = e; }
+    try { loadConfig({ GEMINI_API_KEY: "k", FRAMELENS_LOG_LEVEL: "loud" }); } catch (e) { error = e; }
     expect(error).not.toBeInstanceOf(MissingKeyError);
   });
 

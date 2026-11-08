@@ -1,7 +1,7 @@
 node_modules/
 # Only the bundled server is committed, so it can run straight from GitHub.
 dist/*
-!dist/ytlens.mjs
+!dist/framelens.mjs
 coverage/
 *.tsbuildinfo
 *.log

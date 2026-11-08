@@ -20,11 +20,11 @@ describe("loadConfig", () => {
       loadConfig({
         GEMINI_API_KEY: " key ",
         GEMINI_MODEL_NAME: " gemini-x ",
-        YTLENS_FALLBACK_MODELS: " gemini-y , gemini-x,,gemini-y ",
-        YTLENS_TIMEOUT_MS: "1000",
-        YTLENS_MAX_RETRIES: "0",
-        YTLENS_CACHE_TTL_MINUTES: "0",
-        YTLENS_LOG_LEVEL: "DEBUG",
+        FRAMELENS_FALLBACK_MODELS: " gemini-y , gemini-x,,gemini-y ",
+        FRAMELENS_TIMEOUT_MS: "1000",
+        FRAMELENS_MAX_RETRIES: "0",
+        FRAMELENS_CACHE_TTL_MINUTES: "0",
+        FRAMELENS_LOG_LEVEL: "DEBUG",
       }),
     ).toEqual({
       apiKey: "key",
@@ -40,6 +40,12 @@ describe("loadConfig", () => {
   it("falls back to GOOGLE_API_KEY", () => {
     expect(loadConfig({ GOOGLE_API_KEY: "g" }).apiKey).toBe("g");
     expect(loadConfig({ GEMINI_API_KEY: "a", GOOGLE_API_KEY: "g" }).apiKey).toBe("a");
+  });
+
+  it("still reads settings named for ytlens, the earlier name", () => {
+    const config = loadConfig({ GEMINI_API_KEY: "k", YTLENS_TIMEOUT_MS: "2000", FRAMELENS_MAX_RETRIES: "1", YTLENS_MAX_RETRIES: "5" });
+    expect(config.timeoutMs).toBe(2000);
+    expect(config.maxRetries).toBe(1);
   });
 
   it("never falls back to the model already in use", () => {
@@ -60,19 +66,19 @@ describe("loadConfig", () => {
   });
 
   it.each([
-    ["YTLENS_TIMEOUT_MS", "abc"],
-    ["YTLENS_TIMEOUT_MS", "0"],
-    ["YTLENS_MAX_RETRIES", "-1"],
-    ["YTLENS_MAX_RETRIES", "11"],
-    ["YTLENS_CACHE_TTL_MINUTES", "1.5"],
-    ["YTLENS_LOG_LEVEL", "verbose"],
+    ["FRAMELENS_TIMEOUT_MS", "abc"],
+    ["FRAMELENS_TIMEOUT_MS", "0"],
+    ["FRAMELENS_MAX_RETRIES", "-1"],
+    ["FRAMELENS_MAX_RETRIES", "11"],
+    ["FRAMELENS_CACHE_TTL_MINUTES", "1.5"],
+    ["FRAMELENS_LOG_LEVEL", "verbose"],
   ])("rejects %s=%s", (name, value) => {
     expect(() => loadConfig({ GEMINI_API_KEY: "k", [name]: value })).toThrow(ConfigError);
   });
 
   it("never puts the key in an error message", () => {
     try {
-      loadConfig({ GEMINI_API_KEY: "secret-key", YTLENS_LOG_LEVEL: "nope" });
+      loadConfig({ GEMINI_API_KEY: "secret-key", FRAMELENS_LOG_LEVEL: "nope" });
     } catch (error) {
       expect(String(error)).not.toContain("secret-key");
     }
