@@ -11,6 +11,8 @@ import { buildSheets, type Sheet } from "./media/sheets.js";
 import { buildPlan, type Goal, type Plan } from "./router/plan.js";
 import { findPhrase, readCaptions, toMarkdown, wordsAt, type Transcript } from "./speech/transcript.js";
 import { analyzeAudio, spectrogram, type AudioAnalysis } from "./audio/analyze.js";
+import { readPage, type PageResult } from "./browser/read.js";
+import { specFromPage } from "./browser/web.js";
 import { matchCuts, paletteDistance, similarity, verdict, type Comparison } from "./compare/compare.js";
 import { exportSpec, type ExportTarget } from "./export/exporters.js";
 import { onBeatRatio } from "./audio/dsp.js";
@@ -299,14 +301,30 @@ export class Engine {
   }
 
   /** Writes a starter project for a renderer from the source's motion-spec.json (running `style` first if needed). */
-  async export(input: string, target: ExportTarget, version: string): Promise<{ source: Source; dir: string; files: string[] }> {
-    const source = await this.source(input);
-    let spec = source.ws.readJson<MotionSpec>("motion-spec.json");
-    if (!spec) spec = (await this.style(input, { version })).spec;
-    const dir = source.ws.ensure("export", target);
-    const files = exportSpec(spec, target, dir);
-    this.progress(source.ws, `export: ${target} starter with ${spec.shots.length} scenes → ${source.ws.display(dir)}`);
-    return { source, dir, files };
+  async export(input: string, target: ExportTarget, version: string): Promise<{ ws: Workspace; title: string; dir: string; files: string[] }> {
+    // A web page read with `web` has its spec in its own workspace; anything else is a video source.
+    const web = this.webWorkspace(input);
+    let ws: Workspace;
+    let spec: MotionSpec | undefined;
+    if (web) {
+      ws = web;
+      spec = web.readJson<MotionSpec>("motion-spec.json");
+    } else {
+      const source = await this.source(input);
+      ws = source.ws;
+      spec = ws.readJson<MotionSpec>("motion-spec.json") ?? (await this.style(input, { version })).spec;
+    }
+    const dir = ws.ensure("export", target);
+    const files = exportSpec(spec!, target, dir);
+    this.progress(ws, `export: ${target} starter with ${spec!.shots.length} scenes → ${ws.display(dir)}`);
+    return { ws, title: spec!.source.title ?? input, dir, files };
+  }
+
+  /** The workspace of a page already read with `web`, if any. */
+  private webWorkspace(input: string): Workspace | undefined {
+    if (!/^https?:\/\//i.test(input.trim())) return undefined;
+    const ws = new Workspace(this.options.root, `web-${createHash("sha1").update(input).digest("hex").slice(0, 10)}`);
+    return existsSync(ws.path("motion-spec.json")) ? ws : undefined;
   }
 
   /**
@@ -362,6 +380,26 @@ export class Engine {
     const files: Record<string, string> = { report: ws.writeText("COMPARE.md", `${md}\n`), json: ws.writeJson("compare.json", comparison) };
     this.progress(ws, `compare: with ${render}: ${comparison.verdict.join(" ")}`);
     return { source: ref.source, comparison, files, ...(sheet && { sheet }) };
+  }
+
+  /**
+   * A live web page: reads its animations exactly (durations, delays, curves, keyframes) from the browser, plus fonts
+   * and colours, films the opening motion frame by frame, and writes the same motion-spec.json as a video.
+   */
+  async web(url: string, version: string): Promise<{ ws: Workspace; spec: MotionSpec; result: PageResult; files: Record<string, string> }> {
+    const id = `web-${createHash("sha1").update(url).digest("hex").slice(0, 10)}`;
+    const ws = new Workspace(this.options.root, id);
+    const result = await readPage(url, ws.ensure("frames", "web"), this.options.tools);
+    const spec = specFromPage(result.reading, version);
+    ws.writeJson("source.json", { id, kind: "url", input: url, url, title: result.reading.title, mediaPath: "", fetchedAt: new Date().toISOString() });
+    const { measured, skeleton } = styleMarkdown(spec);
+    const files: Record<string, string> = {
+      reading: ws.writeJson("web.json", result.reading),
+      spec: ws.writeJson("motion-spec.json", spec),
+      style: writeWithMeasuredBlock(ws, "STYLE.md", measured, skeleton),
+    };
+    this.progress(ws, `web: ${result.reading.animations.length} animations${result.reading.gsap ? " (GSAP found)" : ""}, ${result.reading.fonts.length} text styles, ${result.views.length} views`);
+    return { ws, spec, result, files };
   }
 
   /** Appends a line to PROGRESS.md so a later session can see what was already done. */
