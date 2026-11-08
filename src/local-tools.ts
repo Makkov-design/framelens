@@ -340,10 +340,10 @@ export function registerLocalTools(server: McpServer, engine: Engine, logger: Lo
     },
     (args) =>
       run("export", async () => {
-        const { source, dir, files } = await engine.export(args.source, args.target, options.version ?? "dev");
-        const ws = source.ws;
+        const { ws, title, dir, files } = await engine.export(args.source, args.target, options.version ?? "dev");
         const text = [
-          sourceLine(source),
+          `> ${title}`,
+          `> Workspace: ${ws.display(ws.dir)}`,
           "",
           `${args.target} starter written to ${ws.display(dir)}:`,
           ...files.map((f) => `- ${ws.display(f)}`),
