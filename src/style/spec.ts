@@ -5,6 +5,7 @@ import type { ProbeInfo } from "../media/probe.js";
 import type { Transcript } from "../speech/transcript.js";
 import type { SourceRecord, Workspace } from "../workspace/workspace.js";
 import { formatTimestamp } from "../youtube.js";
+import { oneLine } from "../text.js";
 import { mergePalettes, palette, type Swatch } from "./palette.js";
 import type { ClassifiedChange, MotionEvent } from "./motion.js";
 
@@ -181,7 +182,7 @@ export function styleMarkdown(spec: MotionSpec): { measured: string; skeleton: s
   const swatches = spec.palette.map((p) => `| \`${p.hex}\` | ${(p.share * 100).toFixed(1)}% | ${p.lightness} | ${p.chroma < 0.03 ? "neutral" : p.chroma} |`);
   const easing = new Map<string, number>();
   for (const e of spec.events) easing.set(e.easing, (easing.get(e.easing) ?? 0) + 1);
-  const moveLines = spec.events.slice(0, 40).map((e) => `| ${fmt(e.start)} | ${e.frames} | ${e.easing} | ${e.suggestion || "—"} | ${e.peakAt} |`);
+  const moveLines = spec.events.slice(0, 40).map((e) => `| ${fmt(e.start)} | ${e.frames} | ${e.easing} | ${oneLine(e.suggestion, 120) || "—"} | ${e.peakAt} |`);
   const measured = [
     "## Measured",
     "",
@@ -199,7 +200,7 @@ export function styleMarkdown(spec: MotionSpec): { measured: string; skeleton: s
     "",
     ...(moveLines.length ? ["| Starts | Frames | Family | Starting curve | Peak at |", "|---|---|---|---|---|", ...moveLines] : []),
   ].join("\n");
-  const skeleton = `# Style: ${spec.source.title ?? spec.source.input}
+  const skeleton = `# Style: ${oneLine(spec.source.title ?? spec.source.input)}
 
 One sentence on the look and feel (to write after looking at the sheets).
 
@@ -233,11 +234,12 @@ export function timelineMarkdown(spec: MotionSpec, transcript?: Transcript): { m
     const said = (transcript?.segments ?? [])
       .filter((seg) => seg.start < s.end && seg.end > s.start)
       .map((seg) => seg.text)
-      .join(" ");
-    return `### ${fmt(s.start)}–${fmt(s.end)} · ${s.id} (${s.frames} frames)\n\nColours ${s.palette.map((p) => `\`${p}\``).join(" ")}.${said ? ` Said: “${said.slice(0, 300)}”` : ""}\n\n_What happens and why:_`;
+      .join(" ")
+      .replace(/\s+/g, " ");
+    return `### ${fmt(s.start)}–${fmt(s.end)} · ${s.id} (${s.frames} frames)\n\nColours ${s.palette.map((p) => `\`${p}\``).join(" ")}.${said ? ` Said: “${oneLine(said, 300)}”` : ""}\n\n_What happens and why:_`;
   });
   const measured = ["## Shots", "", ...sections].join("\n\n");
-  const skeleton = `# Timeline: ${spec.source.title ?? spec.source.input}
+  const skeleton = `# Timeline: ${oneLine(spec.source.title ?? spec.source.input)}
 
 Sections by source time. Under each shot, connect what moves to the words, beats or actions it serves, and say what it does for the viewer.
 
@@ -246,7 +248,7 @@ Sections by source time. Under each shot, connect what moves to the words, beats
   return { measured, skeleton };
 }
 
-export const ANALYSIS_SKELETON = (title: string) => `# Analysis: ${title}
+export const ANALYSIS_SKELETON = (title: string) => `# Analysis: ${oneLine(title)}
 
 Keep facts (what is on screen, measured numbers) apart from interpretation.
 

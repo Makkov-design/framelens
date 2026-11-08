@@ -7,6 +7,14 @@ import type { ExactAnalysis, ExactMove, ExactShot, ExactText } from "./types.js"
 type J = any;
 
 const MAX_DEPTH = 8;
+/**
+ * Work limits for hostile files: precomps can reference each other (100 layers that each place the same 100-layer
+ * precomp, eight deep, is 10^16 visits from a few kilobytes), groups can nest thousands deep, and a file can hold
+ * millions of keyframes. Past a limit the rest is skipped and listed under unknowns.
+ */
+const MAX_LAYER_VISITS = 20_000;
+const MAX_GROUP_DEPTH = 32;
+const MAX_MOVES = 20_000;
 const r3 = (n: number) => Math.round(n * 1000) / 1000;
 const arr = (v: unknown): number[] | undefined => (typeof v === "number" ? [v] : Array.isArray(v) && v.every((x) => typeof x === "number") ? (v as number[]) : undefined);
 
@@ -60,6 +68,8 @@ interface Ctx {
   fontMap: Map<string, { family: string; style: string }>;
   layerCount: number;
   skippedPaths: number;
+  /** Set when a work limit was reached. */
+  truncated: Set<string>;
 }
 
 const rootFrame = (m: TimeMap, f: number) => m.off + f * m.str;
@@ -89,6 +99,10 @@ function emit(ctx: Ctx, target: string, name: string, p: J, map: TimeMap, kind: 
   const k = p.k;
   if (!(Array.isArray(k) && k.length && typeof k[0] === "object" && k[0] !== null && "t" in k[0])) return;
   for (let i = 0; i < k.length; i++) {
+    if (ctx.moves.length >= MAX_MOVES) {
+      ctx.truncated.add(`more than ${MAX_MOVES} keyframe segments: the rest are not listed`);
+      return;
+    }
     const kf = k[i];
     const next = k[i + 1];
     if (!next || typeof kf.t !== "number" || typeof next.t !== "number") continue;
@@ -161,7 +175,12 @@ function firstColor(c: J): number[] | undefined {
   return arr(k);
 }
 
-function walkShapes(items: J[], target: string, weight: number, map: TimeMap, ctx: Ctx) {
+function walkShapes(items: J[], target: string, weight: number, map: TimeMap, ctx: Ctx, depth = 0) {
+  if (!Array.isArray(items)) return;
+  if (depth > MAX_GROUP_DEPTH) {
+    ctx.truncated.add(`shape groups nested more than ${MAX_GROUP_DEPTH} deep: inner groups not read`);
+    return;
+  }
   let area: number | undefined;
   for (const it of items) {
     if ((it?.ty === "rc" || it?.ty === "el") && it.s?.a !== 1) {
@@ -174,7 +193,7 @@ function walkShapes(items: J[], target: string, weight: number, map: TimeMap, ct
     if (!it || typeof it !== "object") continue;
     const here = `${target}/${it.nm ?? it.ty}`;
     if (it.ty === "gr") {
-      walkShapes(it.it ?? [], here, weight, map, ctx);
+      walkShapes(it.it ?? [], here, weight, map, ctx, depth + 1);
     } else if (it.ty === "fl" || it.ty === "st") {
       const rgb = firstColor(it.c);
       if (rgb && rgb.length >= 3) addColor(ctx, toHex(rgb), it.ty === "fl" ? shapeWeight : shapeWeight * 0.1);
@@ -231,6 +250,10 @@ function readText(layer: J, target: string, weight: number, ctx: Ctx) {
 function walkLayers(layers: J[], map: TimeMap, prefix: string, depth: number, ctx: Ctx, root?: { shots: ExactShot[]; precompShots: ExactShot[] }) {
   for (const layer of layers) {
     if (!layer || typeof layer !== "object") continue;
+    if (ctx.layerCount >= MAX_LAYER_VISITS) {
+      ctx.truncated.add(`more than ${MAX_LAYER_VISITS} layers (precomps included): the rest are not read`);
+      return;
+    }
     ctx.layerCount++;
     const name = `${prefix}${layer.nm ?? `layer ${layer.ind ?? ctx.layerCount}`}`;
     const ip = typeof layer.ip === "number" ? layer.ip : 0;
@@ -258,7 +281,7 @@ function walkLayers(layers: J[], map: TimeMap, prefix: string, depth: number, ct
         break;
       case 0: {
         const asset = ctx.assets.get(layer.refId);
-        if (asset?.layers && depth < MAX_DEPTH) {
+        if (Array.isArray(asset?.layers) && depth < MAX_DEPTH) {
           walkLayers(asset.layers, { off: map.off + (layer.st ?? 0) * map.str, str: map.str * (layer.sr ?? 1) }, `${name}/`, depth + 1, ctx);
         } else if (!asset) {
           ctx.unknowns.add(`precomp ${name} points at missing asset ${layer.refId}`);
@@ -281,6 +304,8 @@ function walkLayers(layers: J[], map: TimeMap, prefix: string, depth: number, ct
   }
 }
 
+const dimension = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) && v > 0 && v <= 100_000 ? Math.round(v) : undefined);
+
 function topColors(m: Map<string, number>, n = 4): string[] {
   return [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, n).map(([hex]) => hex);
 }
@@ -289,7 +314,7 @@ export function parseLottie(j: J, meta: { input: string; url?: string; title?: s
   if (!j || typeof j !== "object" || !Array.isArray(j.layers) || typeof j.fr !== "number") {
     throw new Error("This does not look like a Lottie file (expected fr, layers, ip, op, w, h).");
   }
-  const fr = j.fr > 0 ? j.fr : 30;
+  const fr = j.fr > 0 && j.fr <= 1000 ? j.fr : 30;
   const ip = typeof j.ip === "number" ? j.ip : 0;
   const op = typeof j.op === "number" ? j.op : ip;
   const fontMap = new Map<string, { family: string; style: string }>();
@@ -300,8 +325,8 @@ export function parseLottie(j: J, meta: { input: string; url?: string; title?: s
   }
   const ctx: Ctx = {
     fr,
-    W: j.w > 0 ? j.w : 1,
-    H: j.h > 0 ? j.h : 1,
+    W: dimension(j.w) ?? 1,
+    H: dimension(j.h) ?? 1,
     moves: [],
     unknowns: new Set(),
     colors: new Map(),
@@ -311,10 +336,12 @@ export function parseLottie(j: J, meta: { input: string; url?: string; title?: s
     fontMap,
     layerCount: 0,
     skippedPaths: 0,
+    truncated: new Set(),
   };
   const root = { shots: [] as ExactShot[], precompShots: [] as ExactShot[] };
   walkLayers(j.layers, { off: 0, str: 1 }, "", 0, ctx, root);
   if (ctx.skippedPaths) ctx.unknowns.add(`${ctx.skippedPaths} animated path shape(s): morphing is not converted`);
+  for (const note of ctx.truncated) ctx.unknowns.add(note);
   if (meta.fontFiles?.length) fonts.push(...meta.fontFiles.map((f) => `embedded ${f}`));
 
   const start = r3(ip / fr);
@@ -339,8 +366,9 @@ export function parseLottie(j: J, meta: { input: string; url?: string; title?: s
     input: meta.input,
     ...(meta.url && { url: meta.url }),
     fps: fr,
-    width: j.w,
-    height: j.h,
+    // Only numbers: these are written into generated After Effects and Remotion code.
+    ...(dimension(j.w) && { width: dimension(j.w) }),
+    ...(dimension(j.h) && { height: dimension(j.h) }),
     start,
     end,
     shots,

@@ -5,7 +5,7 @@ import { InvalidInputError } from "../errors.js";
 import type { MediaTools } from "../media/exec.js";
 import { buildSheets, type Sheet } from "../media/sheets.js";
 import { evaluate, findBrowser, launchBrowser, navigate, screenshot } from "./cdp.js";
-import { mergeReadings, PAGE_SCRIPT, type PageReading } from "./web.js";
+import { cleanReading, mergeReadings, PAGE_SCRIPT, type PageReading } from "./web.js";
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -31,7 +31,7 @@ export async function readPage(url: string, outDir: string, tools: MediaTools, o
     await session.cdp.send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false }, session.sessionId);
     await navigate(session, url);
     await wait(1200);
-    const readings: PageReading[] = [await evaluate<PageReading>(session, PAGE_SCRIPT)];
+    const readings: PageReading[] = [cleanReading(await evaluate(session, PAGE_SCRIPT))];
     const first = readings[0]!;
     const maxScroll = Math.min(first.scrollHeight - first.viewport.height, options.maxScroll ?? 12_000);
     const views: string[] = [];
@@ -48,7 +48,7 @@ export async function readPage(url: string, outDir: string, tools: MediaTools, o
     for (const [i, y] of stops.entries()) {
       await evaluate(session, `window.scrollTo(0, ${y})`);
       await wait(350);
-      readings.push(await evaluate<PageReading>(session, PAGE_SCRIPT));
+      readings.push(cleanReading(await evaluate(session, PAGE_SCRIPT)));
       if (i % 4 === 3 || i === stops.length - 1) await take(`view-${String(y).padStart(5, "0")}`);
     }
     await evaluate(session, "window.scrollTo(0, 0)");
@@ -58,12 +58,12 @@ export async function readPage(url: string, outDir: string, tools: MediaTools, o
     const step = options.stepSeconds ?? 1 / 20;
     const longest = await evaluate<number>(
       session,
-      `Math.min(4000, Math.max(0, ...document.getAnimations().map((a) => { const t = a.effect && a.effect.getComputedTiming ? a.effect.getComputedTiming() : {}; return Number.isFinite(t.endTime) ? t.endTime : 0; })))`,
-    );
+      `(() => { try { return Math.min(4000, Math.max(0, ...[...document.getAnimations()].slice(0, 500).map((a) => { const t = a.effect && a.effect.getComputedTiming ? a.effect.getComputedTiming() : {}; return Number.isFinite(t.endTime) ? t.endTime : 0; }))); } catch (e) { return 0; } })()`,
+    ).then((v) => (typeof v === "number" && Number.isFinite(v) ? Math.min(4000, Math.max(0, v)) : 0));
     const frames: { t: number; file: string }[] = [];
     if (longest > 0) {
       for (let t = 0; t <= longest / 1000 + 1e-9 && frames.length < 48; t += step) {
-        await evaluate(session, `document.getAnimations().forEach((a) => { a.pause(); a.currentTime = ${Math.round(t * 1000)}; })`);
+        await evaluate(session, `(() => { try { document.getAnimations().forEach((a) => { try { a.pause(); a.currentTime = ${Math.round(t * 1000)}; } catch (e) {} }); } catch (e) {} })()`);
         await wait(40);
         const file = join(outDir, `motion-${t.toFixed(3).padStart(8, "0")}.png`);
         writeFileSync(file, await screenshot(session));

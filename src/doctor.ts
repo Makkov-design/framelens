@@ -1,3 +1,5 @@
+import { hasLoginProfile } from "./browser/capture.js";
+import { findBrowser } from "./browser/cdp.js";
 import { readEnv, findTool, prepareYtDlp, readToolVersion, TOOL_ENV, ToolError, YTDLP_PIN, missingToolMessage, type Env, type ToolName } from "./tools/index.js";
 
 export interface DoctorOptions {
@@ -49,6 +51,16 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<number> {
       out(`  [problem] ${name}: ${error instanceof ToolError ? error.message : String(error)}`);
     }
   }
+
+  const browser = findBrowser(env as Record<string, string | undefined>);
+  const nodeMajor = Number(process.versions.node.split(".")[0]);
+  if (browser && nodeMajor >= 22) {
+    out(`  [ok]      browser ${browser}`);
+    out("            unlocks web: live page animations, fonts and colours; login: sites that need your own login");
+  } else {
+    out(`  [missing] browser: unlocks web and login (${!browser ? "install Chrome or Edge, or set FRAMELENS_BROWSER" : `needs Node.js 22 or newer, this is ${process.versions.node}`})`);
+  }
+  out(`  Login profile (framelens login): ${hasLoginProfile() ? "set up" : "not set up"}`);
 
   out("");
   out("Settings");

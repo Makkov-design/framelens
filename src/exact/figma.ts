@@ -234,6 +234,11 @@ export function parseFigma(json: J, meta: { input: string; url?: string; title?:
   const fontSet = new Set<string>();
   let cursor = 0;
   const frameBox = (f: J) => f.absoluteBoundingBox ?? { width: f.size?.x ?? 0, height: f.size?.y ?? 0 };
+  // Hostile or huge files: every reaction that Smart Animates between two 5,000-layer frames adds up to 40,000 moves,
+  // so frames are flattened once and the move list is capped.
+  const MAX_MOVES = 20_000;
+  const flat = new Map<J, Map<string, Flat>>();
+  const flatOf = (f: J) => flat.get(f) ?? flat.set(f, flatten(f)).get(f)!;
 
   for (const f of order) {
     const sink = new Map<string, number>();
@@ -278,13 +283,17 @@ export function parseFigma(json: J, meta: { input: string; url?: string; title?:
       moves.push({ ...base, target: `${o.node.name} → ${destName}`, property: "transition", from: [String(f.name)], to: [String(destName)], type: label });
       if (kind === "SMART_ANIMATE" && dest) {
         const destTop = topOf.get(dest.id) ?? dest;
-        const A = flatten(f);
-        const B = flatten(destTop);
+        const A = flatOf(f);
+        const B = flatOf(destTop);
         for (const [path, a1] of A) {
           const b1 = B.get(path);
           if (!b1) continue;
           const diff = (prop: string, x: number | string | undefined, y: number | string | undefined) => {
             if (x === undefined || y === undefined || x === y) return;
+            if (moves.length >= MAX_MOVES) {
+              unknowns.add(`more than ${MAX_MOVES} Smart Animate changes: the rest are not listed`);
+              return;
+            }
             moves.push({ ...base, target: `${path.slice(1)}`, property: prop, from: [x], to: [y], type: `smart animate ${prop}` });
           };
           diff("x", a1.x, b1.x);

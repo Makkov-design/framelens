@@ -13,7 +13,7 @@ import { VERSION } from "./version.js";
 import { Engine, type TranscriptFallback } from "./engine.js";
 import { execTool } from "./media/exec.js";
 import { createHash } from "node:crypto";
-import { captureVideo, hasLoginProfile, login, logout } from "./browser/capture.js";
+import { capturableLogin, captureVideo, hasLoginProfile, login, logout } from "./browser/capture.js";
 import { maxDownloadMb, resolveSource, SourceError } from "./sources/index.js";
 import { geminiTranscriptFallback } from "./speech/gemini.js";
 import { findTool } from "./tools/index.js";
@@ -33,7 +33,7 @@ function createEngine(logger: Logger, transcriptFallback?: TranscriptFallback): 
         return await resolveSource(input, { ...options, log: (line) => logger.info(line) });
       } catch (error) {
         // Tier 3: a site that needs a login, and the user has logged in to the Frame Lens browser profile.
-        if (!(error instanceof SourceError) || error.code !== "login_required" || !hasLoginProfile()) throw error;
+        if (!(error instanceof SourceError) || error.code !== "login_required" || !hasLoginProfile() || !capturableLogin(input, error.message)) throw error;
         const id = `url-${createHash("sha1").update(input.trim()).digest("hex").slice(0, 10)}`;
         const ws = new Workspace(options.workspaceRoot, id);
         logger.info("login required; capturing through the Frame Lens browser profile", { id });

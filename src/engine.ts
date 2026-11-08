@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { InvalidInputError } from "./errors.js";
+import { oneLine } from "./text.js";
 import type { Logger } from "./logger.js";
 import { findBoundaries, type Boundaries } from "./media/boundaries.js";
 import type { MediaTools } from "./media/exec.js";
@@ -387,7 +388,7 @@ export class Engine {
       [sheet] = await buildSheets(pairs, ws.ensure("sheets"), "compare", { columns: 2, rows: Math.min(8, times.length), label: (f) => `${(f as { side?: string }).side} · ${f.t.toFixed(3)} s` }, this.options.tools);
     }
     const md = [
-      `# Compare: ${ref.source.record.title ?? reference} vs ${out.source.record.title ?? render}`,
+      `# Compare: ${oneLine(ref.source.record.title ?? reference)} vs ${oneLine(out.source.record.title ?? render)}`,
       "",
       ...comparison.verdict.map((v) => `- ${v}`),
       "",
@@ -398,7 +399,7 @@ export class Engine {
       sheet ? `\nSide by side at the least similar moments: ${ws.display(sheet.file)}` : "",
     ].join("\n");
     const files: Record<string, string> = { report: ws.writeText("COMPARE.md", `${md}\n`), json: ws.writeJson("compare.json", comparison) };
-    this.progress(ws, `compare: with ${render}: ${comparison.verdict.join(" ")}`);
+    this.progress(ws, `compare: with ${oneLine(render)}: ${comparison.verdict.join(" ")}`);
     return { source: ref.source, comparison, files, ...(sheet && { sheet }) };
   }
 
