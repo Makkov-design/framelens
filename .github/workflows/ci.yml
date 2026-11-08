@@ -23,6 +23,8 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
           cache: npm
+      - name: Install ffmpeg for the media tests
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg fonts-dejavu-core
       - run: npm ci --ignore-scripts
       - run: npm run typecheck
       - run: npm test
@@ -53,7 +55,7 @@ jobs:
             '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
             '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
             | GEMINI_API_KEY=ci-dummy timeout 15 node framelens.mjs > out.jsonl
-          node -e 'const l=require("fs").readFileSync("out.jsonl","utf8").trim().split("\n").map(JSON.parse); const t=l.find(m=>m.id===2).result.tools; if(t.length!==5) throw new Error("expected 5 tools"); console.log(t.map(x=>x.name).join(", "))'
+          node -e 'const l=require("fs").readFileSync("out.jsonl","utf8").trim().split("\n").map(JSON.parse); const t=l.find(m=>m.id===2).result.tools; if(t.length!==10) throw new Error("expected 10 tools"); console.log(t.map(x=>x.name).join(", "))'
 
   docker:
     runs-on: ubuntu-latest
