@@ -56,9 +56,20 @@ export function download(url: string, file: string, maxBytes: number, redirects 
       if (settled) return;
       settled = true;
       req.destroy();
-      out?.destroy();
-      rmSync(file, { force: true });
-      reject(error);
+      // Remove the partial file once the stream has let go of it (Windows may refuse to delete an open file).
+      const remove = () => {
+        try {
+          rmSync(file, { force: true });
+        } catch {
+          // Still open; it is overwritten by the next try.
+        }
+      };
+      const done = () => {
+        remove();
+        reject(error);
+      };
+      if (out && !out.closed) out.once("close", done).destroy();
+      else done();
     };
     let out: ReturnType<typeof createWriteStream> | undefined;
     const get = local ? httpGet : httpsGet;
