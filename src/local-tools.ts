@@ -9,6 +9,7 @@ import { oneLine } from "./text.js";
 import { EXPORT_TARGETS } from "./export/exporters.js";
 import { GOALS } from "./router/plan.js";
 import { collectSetupNotes, setupNotesOf } from "./tools/setup.js";
+import { curveLabel } from "./track/curve.js";
 
 /** Seconds with decimals (12.48), or M:SS(.mmm) / H:MM:SS(.mmm). */
 export function parseTime(value: string | number): number {
@@ -286,6 +287,74 @@ export function registerLocalTools(server: McpServer, engine: Engine, logger: Lo
         return {
           content: [{ type: "text", text }],
           structuredContent: { workspace: ws.dir, files, rhythm: spec.rhythm, palette: spec.palette, events: spec.events },
+        };
+      }),
+  );
+
+  server.registerTool(
+    "track",
+    {
+      title: "Track an element and fit its exact curve",
+      description:
+        "After `style`, for the moves that matter: follows one element through a window at the full frame rate (subpixel " +
+        "template matching) and fits the exact timing of each property that moves (x, y, scale, opacity): a cubic-bezier, " +
+        "a spring (stiffness, damping, mass) when it overshoots or swings, linear or steps, with the fit error, duration " +
+        "in frames and delay. Window: `move` (a style move number) or `start`/`end`; element: `auto` (the biggest moving " +
+        "region) or a box at time `at`. Writes tracks.json, TRACK.md and an SVG of the curves, and adds the tracked move " +
+        "to motion-spec.json, so `export` uses the exact curve.",
+      inputSchema: {
+        source: sourceInput,
+        move: z.number().int().min(1).max(10_000).optional().describe("A move from `style` (1 = the first in motion-spec.json); sets the window with some rest around it."),
+        start: time.optional().describe("Window start (default: just before the style move)."),
+        end: time.optional().describe("Window end (at most 15 s after start)."),
+        element: z
+          .union([
+            z.literal("auto"),
+            z.object({
+              x: z.number().min(0),
+              y: z.number().min(0),
+              w: z.number().positive(),
+              h: z.number().positive(),
+            }),
+          ])
+          .default("auto")
+          .describe("`auto`, or the element's box {x, y, w, h} (top-left and size) in source pixels, or in fractions of the frame when every value is at most 1."),
+        at: time.optional().describe("Time at which the box is drawn (default the window start)."),
+      },
+      annotations: READ_ONLY,
+    },
+    (args) =>
+      run("track", async () => {
+        const { source, track, files, note } = await engine.track(args.source, {
+          ...(args.start !== undefined && { start: parseTime(args.start) }),
+          ...(args.end !== undefined && { end: parseTime(args.end) }),
+          ...(args.move !== undefined && { move: args.move }),
+          ...(args.element !== "auto" && { box: args.element }),
+          ...(args.at !== undefined && { at: parseTime(args.at) }),
+        });
+        const ws = source.ws;
+        const lost = track.samples.filter((s) => s.lost).length;
+        const lines = [
+          sourceLine(source),
+          "",
+          ...(note ? [note] : []),
+          `${track.id}: element ${track.element.auto ? "found automatically" : "from the box"} (${track.element.box.w}×${track.element.box.h} px at ${track.element.box.x}, ${track.element.box.y}), ${track.samples.length} frames at ${track.fps} fps${lost ? `, ${lost} too faint or hidden to match` : ""}.`,
+          track.properties.length
+            ? `Move ${track.start.toFixed(3)}–${track.end.toFixed(3)} s: ${track.frames} frames, starts ${track.delay.toFixed(3)} s into the window.`
+            : "No property went from one resting value to another in this window: widen it, or pass a box around the element.",
+          ...track.properties.map(
+            (p) =>
+              `- ${p.property}${p.property === track.primary ? " (primary)" : ""}: ${p.from} → ${p.to}, ${p.start.toFixed(3)}–${p.end.toFixed(3)} s (${p.frames} frames, delay ${p.delay.toFixed(3)} s), ${curveLabel(p.curve)}, error ${(p.rmse * 100).toFixed(2)} % of the travel, ${p.quality}${p.quality === "unreliable" ? " (not exported)" : ""}. ${p.reason}.`,
+          ),
+          ...(track.notes ?? []),
+          ...track.unfitted.map((u) => `- ${u.property}: ${u.reason}.`),
+          "",
+          `Files: ${Object.values(files).map((f) => ws.display(f)).join(", ")}.`,
+          "Positions and times are measured; curves are derived (fitted) with the error shown. `export` uses exact and approximate curves for this move; unreliable ones stay in TRACK.md.",
+        ];
+        return {
+          content: [{ type: "text", text: lines.join("\n") }],
+          structuredContent: { workspace: ws.dir, files, track: { ...track, samples: track.samples.length } },
         };
       }),
   );

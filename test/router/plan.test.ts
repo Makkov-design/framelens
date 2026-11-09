@@ -45,9 +45,19 @@ describe("router", () => {
     const dense = plan.steps.filter((s) => s.args.every_frame);
     expect(dense).toHaveLength(12);
     expect(plan.steps.filter((s) => s.args.fps === 10).length).toBeLessThanOrEqual(3);
-    expect(plan.steps.at(-1)!.tool).toBe("style");
+    expect(plan.steps.at(-2)!.tool).toBe("style");
+    expect(plan.steps.at(-1)).toMatchObject({ tool: "track", args: { move: 1, element: "auto" } });
     expect(plan.notes.join(" ")).toMatch(/18 more changes/);
     expect(plan.estimate.imageTokens).toBeLessThan(200_000);
+  });
+
+  it("points track at the longest untracked style moves after style", () => {
+    const moves = Array.from({ length: 9 }, (_, i) => ({ start: i, end: i + 0.5, frames: 10 + i, tracked: i === 8 }));
+    const plan = buildPlan({ goal: "style", probe: probe(12), boundaries: bounds(10, 0.1, [1, 5]), hasSpeech: false, moves });
+    const tracks = plan.steps.filter((s) => s.tool === "track");
+    expect(tracks.map((s) => s.args.move)).toEqual([3, 4, 5, 6, 7, 8]);
+    expect(plan.steps.indexOf(tracks[0]!)).toBeGreaterThan(plan.steps.findIndex((s) => s.tool === "style"));
+    expect(plan.notes.join(" ")).toMatch(/2 more moves can be tracked/);
   });
 
   it("estimates image tokens with Anthropic's rule", () => {
