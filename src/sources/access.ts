@@ -17,7 +17,7 @@ const BOT_OR_LIMIT =
  * password-protected posts, DRM, regions, HTTP 401/403/407/451, permissions.
  */
 const GATED =
-  /\b(401|403|407|451)\b|forbidden|unauthori[sz]ed|unavailable for legal reasons|\bconfirm|\bage\b|age.?(gate|restrict|verif)|inappropriate|log.?in|logged.?in|sign.?in|authenticat|credential|account|cookie|nsfw|adult|\bmature|sensitive|\bprivate\b|protected|password|members?.only|exclusive|subscri|premium|paywall|payment|\bpaid\b|purchase|\bbuy\b|\brent(al|ed)?\b|\bdrm\b|not available (in|from) your|\bgeo|country|region|\blocation|registered users|permission|denied|restricted/i;
+  /\b(401|403|407|451)\b|forbidden|unauthori[sz]ed|unavailable for legal reasons|\bconfirm|\bage\b|age.?(gate|restrict|verif)|inappropriate|log.?in|logged.?in|sign.?in|authenticat|credential|account|cookie|nsfw|adult|\bmature|sensitive|\bprivate\b|protected|password|members?.only|exclusive|subscri|premium|paywall|payment|\bpaid\b|purchase|\bbuy\b|\brent(al|ed)?\b|\bdrm\b|not available (in|from) your|\bgeo|country|region|\blocation|registered users|permission|denied|restricted|(do|does|did) ?n[o']t have access|no access|not allowed to (view|watch|access)/i;
 
 const withoutLinks = (text: string) => text.replace(/https?:\/\/\S+/gi, " ");
 

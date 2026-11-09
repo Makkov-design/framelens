@@ -98,6 +98,7 @@ const ACCESS: [string, string, string][] = [
   ["Vimeo password", "https://vimeo.com/1", "ERROR: [vimeo] 1: This video is protected by a password, use the --video-password option"],
   ["Vimeo wrong password", "https://vimeo.com/1", "ERROR: [vimeo] 1: Wrong password"],
   ["Vimeo album password", "https://vimeo.com/showcase/1", "ERROR: [vimeo:album] 1: This album is protected by a password, use the --video-password option"],
+  ["No access to a post", "https://www.patreon.com/posts/1", "ERROR: [patreon] 1: You do not have access to this post"],
   ["DRM", "https://www.youtube.com/watch?v=dQw4w9WgXcQ", "ERROR: [youtube] dQw4w9WgXcQ: This video is DRM protected"],
   ["Known DRM site", "https://www.netflix.com/watch/1", "ERROR: The requested site is known to use DRM protection. It will NOT be supported."],
   ["Payment", "https://www.youtube.com/watch?v=dQw4w9WgXcQ", "ERROR: [youtube] dQw4w9WgXcQ: This video requires payment to watch."],
