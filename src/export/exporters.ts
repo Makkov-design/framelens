@@ -4,6 +4,7 @@ import { uniqueEvents, type EasingFamily } from "../style/motion.js";
 import type { MotionSpec } from "../style/spec.js";
 import { oneLine, safeHex } from "../text.js";
 import { cssEasing, curveAt, curveFamily, curveLabel, safeCurve, springPoints, type Curve } from "../track/curve.js";
+import { preferredTracks } from "../track/link.js";
 import { exportable, primaryCurve } from "../track/run.js";
 import { exportAfterEffects } from "./after-effects.js";
 import { exportHypit } from "./hypit.js";
@@ -42,6 +43,11 @@ export interface Scene {
    * move the title stays still.
    */
   move?: SceneMove;
+  /**
+   * Every further move tracked in the shot (after the one the title carries), each with its own placeholder element
+   * at the tracked element's measured place and size, entering with its own start, length and fitted curve.
+   */
+  elements?: SceneElement[];
   /**
    * When the scene is on screen, relative to the range: wider than its shot when a dissolve or wipe overlaps the
    * neighbouring shot (the incoming scene starts with the transition, the outgoing one stays until it ends).
@@ -121,22 +127,45 @@ export function moveKeys(move: Pick<SceneMove, "seconds" | "curve">, fps: number
   return { keys: Array.from({ length: count + 1 }, (_, i) => [r3(i / count), Math.round(curveAt(curve, i / count) * 10000) / 10000] as [number, number]), hold: false };
 }
 
-/** The tracked curve that stands for a move in a shot: the first track whose primary property starts in it. */
-function trackedMove(spec: MotionSpec, shot: { start: number; end: number }, fps: number): SceneMove | undefined {
-  for (const track of spec.tracks ?? []) {
-    const p = track && Array.isArray(track.properties) ? primaryCurve(track) : undefined;
+/** A further tracked element of a scene: where it was measured (canvas pixels, top-left and size) and its move. */
+export interface SceneElement extends SceneMove {
+  /** Unique within the export: `<scene id>-<track id>`. */
+  id: string;
+  track: string;
+  box: { x: number; y: number; w: number; h: number };
+}
+
+/** A track id that is safe in element ids, file names and code. */
+export const trackName = (id: unknown): string => String(id).replace(/[^A-Za-z0-9_-]/g, "").slice(0, 16);
+
+/**
+ * The tracked moves of a shot, in time order: every track whose primary property starts in it, with a curve good
+ * enough to export. A move tracked more than once (an automatic pick, then a box) counts once, as its best-graded and
+ * newest track.
+ */
+function trackedMoves(spec: MotionSpec, shot: { start: number; end: number }, fps: number): (SceneMove & { track: string; box: SceneElement["box"] })[] {
+  const width = spec.timebase.width ?? 1920;
+  const height = spec.timebase.height ?? 1080;
+  const clamp = (v: unknown, lo: number, hi: number) => Math.min(hi, Math.max(lo, typeof v === "number" && Number.isFinite(v) ? v : lo));
+  const out: (SceneMove & { track: string; box: SceneElement["box"] })[] = [];
+  for (const track of preferredTracks(Array.isArray(spec.tracks) ? spec.tracks : []).kept) {
+    const p = primaryCurve(track);
     const curve = exportable(p) ? safeCurve(p!.curve) : undefined;
     if (!p || !curve || !Number.isFinite(p.start) || !Number.isFinite(p.seconds)) continue;
     if (p.start < shot.start || p.start >= shot.end) continue;
-    return {
+    const b = (track.element?.box ?? {}) as Partial<SceneElement["box"]>;
+    const x = r3(clamp(b.x, 0, width - 8));
+    const y = r3(clamp(b.y, 0, height - 8));
+    out.push({
       offset: r3(Math.max(0, p.start - shot.start)),
       seconds: r3(Math.min(3600, Math.max(1 / fps, p.seconds))),
       easing: curveFamily(curve),
       curve,
-      track: String(track.id).replace(/[^A-Za-z0-9_-]/g, "").slice(0, 16),
-    };
+      track: trackName(track.id),
+      box: { x, y, w: r3(clamp(b.w, 8, width - x)), h: r3(clamp(b.h, 8, height - y)) },
+    });
   }
-  return undefined;
+  return out.sort((a, b) => a.offset - b.offset || a.track.localeCompare(b.track));
 }
 
 export const r3 = (n: number) => Math.round(n * 1000) / 1000;
@@ -154,22 +183,33 @@ export function scenesFromSpec(spec: MotionSpec): Scene[] {
   const fps = spec.timebase.fps ?? 30;
   // An older spec may list the same move twice; each scene uses the first move that starts in its shot.
   const events = uniqueEvents(spec.events);
+  const ids = new Set<string>();
   const scenes: Scene[] = spec.shots.map((shot, i) => {
     const start = r3(shot.start - spec.range.start);
     const duration = r3(Math.max(1 / fps, shot.end - shot.start));
     const event = events.find((e) => e.start >= shot.start && e.start < shot.end);
-    const tracked = trackedMove(spec, shot, fps);
+    // The title carries the first tracked move; every further one gets its own element.
+    const [first, ...more] = trackedMoves(spec, shot, fps);
+    const tracked: SceneMove | undefined = first && { offset: first.offset, seconds: first.seconds, easing: first.easing, ...(first.curve && { curve: first.curve }), track: first.track };
+    const id = `shot-${i + 1}`;
+    const elements: SceneElement[] = more.map((m, k) => {
+      let name = `${id}-${m.track || `move${k + 2}`}`;
+      while (ids.has(name)) name = `${name}-${k + 2}`;
+      ids.add(name);
+      return { ...m, id: name };
+    });
     const colours = shot.palette.map((p) => safeHex(p, ""));
     const background = colours[0] || fallback;
     const accent = colours.find((p) => p && p !== background) ?? spec.palette.map((p) => safeHex(p.hex, "")).find((p) => p && p !== background) ?? "#FFFFFF";
     return {
-      id: `shot-${i + 1}`,
+      id,
       start,
       duration,
       background,
       accent,
       show: { start, end: r3(start + duration) },
       ...(tracked && { move: tracked }),
+      ...(elements.length && { elements }),
       ...(!tracked && event && {
         move: {
           offset: r3(Math.max(0, event.start - shot.start)),
@@ -249,6 +289,8 @@ These come from Frame Lens, not from the reference; change them freely:
 - What a move does to the title: it fades in (opacity 0 to 1) and rises ${Math.round((60 * (spec.timebase.height ?? 1080)) / 1080)} px. Only the move's start and length
   (from the frames) and its easing (a derived family, or a fitted curve when tracked) come from the reference; what
   actually moved there (and how far) is for you to read from the frames or from \`track\`.
+- Every further move tracked in the same shot gets its own placeholder, named after its track, at the tracked
+  element's measured place and size; it enters the same way with its own start, length and fitted curve.
 - Scenes where no move was found show their title still for the whole shot (no entrance is invented).
 - Dissolves and fades are opacity ramps of the length derived from the frames, with the easing family read from how
   the picture blended (derived); a wipe is a straight edge. Fades and dips go through flat black or white.
@@ -267,14 +309,21 @@ function transitionsLine(spec: MotionSpec): string {
 }
 
 function tracksNote(spec: MotionSpec): string {
-  const tracked = (spec.tracks ?? []).filter((t) => t && Array.isArray(t.properties) && t.properties.length);
+  const tracked = (Array.isArray(spec.tracks) ? spec.tracks : []).filter((t) => t && Array.isArray(t.properties) && t.properties.length);
   if (!tracked.length) return "Easing families are derived from whole-picture motion; they are a family to start from, not a fitted curve. Run Frame Lens `track` on a move for its exact curve.";
+  const { replacedBy } = preferredTracks(tracked);
   const list = tracked.slice(0, 12).map((t) => {
     const p = primaryCurve(t);
     const curve = exportable(p) ? safeCurve(p!.curve) : undefined;
-    return `${String(t.id).replace(/[^A-Za-z0-9_-]/g, "")} at ${Number(t.start).toFixed(3)} s: ${curve ? curveLabel(curve) : `not exported (${p ? `${p.quality}, error ${(p.rmse * 100).toFixed(1)} %` : "no curve"})`}`;
+    const replaced = replacedBy.get(String(t.id));
+    const what = replaced
+      ? `not exported (the same element and window was tracked again as ${trackName(replaced)}, which is used)`
+      : curve
+        ? curveLabel(curve)
+        : `not exported (${p ? `${p.quality}, error ${(p.rmse * 100).toFixed(1)} %` : "no curve"})`;
+    return `${trackName(t.id)} at ${Number(t.start).toFixed(3)} s: ${what}`;
   });
-  return `Moves tracked with \`track\` use their fitted curves (${list.join("; ")}); the other moves use a derived easing family.`;
+  return `Moves tracked with \`track\` use their fitted curves, every one in its shot (${list.join("; ")}); the other moves use a derived easing family.`;
 }
 
 /** JavaScript for GSAP eases that are not built in: an exact cubic-bezier, a curve through points, and steps. */
@@ -368,6 +417,12 @@ ${hosts}
     if (s.move) {
       tweens.push(`tl.fromTo("#${s.id}-title", { opacity: 0, y: 60 }, { opacity: 1, y: 0, duration: ${s.move.seconds}, ease: ${ease!.ease} }, ${titleStart});${s.move.track ? ` // tracked ${s.move.track} (fitted curve)` : " // move found by style (easing family derived)"}`);
     }
+    // Every further tracked move of the shot: its own element, with its own start, length and curve.
+    const elements = (s.elements ?? []).map((el) => ({ el, ease: gsapEase(el), start: r3(lead + el.offset) }));
+    for (const { el, ease: e, start } of elements) {
+      tweens.push(`tl.fromTo("#${el.id}", { opacity: 0, y: 60 }, { opacity: 1, y: 0, duration: ${el.seconds}, ease: ${e.ease} }, ${start}); // tracked ${el.track} (fitted curve)`);
+    }
+    const helpers = Boolean(ease?.helpers) || elements.some((x) => x.ease.helpers);
     // A fade in and a fade out have a veil each, in their own colour (in from white, out to black is possible).
     if (s.fadeIn) {
       tweens.push(`tl.set("#${s.id}-veil-in", { opacity: 1 }, 0);`);
@@ -395,7 +450,21 @@ ${hosts}
       color: ${s.accent};
       font: 900 ${Math.round(height / 10)}px/1 Inter, sans-serif; /* a bundled weight: no font download at render */
       text-transform: uppercase;
-    }${veils.map((v) => `
+    }${elements.map(({ el }) => `
+    #${el.id} {
+      /* tracked ${el.track}: the element's measured place and size */
+      position: absolute;
+      left: ${el.box.x}px;
+      top: ${el.box.y}px;
+      width: ${el.box.w}px;
+      height: ${el.box.h}px;
+      box-sizing: border-box;
+      border: ${Math.max(2, Math.round(height / 270))}px dashed ${s.accent};
+      color: ${s.accent};
+      display: grid;
+      place-items: center;
+      font: 700 ${Math.max(12, Math.round(height / 45))}px/1 Inter, sans-serif;
+    }`).join("")}${veils.map((v) => `
     #${v.id} {
       position: absolute;
       inset: 0;
@@ -405,11 +474,11 @@ ${hosts}
   </style>
   <div id="root" data-composition-id="${s.id}" data-width="${width}" data-height="${height}">
     <div id="${s.id}-frame">
-      <h1 id="${s.id}-title" class="clip" data-start="${titleStart}" data-duration="${titleDuration}">${s.id.replace("-", " ")}</h1>
+      <h1 id="${s.id}-title" class="clip" data-start="${titleStart}" data-duration="${titleDuration}">${s.id.replace("-", " ")}</h1>${elements.map(({ el, start }) => `\n      <div id="${el.id}" class="clip" data-start="${start}" data-duration="${r3(Math.max(0.01, length - start - 0.01))}">${el.track}</div>`).join("")}
     </div>${veils.map((v) => `\n    <div id="${v.id}"></div>`).join("")}
   </div>
   <script>
-${ease?.helpers ? GSAP_HELPERS : ""}    const tl = gsap.timeline({ paused: true });
+${helpers ? GSAP_HELPERS : ""}    const tl = gsap.timeline({ paused: true });
 ${tweens.length ? tweens.map((t) => `    ${t}`).join("\n") : "    // No move or transition was found in this shot: the title holds still."}
     window.__timelines["${s.id}"] = tl;
   </script>
@@ -428,20 +497,22 @@ export function exportRemotion(spec: MotionSpec, root: string): string[] {
     const from = Math.round(s.show.start * fps);
     const local = (t: number) => Math.max(0, Math.round(t * fps) - from);
     const ramp = (r: { start: number; seconds: number; easing: EasingFamily }) => ({ at: local(r.start), frames: frames(r.seconds), bezier: BEZIER[r.easing] });
+    const enter = (m: SceneMove) => ({
+      enterAt: local(s.start + m.offset),
+      enterFrames: frames(m.seconds),
+      ...(moveBezier(m) && { bezier: moveBezier(m) }),
+      ...(m.curve?.kind === "spring" && { spring: { stiffness: m.curve.stiffness, damping: m.curve.damping, mass: m.curve.mass } }),
+      ...(m.curve?.kind === "steps" && { steps: m.curve.steps }),
+      ...(m.track && { track: m.track }),
+    });
     return {
       id: s.id,
       from,
       durationInFrames: Math.max(1, Math.round(s.show.end * fps) - from),
       background: s.background,
       accent: s.accent,
-      ...(s.move && {
-        enterAt: local(s.start + s.move.offset),
-        enterFrames: frames(s.move.seconds),
-        ...(moveBezier(s.move) && { bezier: moveBezier(s.move) }),
-        ...(s.move.curve?.kind === "spring" && { spring: { stiffness: s.move.curve.stiffness, damping: s.move.curve.damping, mass: s.move.curve.mass } }),
-        ...(s.move.curve?.kind === "steps" && { steps: s.move.curve.steps }),
-        ...(s.move.track && { track: s.move.track }),
-      }),
+      ...(s.move && enter(s.move)),
+      ...(s.elements && { elements: s.elements.map((el) => ({ id: el.id, ...el.box, ...enter(el) })) }),
       ...(s.reveal && { reveal: { kind: s.reveal.kind, ...ramp(s.reveal), ...(s.reveal.kind === "wipe" && { wipeFrom: wipeFrom(s.reveal.direction) }) } }),
       ...(s.fadeIn && { fadeIn: { ...ramp(s.fadeIn), color: VIA_HEX[s.fadeIn.via] } }),
       ...(s.fadeOut && { fadeOut: { ...ramp(s.fadeOut), color: VIA_HEX[s.fadeOut.via] } }),
@@ -485,14 +556,21 @@ import { HEIGHT, SCENES } from "./timing";
 /** An opacity ramp (dissolve, fade) or wipe derived from the reference: its first frame inside the scene, length and easing. */
 type Ramp = { at: number; frames: number; bezier: number[] };
 
-type SceneData = (typeof SCENES)[number] & {
-  /** A move found in the shot: the title enters (fades in and rises) with its timing. Without one the title holds still. */
+/** A move: when it starts inside the scene, how many frames it takes and its curve. */
+type Enter = {
   enterAt?: number;
   enterFrames?: number;
   bezier?: number[];
   /** A move measured with Frame Lens track that settles like a spring. */
   spring?: { stiffness: number; damping: number; mass: number };
   steps?: number;
+  track?: string;
+};
+
+/** A move found in the shot (the Enter fields): the title enters (fades in and rises) with its timing; without one it holds still. */
+type SceneData = (typeof SCENES)[number] & Enter & {
+  /** Every further move tracked in the shot: a placeholder at the tracked element's measured place and size. */
+  elements?: (Enter & { id: string; track: string; x: number; y: number; w: number; h: number })[];
   /** A dissolve or wipe (derived) that brings this scene in over the previous one. */
   reveal?: Ramp & { kind: string; wipeFrom?: string };
   /** A fade in from, or out to, black or white (derived). */
@@ -514,25 +592,29 @@ const rampAt = (frame: number, ramp: Ramp) => {
 const wipeAt = (from: string, p: number) =>
   from.replace(/[\\d.]+%/g, (v) => \`\${(parseFloat(v) * (1 - p)).toFixed(2)}%\`);
 
+/** 0 → 1 over a move with its curve (a spring settles on its own); 1 without a move. */
+const enterProgress = (frame: number, fps: number, scene: Enter) => {
+  if (scene.enterAt === undefined || scene.enterFrames === undefined) return 1;
+  const enterAt = scene.enterAt;
+  const enterFrames = scene.enterFrames;
+  const [x1, y1, x2, y2] = scene.bezier ?? [0, 0, 1, 1];
+  const linear = interpolate(frame, [enterAt, enterAt + enterFrames], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  return scene.spring
+    ? spring({ frame: frame - enterAt, fps, config: scene.spring })
+    : scene.steps
+      ? (linear >= 1 ? 1 : Math.floor(linear * scene.steps) / scene.steps)
+      : interpolate(frame, [enterAt, enterAt + enterFrames], [0, 1], {
+          easing: Easing.bezier(x1!, y1!, x2!, y2!),
+          extrapolateLeft: "clamp",
+          extrapolateRight: "clamp",
+        });
+};
+
 const Scene = ({ scene }: { scene: SceneData }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   let progress = 1;
-  if (scene.enterAt !== undefined && scene.enterFrames !== undefined) {
-    const enterAt = scene.enterAt;
-    const enterFrames = scene.enterFrames;
-    const [x1, y1, x2, y2] = scene.bezier ?? [0, 0, 1, 1];
-    const linear = interpolate(frame, [enterAt, enterAt + enterFrames], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
-    progress = scene.spring
-      ? spring({ frame: frame - enterAt, fps, config: scene.spring })
-      : scene.steps
-        ? (linear >= 1 ? 1 : Math.floor(linear * scene.steps) / scene.steps)
-        : interpolate(frame, [enterAt, enterAt + enterFrames], [0, 1], {
-            easing: Easing.bezier(x1!, y1!, x2!, y2!),
-            extrapolateLeft: "clamp",
-            extrapolateRight: "clamp",
-          });
-  }
+  if (scene.enterAt !== undefined) progress = enterProgress(frame, fps, scene);
   const revealed = scene.reveal ? rampAt(frame, scene.reveal) : 1;
   const opacity = scene.reveal && scene.reveal.kind !== "wipe" ? revealed : 1;
   const clipPath = scene.reveal?.wipeFrom ? wipeAt(scene.reveal.wipeFrom, revealed) : undefined;
@@ -542,6 +624,14 @@ const Scene = ({ scene }: { scene: SceneData }) => {
         <h1 style={{ color: scene.accent, fontSize: HEIGHT / 10, fontWeight: 800, textTransform: "uppercase", opacity: progress, transform: \`translateY(\${(1 - progress) * 60}px)\` }}>
           {scene.id.replace("-", " ")}
         </h1>
+        {(scene.elements ?? []).map((el) => {
+          const p = enterProgress(frame, fps, el);
+          return (
+            <div key={el.id} style={{ position: "absolute", left: el.x, top: el.y, width: el.w, height: el.h, boxSizing: "border-box", border: \`\${Math.max(2, Math.round(HEIGHT / 270))}px dashed \${scene.accent}\`, color: scene.accent, display: "flex", alignItems: "center", justifyContent: "center", fontSize: Math.max(12, Math.round(HEIGHT / 45)), fontWeight: 700, opacity: p, transform: \`translateY(\${(1 - p) * 60}px)\` }}>
+              {el.track}
+            </div>
+          );
+        })}
       </AbsoluteFill>
       {scene.fadeIn ? <AbsoluteFill style={{ background: scene.fadeIn.color, opacity: 1 - rampAt(frame, scene.fadeIn) }} /> : null}
       {scene.fadeOut ? <AbsoluteFill style={{ background: scene.fadeOut.color, opacity: rampAt(frame, scene.fadeOut) }} /> : null}
@@ -572,7 +662,11 @@ export function exportCss(spec: MotionSpec, root: string): string[] {
     .filter(([family]) => family !== "unclear")
     .map(([family, b]) => `  --fl-ease-${family}: cubic-bezier(${b.join(", ")});`)
     .concat(scenes.filter((s) => s.move?.curve).map((s) => `  --fl-ease-${s.id}: ${moveCss(s.move!)}; /* tracked ${s.move!.track} */`))
+    .concat(scenes.flatMap((s) => s.elements ?? []).map((el) => `  --fl-ease-${el.id}: ${moveCss(el)}; /* tracked ${el.track} */`))
     .join("\n");
+  const width = spec.timebase.width ?? 1920;
+  const height = spec.timebase.height ?? 1080;
+  const pct = (v: number, of: number) => `${r3((v / of) * 100)}%`;
   const sceneCss = scenes
     .map((s, i) => {
       const n = i + 1;
@@ -605,6 +699,10 @@ export function exportCss(spec: MotionSpec, root: string): string[] {
       } else rules.push(`#${s.id} { background: ${s.background}; animation: fl-show ${length}s linear ${from}s; }`);
       if (s.move) rules.push(`#${s.id} h1 { color: ${s.accent}; animation: fl-enter ${s.move.seconds}s ${moveCss(s.move)} ${r3(s.start + s.move.offset)}s both; } /* ${s.move.track ? `tracked ${s.move.track} (fitted curve)` : "move found by style (easing family derived)"} */`);
       else rules.push(`#${s.id} h1 { color: ${s.accent}; } /* no move found in this shot: the title holds still */`);
+      // Every further tracked move of the shot: its own element at the tracked element's place, with its own curve.
+      for (const el of s.elements ?? []) {
+        rules.push(`#${el.id} { left: ${pct(el.box.x, width)}; top: ${pct(el.box.y, height)}; width: ${pct(el.box.w, width)}; height: ${pct(el.box.h, height)}; color: ${s.accent}; animation: fl-enter ${el.seconds}s ${moveCss(el)} ${r3(s.start + el.offset)}s both; } /* tracked ${el.track} (fitted curve) */`);
+      }
       // A fade in and a fade out have a veil each, in their own colour.
       if (s.fadeIn) {
         const stops: [string, string][] = [["0%", "opacity: 1;"], [at(s.fadeIn.start), `opacity: 1; animation-timing-function: ${familyCss(s.fadeIn.easing)};`], [at(s.fadeIn.start + s.fadeIn.seconds), "opacity: 0;"], ["100%", "opacity: 0;"]];
@@ -626,6 +724,7 @@ export function exportCss(spec: MotionSpec, root: string): string[] {
 .fl-scene { position: absolute; inset: 0; display: grid; place-items: center; opacity: 0; }
 .fl-scene h1 { font: 800 clamp(24px, 8vw, 120px)/1 system-ui, sans-serif; text-transform: uppercase; margin: 0; }
 .fl-veil { position: absolute; inset: 0; opacity: 0; pointer-events: none; }
+.fl-track { position: absolute; box-sizing: border-box; border: 2px dashed currentColor; display: grid; place-items: center; font: 700 clamp(10px, 1.4vw, 24px)/1 system-ui, sans-serif; }
 @keyframes fl-show { from { opacity: 1; } to { opacity: 1; } }
 @keyframes fl-enter { from { opacity: 0; transform: translateY(60px); } to { opacity: 1; transform: none; } }
 ${sceneCss}
@@ -637,7 +736,7 @@ ${sceneCss}
 <link rel="stylesheet" href="motion.css">
 <body style="margin:0;background:#000;display:grid;place-items:center;min-height:100vh">
 <div class="fl-stage" title="${total} s">
-${scenes.map((s) => `  <section class="fl-scene" id="${s.id}"><h1>${s.id.replace("-", " ")}</h1>${s.fadeIn ? '<div class="fl-veil fl-veil-in"></div>' : ""}${s.fadeOut ? '<div class="fl-veil fl-veil-out"></div>' : ""}</section>`).join("\n")}
+${scenes.map((s) => `  <section class="fl-scene" id="${s.id}"><h1>${s.id.replace("-", " ")}</h1>${(s.elements ?? []).map((el) => `<div class="fl-track" id="${el.id}">${el.track}</div>`).join("")}${s.fadeIn ? '<div class="fl-veil fl-veil-in"></div>' : ""}${s.fadeOut ? '<div class="fl-veil fl-veil-out"></div>' : ""}</section>`).join("\n")}
 </div>
 `,
     "REFERENCE.md": referenceNotes(spec, "CSS (open preview.html)"),

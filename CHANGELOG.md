@@ -100,6 +100,29 @@ https://makkov-design.github.io/framelens/
   shot, so a dissolve covers the outgoing title too). Shots without a move hold still instead of getting an invented
   0.2 s entrance; REFERENCE.md says what is derived and lists what is a default. A spec whose `transitions` is not a
   list, or lies outside the range, is cleaned instead of crashing the export.
+- `web` records page-load motion from the first frame: a recorder added before the page's own scripts keeps every CSS
+  animation, CSS transition and Web Animation as it starts, so motion that is over before the page is read (a 650 ms
+  entrance, a transition toggled on load) is in the reading, marked as over, and in the opening film. The result says
+  what can still be missed (GSAP tweens finished before the reading, motion drawn by scripts) and, for a reading from
+  the extension, that ended animations are not in it. A page without headings or text says so instead of "Fonts: .".
+- `export` writes every tracked move of a shot, not only the first: each further one gets its own element at the
+  tracked element's place (CSS, Remotion, HyperFrames, After Effects, Lottie) with its own curve, spring included, and
+  Hypit's TIMELINE.md lists them. On Frame Lens's own demo the spring at 12.8 s now reaches every target. A move
+  tracked twice (an automatic pick, then a box) is exported once, as its best-graded and newest track; REFERENCE.md
+  names the one left out.
+- `track` with `move: n` keeps its window inside the move's shot and never widens it past a cut (the trailer's move 1
+  was read across the cuts at 13.20 and 13.88 s). `style` measures how much of the picture each move changes (`area`);
+  when the whole picture moves (a camera or character move) `track` says so and asks for a box instead of "Nothing
+  moves", the automatic pick never returns the whole frame or half of it, and a window given by hand that crosses a
+  cut says which. `style` numbers its moves for `track move: n` (STYLE.md too) and its next step names `track`.
+- `exact` on a video or GIF (MP4, MOV, WebM, MKV, AVI, GIF, FLV, MPEG, found by their first bytes) says it is one and
+  points to `plan` or `style`, instead of a JSON parser error; its description lists all six export targets; colours
+  within 0.01 in OKLab (#FFFFFF, #FEFFFF, #FEFEFE) are one palette entry.
+- `audio` returns its spectrogram as a JPEG preview (about 65 KB for the 33 s trailer instead of a 548 KB PNG); the
+  full PNG stays on disk.
+- Specs from `web` and `exact` label `timebase`, `shots` and `rhythm` (and a page's keyframes and scroll positions):
+  the source's own values are `measured`, counts and rates `derived`, and a page's 60 fps, Frame Lens's own choice,
+  `inferred`.
 
 ## 2.0.0 — 2026-11-09
 

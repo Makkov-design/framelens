@@ -1,8 +1,8 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { analyzeAudio, parseLoudnessLog } from "../../src/audio/analyze.js";
+import { analyzeAudio, parseLoudnessLog, spectrogramPreview } from "../../src/audio/analyze.js";
 import { estimateTempo, fft, onBeatRatio, pickPeaks, spectralFlux } from "../../src/audio/dsp.js";
 import { Engine, localFileResolver } from "../../src/engine.js";
 import { silentLogger } from "../../src/logger.js";
@@ -101,5 +101,10 @@ describe.skipIf(!tools)("audio on a real file", () => {
     const { files } = await engine.audio(file);
     expect(existsSync(files.audio!)).toBe(true);
     expect(existsSync(files.spectrogram!)).toBe(true);
+    // The tool result carries a JPEG preview (the full PNG of real sound came back inline at 536 KB); the PNG stays.
+    const preview = spectrogramPreview(files.spectrogram!);
+    expect(readFileSync(preview).subarray(0, 3)).toEqual(Buffer.from([0xff, 0xd8, 0xff]));
+    expect(statSync(preview).size).toBeGreaterThan(1000);
+    expect(readFileSync(files.spectrogram!).subarray(1, 4).toString("latin1")).toBe("PNG");
   });
 });

@@ -65,6 +65,13 @@ describe("web animation data", () => {
     expect(spec.events[0]).toMatchObject({ start: 0.2, end: 0.8, frames: 36, easing: "ease-out", suggestion: "cubic-bezier(0.16, 1, 0.3, 1)", evidence: "measured" });
     expect(spec.palette[0]).toMatchObject({ hex: "#0E0F1A", share: 0.9, evidence: "measured" });
     expect(spec.typography[0]).toMatchObject({ family_guess: "Inter, sans-serif", weight: 800, evidence: "measured" });
+    // Every object with numbers carries a label: the viewport is read, 60 fps is Frame Lens's own choice.
+    expect(spec.timebase.evidence).toEqual({ fps: "inferred", duration: "derived", width: "measured", height: "measured" });
+    expect(spec.shots[0]!.evidence).toBe("derived");
+    expect(spec.rhythm.evidence).toBe("derived");
+    const scrolled = spec.events.find((e) => (e as { scroll?: unknown }).scroll) as unknown as { scroll: { evidence: string }; keyframes: { evidence: string }[] };
+    expect(scrolled.scroll.evidence).toBe("measured");
+    expect(scrolled.keyframes.every((k) => k.evidence === "measured")).toBe(true);
   });
 
   it("feeds the exporters like a video spec", () => {
@@ -158,6 +165,18 @@ describe.skipIf(!canRun)("with a real browser", () => {
 document.getAnimations = () => { throw new Error("no"); };
 Object.defineProperty(window, "gsap", { get() { throw new Error("no"); } });
 </script>`);
+      } else if (req.url === "/load") {
+        // Page-load motion that is over long before the page is read (load + 1.2 s).
+        res.writeHead(200, { "content-type": "text/html" });
+        res.end(`<!doctype html><title>Load</title><style>
+.b { width: 96px; height: 96px; background: #E0402F; animation: rise 650ms cubic-bezier(0.22, 1, 0.36, 1) 100ms; }
+@keyframes rise { from { transform: translateY(80px); } to { transform: none; } }
+.f { opacity: 0; transition: opacity 500ms ease-out; } .f.on { opacity: 1; }
+.late { opacity: 0; transition: opacity 450ms ease-in 100ms; } .late.on { opacity: 1; }
+</style><div class="b"></div><div class="f" id="f">fade</div><div class="late" id="late">late</div><script>
+requestAnimationFrame(() => requestAnimationFrame(() => document.getElementById("f").classList.add("on")));
+setTimeout(() => document.getElementById("late").classList.add("on"), 300);
+</script>`);
       } else if (req.url === "/hang") {
         res.writeHead(200, { "content-type": "text/html" });
         res.end(`<!doctype html><title>Hang</title><script>document.getAnimations = () => { for (;;) {} };</script>`);
@@ -186,6 +205,16 @@ Object.defineProperty(window, "gsap", { get() { throw new Error("no"); } });
     expect(result.reading.gsap).toBe(true);
     expect(result.reading.fonts[0]).toMatchObject({ weight: "800", transform: "uppercase" });
     expect(result.reading.colors[0]!.hex).toBe("#0E0F1A");
+    expect(result.sheet && existsSync(result.sheet.file)).toBe(true);
+  }, 120_000);
+
+  it("records page-load animations and transitions that end before the page is read", async () => {
+    const result = await readPage(`${base}/load`, dir, tools!, { maxScroll: 0 });
+    const on = (name: string) => result.reading.animations.filter((a) => new RegExp(`div[.#]${name}\\b`).test(a.target));
+    expect(on("b")).toEqual([expect.objectContaining({ kind: "css-animation", name: "rise", duration: 650, delay: 100, ended: true })]);
+    expect(on("f")).toEqual([expect.objectContaining({ kind: "css-transition", name: "opacity", duration: 500, ended: true })]);
+    expect(on("late")).toEqual([expect.objectContaining({ kind: "css-transition", name: "opacity", duration: 450, delay: 100, ended: true })]);
+    expect(result.reading.animations).toHaveLength(3);
     expect(result.sheet && existsSync(result.sheet.file)).toBe(true);
   }, 120_000);
 

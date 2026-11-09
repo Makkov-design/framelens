@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { bezierAt, clipFrames } from "../../scripts/synth.mjs";
 import { workSize } from "../../src/track/decode.js";
 import { fitProperty } from "../../src/track/fit.js";
-import { autoBox, trackElement, type GrayFrames } from "../../src/track/tracker.js";
+import { autoBox, findElement, trackElement, type GrayFrames } from "../../src/track/tracker.js";
 
 const W = 320;
 const H = 180;
@@ -80,6 +80,34 @@ describe("autoBox", () => {
   it("finds nothing when nothing moves", async () => {
     const v = video({ total: 10, progress: () => 0, size: 30 });
     expect(await autoBox(v)).toBeUndefined();
+    expect((await findElement(v)).wholePicture).toBe(false);
+  });
+
+  // The trailer's move 1 (a character animation, then the camera): `auto` returned the whole 1920×1080 frame as the
+  // element and fitted nothing.
+  it("says the whole picture moves for a camera pan, and never returns the whole frame", async () => {
+    const texture = (x: number, y: number) => 90 + 50 * Math.sin(x / 7) * Math.cos(y / 11) + 30 * Math.sin((x + 2 * y) / 17);
+    const frames = Array.from({ length: 40 }, (_, i) => {
+      const shift = 120 * bezierAt(ease, (i - 6) / 26);
+      const data = new Uint8Array(W * H);
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) data[y * W + x] = Math.round(texture(x + shift, y));
+      return { t: i / 30, data };
+    });
+    const v: GrayFrames = { width: W, height: H, frames };
+    expect(await findElement(v)).toEqual({ wholePicture: true });
+    expect(await autoBox(v)).toBeUndefined();
+  });
+
+  // A window across a cut: the first frames are another shot. The noise threshold came from the first frame alone, so
+  // it rose above every difference and `auto` said "Nothing moves".
+  it("finds the element when the window starts in another shot", async () => {
+    const moving = video({ total: 40, progress: progress(14, 20), from: [60, 90], to: [250, 90], size: 36 });
+    const other = new Uint8Array(W * H).fill(200);
+    const v: GrayFrames = { width: W, height: H, frames: moving.frames.map((f, i) => (i < 8 ? { t: f.t, data: other } : f)) };
+    const found = await findElement(v);
+    expect(found.wholePicture).toBe(false);
+    expect(found.found!.box.w).toBeGreaterThan(28);
+    expect(found.found!.box.w).toBeLessThan(46);
   });
 });
 

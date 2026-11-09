@@ -257,7 +257,11 @@ describe("spec writer and export", () => {
     const spec = JSON.parse(readFileSync(r.files.spec!, "utf8")) as MotionSpec;
     expect(spec.spec).toBe("framelens.motion/1");
     expect(spec.events.find((e) => (e as { property?: string }).property === "position")).toMatchObject({ kind: "move", evidence: "measured", suggestion: "cubic-bezier(0.2, 0.8, 0.3, 1)", frames: 30 });
-    expect(spec.timebase).toMatchObject({ fps: 30, width: 400, height: 300, duration: 2 });
+    expect(spec.timebase).toMatchObject({ fps: 30, width: 400, height: 300, duration: 2, evidence: "measured" });
+    // The file's own values are measured; counts and rates computed from them are derived.
+    expect(spec.shots.every((s) => s.evidence === "measured")).toBe(true);
+    expect(spec.rhythm.evidence).toBe("derived");
+    expect((spec as unknown as { exact: { evidence: string; texts: { evidence: string }[] } }).exact).toMatchObject({ evidence: "measured", texts: [expect.objectContaining({ evidence: "measured" })] });
     const style = readFileSync(r.files.style!, "utf8");
     expect(style).toContain("cubic-bezier(0.2, 0.8, 0.3, 1)");
     expect(style).toContain("wiggle");
@@ -281,5 +285,42 @@ describe("spec writer and export", () => {
 
   it("needs a token for links and says how to get one", async () => {
     await expect(runExact({ source: "https://www.figma.com/design/AbC123xyz/N?node-id=1-1", root: join(dir, "ws"), version: "t", env: {} })).rejects.toThrow(/personal access token/);
+  });
+});
+
+// Found before the 2.1.0 tag: `exact` on a video leaked a JSON parser error (Unexpected token ' ', "    ftypqt"...),
+// and palettes listed one colour three times (#FFFFFF, #FEFFFF, #FEFEFE).
+describe("videos and near-identical colours", () => {
+  it("says a video or GIF is not an animation file and points to plan or style", async () => {
+    const files: [string, Buffer, RegExp][] = [
+      ["clip.mov", Buffer.concat([Buffer.from([0, 0, 0, 0x14]), Buffer.from("ftypqt  \0\0\0\0qt  ")]), /QuickTime \(MOV\) video/],
+      ["clip.json", Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from("ftypisom\0\0\x02\0isomiso2")]), /an MP4 video/],
+      ["clip.lottie", Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0x9f, 0x42, 0x86, 0x81, 0x01, 0x42, 0x82, 0x84, 0x77, 0x65, 0x62, 0x6d]), /a WebM video/],
+      ["clip.riv", Buffer.concat([Buffer.from("RIFF\x10\0\0\0AVI LIST")]), /an AVI video/],
+      ["loop.json", Buffer.from("GIF89a\x01\0\x01\0"), /a GIF animation/],
+    ];
+    for (const [name, bytes, kind] of files) {
+      const file = join(dir, name);
+      writeFileSync(file, bytes);
+      const error = await runExact({ source: file, root: join(dir, "ws"), version: "test" }).then(() => undefined, (e: Error) => e);
+      expect(error, name).toBeInstanceOf(Error);
+      expect(error!.message, name).toMatch(kind);
+      expect(error!.message, name).toMatch(/not a Lottie, Rive or Figma file[\s\S]*`plan`[\s\S]*`style`/);
+      expect(error!.message, name).not.toMatch(/Unexpected token|JSON/);
+    }
+  });
+
+  it("merges colours within a small OKLab distance and keeps distinct ones", async () => {
+    const file = join(dir, "whites.json");
+    const fill = (c: number[]) => ({ ty: 4, nm: "Box", ind: 1, ip: 0, op: 60, st: 0, sr: 1, ks: {}, shapes: [{ ty: "gr", it: [{ ty: "rc", s: { a: 0, k: [100, 100] } }, { ty: "fl", c: { a: 0, k: [...c, 1] } }] }] });
+    const doc = { ...lottie, layers: [fill([1, 1, 1]), fill([254 / 255, 1, 1]), fill([254 / 255, 254 / 255, 254 / 255]), fill([250 / 255, 250 / 255, 250 / 255]), fill([0.2, 0.4, 1])] };
+    writeFileSync(file, JSON.stringify(doc));
+    const r = await runExact({ source: file, root: join(dir, "ws"), version: "test" });
+    const hexes = r.analysis.palette.map((p) => p.hex);
+    expect(hexes.filter((h) => /^#F[E-F]F[E-F]F[E-F]$/.test(h))).toHaveLength(1);
+    expect(hexes).toContain("#FAFAFA");
+    expect(hexes).toContain("#3366FF");
+    expect(r.analysis.palette.reduce((s, p) => s + p.share, 0)).toBeCloseTo(1, 2);
+    for (const shot of r.analysis.shots) expect(shot.palette.filter((h) => /^#F[E-F]F[E-F]F[E-F]$/.test(h)).length).toBeLessThanOrEqual(1);
   });
 });

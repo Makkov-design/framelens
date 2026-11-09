@@ -2,8 +2,30 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Transcript } from "../speech/transcript.js";
 import { transitionName, type MotionSpec } from "../style/spec.js";
-import { oneLine, write } from "./exporters.js";
+import { oneLine, trackName, write } from "./exporters.js";
 import { safeHex } from "../text.js";
+import { curveLabel, safeCurve, type Curve } from "../track/curve.js";
+import { preferredTracks } from "../track/link.js";
+import { exportable, primaryCurve, TRACK_PROPERTIES, type TrackedMove, type TrackedProperty } from "../track/run.js";
+
+/** Every tracked move with a curve good enough to export, once per element and window (the best, newest track). */
+function trackedMoves(spec: MotionSpec): { track: TrackedMove; p: TrackedProperty; curve: Curve }[] {
+  return preferredTracks(Array.isArray(spec.tracks) ? spec.tracks : []).kept.flatMap((track) => {
+    const p = primaryCurve(track);
+    const curve = exportable(p) ? safeCurve(p!.curve) : undefined;
+    return p && curve && Number.isFinite(p.start) && Number.isFinite(p.end) ? [{ track, p, curve }] : [];
+  });
+}
+
+const num = (v: unknown, digits = 1) => (typeof v === "number" && Number.isFinite(v) ? String(Math.round(v * 10 ** digits) / 10 ** digits) : "?");
+
+/** One tracked move in words; every value is checked, since tracks.json is a file anyone can edit. */
+function trackedLine({ track, p, curve }: { track: TrackedMove; p: TrackedProperty; curve: Curve }): string {
+  const b = (track.element?.box ?? {}) as Partial<Record<"x" | "y" | "w" | "h", unknown>>;
+  const property = (TRACK_PROPERTIES as readonly string[]).includes(p.property) ? p.property : "move";
+  const quality = ["exact", "approximate"].includes(p.quality) ? p.quality : "approximate";
+  return `- Tracked ${trackName(track.id)}: element ${num(b.w, 0)}×${num(b.h, 0)} px at ${num(b.x, 0)}, ${num(b.y, 0)} (measured); ${property} ${num(p.from, 2)} → ${num(p.to, 2)} from ${s2(p.start)} s to ${s2(p.end)} s (${num(p.frames)} frames), ${curveLabel(curve)}, fit error ${num(p.rmse * 100, 2)} % of the travel, ${quality} (derived).`;
+}
 
 const START = "<!-- framelens:measured:start -->";
 const END = "<!-- framelens:measured:end -->";
@@ -101,7 +123,7 @@ Source: ${oneLine(spec.source.url ?? spec.source.input, 2000)}, source time ${sp
 - Picture: ${spec.timebase.width ?? "?"}×${spec.timebase.height ?? "?"}${fps ? ` at ${fps} fps${spec.timebase.vfr ? " (variable frame rate)" : ""}` : ""}, ${s2(spec.range.end - spec.range.start)} s analysed of ${s2(spec.timebase.duration)} s.
 - Rhythm: ${spec.rhythm.cuts} cuts (${spec.rhythm.cutsPerMinute} per minute)${spec.rhythm.transitions ? ` and ${spec.rhythm.transitions} gradual transitions (dissolves, fades, dips, wipes)` : ""}; shots average ${spec.rhythm.meanShotSeconds} s, median ${spec.rhythm.medianShotSeconds} s; ${spec.rhythm.movesPerMinute} measured moves per minute.
 - Sound: ${spec.audio.tempo_bpm ? `${spec.audio.tempo_bpm} BPM` : "no steady tempo measured"}${spec.audio.cut_on_beat_ratio !== undefined ? `, ${Math.round(spec.audio.cut_on_beat_ratio * 100)}% of cuts land on a beat` : ""}${spec.audio.integrated_lufs !== undefined ? `, ${spec.audio.integrated_lufs} LUFS` : ""}${spec.audio.hits?.length ? `, ${spec.audio.hits.length} strong hits` : ""}.
-- Moves: ${spec.events.length}${kinds.size ? ` (${[...kinds.entries()].map(([k, v]) => `${v} ${k}`).join(", ")})` : ""}. Easing families come from how fast the whole picture changes, so they are starting curves, not fitted ones.
+- Moves: ${spec.events.length}${kinds.size ? ` (${[...kinds.entries()].map(([k, v]) => `${v} ${k}`).join(", ")})` : ""}. Easing families come from how fast the whole picture changes, so they are starting curves, not fitted ones${trackedMoves(spec).length ? `; ${trackedMoves(spec).length} moves were tracked element by element with fitted curves (each listed under its shot in TIMELINE.md)` : ""}.
 - Words: ${spec.anchors.words.length} timed words in range.
 
 | Colour | Share of screen time | Evidence |
@@ -127,8 +149,10 @@ export function hypitTimeline(spec: MotionSpec, workspace?: string): string {
   const ownTimeline = readText(workspace, "TIMELINE.md");
   const notes = shotNotes(ownTimeline);
   const median = spec.rhythm.medianShotSeconds;
+  const tracked = trackedMoves(spec);
   const sections = spec.shots.map((shot, i) => {
     const moves = spec.events.filter((e) => e.start >= shot.start && e.start < shot.end);
+    const tracks = tracked.filter((t) => t.p.start >= shot.start && t.p.start < shot.end);
     const words = spec.anchors.words.filter((w) => w.t >= shot.start && w.t < shot.end);
     const beats = spec.anchors.beats.filter((b) => b.t >= shot.start && b.t < shot.end);
     const hits = (spec.audio.hits ?? []).filter((h) => h.t >= shot.start && h.t < shot.end);
@@ -142,6 +166,7 @@ export function hypitTimeline(spec: MotionSpec, workspace?: string): string {
       ...(into ? [`- Entered by a ${transitionName(into)} from ${s2(into.start)} s to ${s2(into.end)} s (${into.frames} frames, ${into.evidence}).`] : []),
       ...(out ? [`- Left by a ${transitionName(out)} from ${s2(out.start)} s to ${s2(out.end)} s (${out.frames} frames, ${out.evidence}).`] : []),
       ...moves.map((m) => `- Move at ${s2(m.start)} s to ${s2(m.end)} s (${m.frames} frames, ${m.easing}${m.curve ? `, tracked curve ${oneLine(m.curve, 400)}` : m.suggestion ? `, starting curve ${oneLine(m.suggestion, 120)}` : ""}, fastest at ${Math.round(m.peakAt * 100)}% of the move; ${m.evidence}).`),
+      ...tracks.map(trackedLine),
       ...(words.length ? [`- Words: ${words.slice(0, 40).map((w) => `“${oneLine(w.text, 60)}” ${s2(w.t)}–${s2(w.end)}`).join(", ")}${words.length > 40 ? `, … ${words.length - 40} more` : ""}.`] : []),
       ...(beats.length ? [`- Beats at ${beats.map((b) => s2(b.t)).join(", ")} s.`] : []),
       ...(hits.length ? [`- Strong audio hits at ${hits.map((h) => `${s2(h.t)} s (${h.strength.toFixed(2)})`).join(", ")}.`] : []),

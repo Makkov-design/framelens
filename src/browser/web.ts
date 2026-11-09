@@ -5,7 +5,7 @@ import type { Swatch } from "../style/palette.js";
 import type { MotionSpec } from "../style/spec.js";
 import type { PageAnimation, PageReading } from "./page-script.js";
 
-export { cleanReading, mergeReadings, PAGE_SCRIPT, type PageAnimation, type PageReading } from "./page-script.js";
+export { cleanReading, mergeReadings, PAGE_SCRIPT, RECORDER_SCRIPT, type PageAnimation, type PageReading } from "./page-script.js";
 
 
 const KEYWORDS: Record<string, [number, number, number, number]> = {
@@ -73,10 +73,12 @@ export function specFromPage(reading: PageReading, version: string): MotionSpec 
       target: a.target,
       name: a.name,
       properties: a.properties,
-      keyframes: a.keyframes,
+      // Every object with numbers carries its label (the page's own keyframe offsets and scroll position).
+      keyframes: a.keyframes.map((k) => ({ ...k, evidence: "measured" as const })),
       source: a.kind,
       iterations: a.iterations,
-      ...(a.scrollTriggered && { scroll: { triggeredAtY: a.scrollY } }),
+      ...(a.scrollTriggered && { scroll: { triggeredAtY: a.scrollY, evidence: "measured" as const } }),
+      ...(a.ended && { ended: true }),
     };
   });
   return {
@@ -84,7 +86,16 @@ export function specFromPage(reading: PageReading, version: string): MotionSpec 
     generatedBy: `framelens ${version}`,
     source: { kind: "web", input: reading.url, url: reading.url, title: reading.title },
     range: { start: 0, end: r3(end) },
-    timebase: { fps: FPS, vfr: false, duration: r3(end), width: reading.viewport.width, height: reading.viewport.height },
+    // The viewport is read from the page; the length is where its animations end; 60 fps is Frame Lens's own
+    // choice for a page (a page has no frame rate of its own).
+    timebase: {
+      fps: FPS,
+      vfr: false,
+      duration: r3(end),
+      width: reading.viewport.width,
+      height: reading.viewport.height,
+      evidence: { fps: "inferred", duration: "derived", width: "measured", height: "measured" },
+    },
     anchors: { words: [], beats: [], cuts: [] },
     changes: [],
     palette,
@@ -99,10 +110,11 @@ export function specFromPage(reading: PageReading, version: string): MotionSpec 
       sample: f.sample,
       evidence: "measured" as const,
     })),
-    shots: [{ id: "page", start: 0, end: r3(end), frames: Math.round(end * FPS), palette: palette.slice(0, 4).map((p) => p.hex) }],
+    // One "shot" for the page: from load to where its animations end (derived from their measured times).
+    shots: [{ id: "page", start: 0, end: r3(end), frames: Math.round(end * FPS), palette: palette.slice(0, 4).map((p) => p.hex), evidence: "derived" as const }],
     systems: [],
     events,
-    rhythm: { cuts: 0, cutsPerMinute: 0, meanShotSeconds: r3(end), medianShotSeconds: r3(end), movesPerMinute: Math.round((events.length / (end / 60)) * 100) / 100 },
+    rhythm: { cuts: 0, cutsPerMinute: 0, meanShotSeconds: r3(end), medianShotSeconds: r3(end), movesPerMinute: Math.round((events.length / (end / 60)) * 100) / 100, evidence: "derived" as const },
     audio: { sfx: [] },
   };
 }

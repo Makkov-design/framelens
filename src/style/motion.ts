@@ -25,6 +25,11 @@ export interface MotionEvent {
   easing: EasingFamily;
   /** A CSS curve of that family to start from; refine with `frames` every_frame. */
   suggestion: string;
+  /**
+   * Share of the picture (0–1) the move changes visibly: small for an element on a still background, near 1 when the
+   * whole picture moves (a camera or character move), where `track` needs a box instead of `auto`.
+   */
+  area?: number;
 }
 
 export const EASING_SUGGESTIONS: Record<EasingFamily, string> = {
