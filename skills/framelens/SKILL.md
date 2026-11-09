@@ -27,8 +27,11 @@ deferred, load them with ToolSearch query `framelens` first.
 4. **Learn** (tutorial → guide): `boundaries` to find screen changes, then `frames` at those moments with words under
    each frame. Read commands and code from the frames; open a single frame at full width when text is small.
 5. **Find** (a moment): `frames` with `around: "<phrase>"`.
-6. **Style** (motion reference): `style` first: cuts, shots, palette, moves and their easing family, written to
-   `motion-spec.json`, `STYLE.md`, `TIMELINE.md`, `ANALYSIS.md`. Then use the loupe: `frames` `every_frame` ±0.5 s
+6. **Style** (motion reference): `style` first: cuts and gradual transitions (dissolves, fades and dips through black
+   or white, wipes; `transitions` in the spec, `derived`), the shots between them (split at a dissolve's halfway frame
+   and at a fade's black or white frame), each shot's palette over its own frames, moves and their easing family,
+   written to `motion-spec.json`, `STYLE.md`, `TIMELINE.md`, `ANALYSIS.md`. A transition is not a move: do not track it.
+   Then use the loupe: `frames` `every_frame` ±0.5 s
    around each move or transition that matters (sheets a second apart miss 1–3-frame timing). Then complete the
    typography, visual systems, motion vocabulary and "why it works" sections in those files. Re-running `style` only
    refreshes their measured blocks. Add `audio` for music, beats and hits.
@@ -40,7 +43,8 @@ deferred, load them with ToolSearch query `framelens` first.
    family; unreliable ones (above 3 % error, cut by the window, 5 frames or shorter) are reported only. When `auto`
    picks the wrong thing or reports few matched frames, pass a box around the element.
 7. **Rebuild** in the user's tool: `export` with `hyperframes`, `remotion`, `css`, `after-effects`, `lottie` or
-   `hypit`. It carries structure, timing, colours and eases; put the user's own content in place of the placeholders.
+   `hypit`. It carries structure, timing, colours, eases and the measured dissolves and fades; only measured moves
+   animate (other titles hold still, and REFERENCE.md lists the defaults). Put the user's own content in place of the placeholders.
    Never copy the reference's footage, logos or people. After rendering, `compare` the render with the reference and
    fix what it names.
 8. **Without ffmpeg or in a cloud session**: use the Gemini tools for YouTube links, and say that timing and colours

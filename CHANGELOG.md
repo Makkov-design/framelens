@@ -25,6 +25,26 @@
   Lottie spec. Hard limits on file size, object count and string length; names are treated as untrusted text.
 - `STYLE.md` from `exact` (Lottie and Figma too) escapes names and text from the file as Markdown, so they cannot add
   links, HTML or table columns.
+- `style` reports transitions: cuts (`measured`) and dissolves, fades in and out, dips through black or white and wipes
+  (`derived`), each with start, end, duration in frames, the shot boundary, the colour or direction and the blend's
+  easing, in `transitions` of `motion-spec.json`, `STYLE.md` and `TIMELINE.md`. Shots split at a dissolve's halfway
+  frame and a fade's black or white frame; cuts stay exact. On the Big Buck Bunny trailer the title cards are shots of
+  their own again (dissolves at 3.48–4.44 s and 6.24–7.12 s, five dips to black at 18.88–22.88 s, a flash to white at
+  26.72 s). A push is not recognised (reported as a move). The benchmark adds 60 rendered transitions: see
+  [docs/ACCURACY.md](docs/ACCURACY.md).
+- `style` no longer lists the same move twice (two bursts of motion that grew over the same slow frames), and moves
+  leave out transition frames and still frames whose change is only grain. Exporters and `plan` drop duplicates from
+  older specs.
+- Shot palettes and backgrounds come from the shot's own frames over its whole length (outside its transitions), not
+  from one frame at its middle: a title card that dissolves into the film is white, not the blend.
+- `plan` for the style goal stays proportionate: ×10 passages cover about an eighth of the video, every-frame windows
+  around the strongest changes are joined when they overlap or touch, capped by duration and at 2 s each, and the
+  estimate counts frames and tokens per sheet layout. On the 33 s trailer: 284 frames and about 23,000 image tokens,
+  down from 606 frames and 63,043.
+- `export` animates only what was measured: titles move where a move or tracked curve was measured, dissolves are
+  cross-fades and fades and dips go through black or white (CSS keyframes, HyperFrames tweens, Remotion opacity,
+  After Effects and Lottie opacity keys; a wipe is a clip-path edge where the target has one). Shots without a measured
+  move hold still instead of getting an invented 0.2 s entrance; REFERENCE.md lists what is a default.
 
 ## 2.0.0 — 2026-11-09
 

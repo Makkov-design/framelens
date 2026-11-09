@@ -4,9 +4,9 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Engine, localFileResolver } from "../../src/engine.js";
 import { silentLogger } from "../../src/logger.js";
-import { classifyChanges, easingFromProfile, motionEvents, parseEnergy } from "../../src/style/motion.js";
+import { classifyChanges, easingFromProfile, motionEvents, parseEnergy, uniqueEvents } from "../../src/style/motion.js";
 import { mergePalettes, oklabToHex, palette, rgbToOklab } from "../../src/style/palette.js";
-import { shotsFromCuts } from "../../src/style/spec.js";
+import { paletteTimes, shotsFromCuts } from "../../src/style/spec.js";
 import { cutsVideo, mediaTools, tempDir } from "../media/fixtures.js";
 
 const tools = mediaTools();
@@ -79,6 +79,51 @@ describe("motion", () => {
 
   it("parses signalstats output", () => {
     expect(parseEnergy("frame:1 pts:1 pts_time:0.04\nlavfi.signalstats.YAVG=3.5\n")).toEqual([{ t: 0.04, energy: 3.5 }]);
+  });
+
+  it("reports one move once when two runs grow over the same slow frames (the 2.0 duplicate)", () => {
+    // Two bursts separated by slow frames that are above the noise floor but below the threshold: each burst grew
+    // over them into the same window, so 2.0 listed the identical move twice.
+    const energy = [
+      ...Array.from({ length: 10 }, (_, i) => ({ t: i / 25, energy: 0.12 })),
+      ...Array.from({ length: 10 }, (_, i) => ({ t: (10 + i) / 25, energy: 6 })),
+      ...Array.from({ length: 20 }, (_, i) => ({ t: (20 + i) / 25, energy: 1 })),
+      ...Array.from({ length: 10 }, (_, i) => ({ t: (40 + i) / 25, energy: 6 })),
+      ...Array.from({ length: 60 }, (_, i) => ({ t: (50 + i) / 25, energy: 0.12 })),
+    ];
+    const events = motionEvents(energy, [], 25, { threshold: 2 });
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ start: 0.36, end: 1.96, frames: 40 });
+  });
+
+  it("leaves transition frames out of moves", () => {
+    const energy = [
+      ...Array.from({ length: 10 }, (_, i) => ({ t: i / 25, energy: 0.1 })),
+      ...Array.from({ length: 12 }, (_, i) => ({ t: (10 + i) / 25, energy: 6 })),
+      ...Array.from({ length: 10 }, (_, i) => ({ t: (22 + i) / 25, energy: 0.1 })),
+    ];
+    expect(motionEvents(energy, [], 25)).toHaveLength(1);
+    expect(motionEvents(energy, [], 25, { exclude: [{ start: 0.36, end: 0.84 }] })).toEqual([]);
+  });
+
+  it("keeps a move listed twice once", () => {
+    const e = { start: 3.48, end: 7.12, frames: 91 };
+    expect(uniqueEvents([{ ...e, n: 2 }, { start: 1, end: 2, frames: 25, n: 1 }, { ...e, n: 3 }]).map((x) => x.n)).toEqual([1, 2]);
+  });
+
+  it("samples a shot's colours over its own frames, not over the transitions at its ends", () => {
+    const dissolveIn = { kind: "dissolve" as const, start: 3.48, end: 4.44, frames: 24, at: 3.92 };
+    const dissolveOut = { kind: "dissolve" as const, start: 6.24, end: 7.12, frames: 22, at: 6.76 };
+    const times = paletteTimes({ start: 3.92, end: 6.76 }, [dissolveIn, dissolveOut], 25, 3);
+    expect(times).toHaveLength(3);
+    for (const t of times) {
+      expect(t).toBeGreaterThanOrEqual(4.44);
+      expect(t).toBeLessThanOrEqual(6.24);
+    }
+    // A title card before the dissolve: sampled over 0–3.48 s, never in the blend.
+    expect(Math.max(...paletteTimes({ start: 0, end: 3.92 }, [dissolveIn], 25, 24))).toBeLessThanOrEqual(3.52);
+    // A shot that is all transition: its middle.
+    expect(paletteTimes({ start: 1, end: 1.2 }, [{ kind: "dissolve", start: 0.8, end: 1.4, frames: 15, at: 1 }, { kind: "dissolve", start: 1.1, end: 1.5, frames: 10, at: 1.2 }], 25)).toEqual([1.1]);
   });
 
   it("splits shots at cuts and merges slivers", () => {

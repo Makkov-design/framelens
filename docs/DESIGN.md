@@ -40,7 +40,7 @@ research and reasoning lives in the plan page; this file is what the code must f
 | `speech/` | Transcript with word times: captions first, local whisper if present, Gemini as fallback |
 | `workspace/` | Workspace folder layout, `manifest.json`, cached pass results, `PROGRESS.md` |
 | `router/` | Video type classification and the goal-based plan |
-| `style/` (2.1) | Shots, cuts, palette, typography notes, `STYLE.md`, `motion-spec.json`, `ANALYSIS.md`, `TIMELINE.md` |
+| `style/` (2.1) | Shots, cuts, transitions (`transitions.ts`: dissolves, fades, dips, wipes from every frame at 64×36), palette, typography notes, `STYLE.md`, `motion-spec.json`, `ANALYSIS.md`, `TIMELINE.md` |
 | `track/` (2.1) | Element tracking (normalised cross-correlation, then Lucas–Kanade subpixel refinement with gain and offset, drift checked against the first template) and curve fitting (cubic-bezier, spring, linear, steps by least squares with Nelder–Mead), `TRACK.md`, `tracks.json` |
 | `audio/` (2.2) | Loudness, silences, onsets, tempo and beat grid, cut-on-beat, spectrogram image, SFX labels |
 | `exact/` (2.4) | Lottie, live web pages (WAAPI/GSAP), Figma; Rive `.riv` (`rive.ts` reads the runtime binary format, keys copied from Rive's MIT defs in `rive-defs.ts`) |
@@ -77,14 +77,14 @@ All new tools take `source` (URL, path or YouTube ID) and return a short text su
 | Tool | Phase | Does |
 |---|---|---|
 | `probe` | 2.0 | Resolve and fetch the source, probe it, report kind, duration, fps, captions, dynamics, workspace path |
-| `plan` | 2.0 | Goal (or free-text request) + probe → passes, densities, ranges, token estimate |
+| `plan` | 2.0 | Goal (or free-text request) + probe → passes, densities, ranges, token estimate. Style goal: ×10 passages about an eighth of the video (1–3 of 2–8 s, by summed change strength, never overlapping), every-frame windows around the strongest changes (one per 8 s, 2–8, overlapping or touching windows joined, each ≤ 2 s); the estimate counts frames and image tokens per sheet layout |
 | `transcript` | 2.0 | Word-timed transcript; returns the text (bounded) and file paths |
 | `frames` | 2.0 | Frames or contact sheets for a range: `at`, `every` (s), `fps`, `every_frame`, `around` (phrase), `columns`, `rows`, `cell`, word labels. Returns sheet paths; inlines at most a few sheets |
 | `boundaries` | 2.0 | Visual-change candidates with scores (not editorial cut labels) |
-| `style` | 2.1 | Cuts, shots, palette, systems; writes STYLE.md, motion-spec.json, ANALYSIS/TIMELINE skeletons |
+| `style` | 2.1 | One decoding pass (per-frame change at 160 px and every frame at 64×36): cuts, gradual transitions, shots split at them, palette per shot over its own frames (not the blend frames), moves without the transition frames; writes STYLE.md, motion-spec.json, ANALYSIS/TIMELINE skeletons. Transitions: runs of frames whose changes correlate (cosine ≥ 0.3), trimmed of plain motion at the ends, accepted when the frames are blends of the two pictures (median residual ≤ 0.3, share of the new picture rising), most of the picture changes, and the new picture is not the old one relit or moved a few pixels; a flat black or white end makes it a fade, a fade out and a fade in through the same colour with ≤ 0.5 s between them a dip. Wipes are checked in the move windows (each pixel one picture or the other, a straight travelling edge). Shot boundary: a dissolve's or wipe's halfway frame (the new picture at half), a fade's black or white frame (the hold's darkest or brightest). A move whose picture never leaves its first frame by 1/250 is noise and is dropped |
 | `track` | 2.1 | One element through a window (≤ 15 s, decoded once as grey frames over a pipe, ≤ 64 MB; widened up to twice when the move runs past it); `auto` candidates are paired with the frame whose edges sit on the box and verified by tracking; a faint (faded) element keeps its place instead of being searched for; per-property fit with start, end, delay, error and quality (exports take exact and approximate curves only). Model choice: steps when they fit at least twice as well as any smooth curve; a spring when the value swings back across its target, or overshoots and the spring fits better; linear when within 25 % of the bezier's error; otherwise the bezier. Tracks go to `tracks.json` and `motion-spec.json` (`tracks`, and `track`/`curve` on the style move they refine) |
 | `audio` | 2.2 | Sound analysis and spectrogram |
-| `export`, `compare` | 2.3 | Starter projects; render-vs-reference report |
+| `export`, `compare` | 2.3 | Starter projects; render-vs-reference report. Exports animate only what was measured: a title moves where a move or tracked curve was measured in its shot; dissolves are opacity cross-fades (the incoming scene starts with the dissolve, painted above), fades and dips a black or white veil, wipes a clip-path edge (an opacity cross-fade in After Effects and Lottie); everything else is still. REFERENCE.md lists the defaults |
 | Gemini tools | kept | `summarize_youtube_video`, `ask_about_youtube_video`, `extract_key_moments`, `get_video_transcript`, `list_supported_models` |
 
 ## motion-spec.json v1
@@ -102,6 +102,11 @@ All new tools take `source` (URL, path or YouTube ID) and return a short text su
   "palette": [{ "hex": "#0E0F1A", "role": "background", "share": 0.62, "evidence": "measured" }],
   "typography": [{ "role": "caption", "family_guess": "Inter Tight", "weight": 800, "case": "upper", "evidence": "inferred" }],
   "shots": [{ "id": "s4", "start": 3.2, "end": 4.6, "frames": 42, "anchor": "c3", "role": "B-roll" }],
+  "transitions": [                   // how each shot gives way to the next (2.1)
+    { "id": "x1", "kind": "cut", "start": 3.2, "end": 3.2, "frames": 0, "at": 3.2, "from": "s3", "to": "s4", "evidence": "measured" },
+    { "id": "x2", "kind": "dissolve", "start": 4.2, "end": 5.0, "frames": 24, "at": 4.6, "easing": "linear", "fit": 0.03, "from": "s4", "to": "s5", "evidence": "derived" },
+    { "id": "x3", "kind": "dip", "via": "black", "start": 8.6, "end": 9.16, "frames": 14, "at": 8.88, "hold": { "start": 8.88, "end": 8.92 }, "evidence": "derived" }
+  ],                                 // kinds: cut, dissolve, fade-in, fade-out, dip (via black|white), wipe (direction)
   "systems": [{                        // things that live across several shots: captions, boards, sound beds
     "id": "caption", "role": "Caption", "start": 0, "end": 45.2,
     "states": [{ "t": 3.21, "anchor": "w12", "change": "word highlight", "evidence": "measured" }]

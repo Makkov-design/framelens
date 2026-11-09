@@ -1,9 +1,10 @@
 // Accuracy benchmark: renders videos with known cuts, move timings and easing curves, runs Frame Lens `style` on
-// them through the built bundle, and reports how close the measurements are. Then renders a square moving with known
-// cubic-beziers and springs (clean, noisy, on a busy background) and checks the curves `track` fits. Writes
-// docs/ACCURACY.md.
+// them through the built bundle, and reports how close the measurements are. Then renders dissolves, dips and wipes
+// with known boundaries for the transitions `style` reports, and a square moving with known cubic-beziers and springs
+// (clean, noisy, on a busy background) and checks the curves `track` fits. Writes docs/ACCURACY.md.
 // Usage: node scripts/benchmark.mjs   (needs ffmpeg on PATH and `npm run bundle` first)
 //        node scripts/benchmark.mjs --track-only   (only the `track` clips; prints, writes nothing)
+//        node scripts/benchmark.mjs --transitions-only   (only the transition clips; prints, writes nothing)
 import { execFileSync, spawn } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -12,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import { bezierAt, clipFrames, encode, springAt } from "./synth.mjs";
 
 const TRACK_ONLY = process.argv.includes("--track-only");
+const TRANSITIONS_ONLY = process.argv.includes("--transitions-only");
 const repo = fileURLToPath(new URL("..", import.meta.url));
 const work = mkdtempSync(join(tmpdir(), "framelens-bench-"));
 const EASINGS = {
@@ -37,6 +39,52 @@ function clip(file, fps, frames, easing, colour) {
     "-filter_complex", `[0][1]overlay=x='${x}':y=140:eval=frame`,
     "-c:v", "libx264", "-qp", "8", "-pix_fmt", "yuv420p", file,
   ]);
+}
+
+// Gradual transitions with known boundaries, between two still test pictures and between two moving ones. Each clip:
+// 1 s of the first picture, the transition, then the second picture. Encoded near-losslessly like the cut clips.
+const TRANSITION_KINDS = [
+  { name: "dissolve", kind: "dissolve", xfade: "fade" },
+  { name: "dip through black", kind: "dip", via: "black" },
+  { name: "dip through white", kind: "dip", via: "white" },
+  { name: "wipe left", kind: "wipe", xfade: "wipeleft", direction: "left" },
+  { name: "wipe down", kind: "wipe", xfade: "wipedown", direction: "down" },
+];
+const TRANSITION_FRAMES = [12, 24];
+const TRANSITION_PICTURES = {
+  still: (fps, d) => [`smptehdbars=s=640x360:r=${fps}:d=${d}`, `rgbtestsrc=s=640x360:r=${fps}:d=${d},hue=h=40`],
+  moving: (fps, d) => [`testsrc2=s=640x360:r=${fps}:d=${d}`, `mandelbrot=s=640x360:r=${fps}:end_scale=0.6,trim=duration=${d}`],
+};
+const LEAD = 1; // seconds of the first picture before the transition
+
+/**
+ * Renders one transition clip and returns its truth: the last frame of the first picture (start), the first frame of
+ * the second (end), and where the shot boundary belongs (a dissolve's or wipe's halfway frame; a dip's black or white
+ * hold, three frames long here).
+ */
+function transitionClip(file, fps, frames, t, pictures) {
+  const seconds = frames / fps;
+  const [a, b] = pictures(fps, LEAD + seconds + 1.5);
+  const encode = ["-c:v", "libx264", "-qp", "8", "-pix_fmt", "yuv420p", file];
+  if (t.kind !== "dip") {
+    execFileSync("ffmpeg", [
+      "-hide_banner", "-v", "error", "-y", "-f", "lavfi", "-i", a, "-f", "lavfi", "-i", b,
+      "-filter_complex", `[0]format=yuv420p,setsar=1[a];[1]format=yuv420p,setsar=1[b];[a][b]xfade=transition=${t.xfade}:duration=${seconds}:offset=${LEAD},format=yuv420p[v]`,
+      "-map", "[v]", ...encode,
+    ], { timeout: 60_000 });
+    return { start: LEAD, end: LEAD + seconds, at: [LEAD + seconds / 2, LEAD + seconds / 2] };
+  }
+  // Fade out over half the frames, two more frames of the colour, then the second picture fades in from the colour.
+  const half = Math.round(frames / 2) / fps;
+  const outEnd = LEAD + half + 2 / fps;
+  execFileSync("ffmpeg", [
+    "-hide_banner", "-v", "error", "-y", "-f", "lavfi", "-i", a, "-f", "lavfi", "-i", b,
+    "-filter_complex",
+    `[0]format=yuv420p,setsar=1,trim=duration=${outEnd},fade=t=out:st=${LEAD}:d=${half}:color=${t.via}[a];` +
+      `[1]format=yuv420p,setsar=1,fade=t=in:st=0:d=${half}:color=${t.via}[b];[a][b]concat=n=2:v=1:a=0,format=yuv420p[v]`,
+    "-map", "[v]", ...encode,
+  ], { timeout: 60_000 });
+  return { start: LEAD, end: outEnd + half, at: [LEAD + half, outEnd] };
 }
 
 function call(server, id, name, args) {
@@ -167,10 +215,12 @@ const rows = [];
 const cutErrors = [];
 const trackRows = [];
 const varietyRows = [];
+const transitionRows = [];
+const falseTransitions = [];
 const server = startServer(work);
 let id = 1;
 try {
-  for (const fps of TRACK_ONLY ? [] : FPS_LIST) {
+  for (const fps of TRACK_ONLY || TRANSITIONS_ONLY ? [] : FPS_LIST) {
     const clips = [];
     let k = 0;
     for (const frames of DURATIONS) {
@@ -188,6 +238,8 @@ try {
 
     const result = await call(server, id++, "style", { source: video });
     const spec = JSON.parse(readFileSync(result.structuredContent.files.spec, "utf8"));
+    // These clips hold moves and hard cuts only: a gradual transition found in them is a false one.
+    falseTransitions.push(...(spec.transitions ?? []).filter((x) => x.kind !== "cut").map((x) => ({ fps, ...x })));
     const expectedCuts = clips.slice(1).map((_, i) => (i + 1) * CLIP);
     for (const t of expectedCuts) {
       const found = spec.anchors.cuts.map((c) => c.t).sort((a, b) => Math.abs(a - t) - Math.abs(b - t))[0];
@@ -207,7 +259,39 @@ try {
     }
   }
 
-  for (const fps of FPS_LIST) {
+  for (const fps of TRACK_ONLY ? [] : FPS_LIST) {
+    for (const [condition, pictures] of Object.entries(TRANSITION_PICTURES)) {
+      for (const t of TRANSITION_KINDS) {
+        for (const frames of TRANSITION_FRAMES) {
+          const file = join(work, `x-${fps}-${condition}-${t.name.replace(/\W+/g, "_")}-${frames}.mp4`);
+          const truth = transitionClip(file, fps, frames, t, pictures);
+          const result = await call(server, id++, "style", { source: file });
+          const spec = JSON.parse(readFileSync(result.structuredContent.files.spec, "utf8"));
+          const gradual = (spec.transitions ?? []).filter((x) => x.kind !== "cut");
+          const hit = gradual.find((x) => x.start < truth.end && x.end > truth.start);
+          const frameOf = (v) => Math.round(v * fps);
+          // A dissolve's or wipe's boundary is one frame; a dip's is any frame of its hold.
+          const outside = (v) => (v < truth.at[0] ? truth.at[0] - v : v > truth.at[1] ? v - truth.at[1] : 0);
+          const row = {
+            fps,
+            condition,
+            name: t.name,
+            frames,
+            kind: hit ? `${hit.kind}${hit.via ? ` ${hit.via}` : ""}${hit.direction ? ` ${hit.direction}` : ""}` : "none",
+            right: Boolean(hit && hit.kind === t.kind && (!t.via || hit.via === t.via) && (!t.direction || hit.direction === t.direction)),
+            startError: hit ? frameOf(hit.start) - frameOf(truth.start) : null,
+            endError: hit ? frameOf(hit.end) - frameOf(truth.end) : null,
+            boundaryError: hit ? Math.round(outside(hit.at) * fps) : null,
+            extra: gradual.length - (hit ? 1 : 0) + spec.anchors.cuts.length,
+          };
+          transitionRows.push(row);
+          console.error(`transition ${fps} fps, ${condition}, ${t.name}, ${frames} frames: ${row.kind} (start ${row.startError}, end ${row.endError}, boundary ${row.boundaryError}, extra ${row.extra})`);
+        }
+      }
+    }
+  }
+
+  for (const fps of TRANSITIONS_ONLY ? [] : FPS_LIST) {
     for (const condition of TRACK_CONDITIONS) {
       for (const curve of TRACK_CURVES) {
         const file = join(work, `t-${fps}-${condition.noise}-${condition.busy ? "busy" : "plain"}-${curve.name.replace(/\W+/g, "_")}.mp4`);
@@ -220,7 +304,7 @@ try {
     }
   }
 
-  for (const condition of VARIETY_CONDITIONS) {
+  for (const condition of TRANSITIONS_ONLY ? [] : VARIETY_CONDITIONS) {
     for (const v of VARIETY) {
       const fps = 30;
       const file = join(work, `v-${condition.busy ? "busy" : "plain"}-${v.name.replace(/\W+/g, "_")}.mp4`);
@@ -264,6 +348,51 @@ const trackSummary = TRACK_CONDITIONS.map((c) => {
   return `| ${c.name} | ${all.filter((r) => r.kind === r.expected).length} of ${all.length} | ${pct(mean(all.filter((r) => r.shapeError !== undefined).map((r) => r.shapeError)))} / ${pct(max(all.filter((r) => r.shapeError !== undefined).map((r) => r.shapeError)))} | ${f3(mean(bez.map((r) => r.controlError)))} / ${f3(max(bez.map((r) => r.controlError)))} | ${f2(mean(durations))} / ${f2(max(durations))} | ${f2(mean(timed.map((r) => Math.abs(r.startError))))} / ${f2(max(timed.map((r) => Math.abs(r.startError))))} | ${pct(mean(spr.map((r) => r.stiffnessError)))} / ${pct(mean(spr.map((r) => r.dampingError)))} |`;
 });
 
+/** The transitions section of ACCURACY.md: a summary per picture kind and transition, then every clip. */
+function transitionsMarkdown() {
+  const abs = (xs) => xs.filter((v) => v !== null).map((v) => Math.abs(v));
+  const summary = Object.keys(TRANSITION_PICTURES).flatMap((condition) =>
+    TRANSITION_KINDS.map((t) => {
+      const all = transitionRows.filter((r) => r.condition === condition && r.name === t.name);
+      const hits = all.filter((r) => r.right);
+      return `| ${condition} | ${t.name} | ${hits.length} of ${all.length} | ${f2(mean(abs(hits.map((r) => r.startError))))} / ${f2(max(abs(hits.map((r) => r.startError))))} | ${f2(mean(abs(hits.map((r) => r.endError))))} / ${f2(max(abs(hits.map((r) => r.endError))))} | ${f2(mean(abs(hits.map((r) => r.boundaryError))))} / ${f2(max(abs(hits.map((r) => r.boundaryError))))} | ${all.reduce((s, r) => s + r.extra, 0)} |`;
+    }),
+  );
+  const right = transitionRows.filter((r) => r.right).length;
+  return `Two test pictures meet in a transition of 12 or 24 frames at 24, 30 and 60 fps: a dissolve (ffmpeg \`xfade\`
+fade), a dip through black and one through white (the first picture fades out over half the frames, three frames of
+the colour, the second fades in), and wipes to the left and downwards. "Still" pictures are SMPTE bars and an RGB test
+pattern; "moving" ones are ffmpeg's animated \`testsrc2\` and a zooming Mandelbrot set, so the shots move during the
+transition. ${transitionRows.length} clips; ${right} found with the right kind (and colour or direction). Errors are in
+frames against the truth: the start is the last frame of the first picture, the end the first frame of the second, and
+the shot boundary belongs on a dissolve's or wipe's halfway frame or on any frame of a dip's hold. "Extra" counts other
+transitions and cuts reported in the same clips. In the ${FPS_LIST.length} move-and-cut videos above, ${falseTransitions.length} gradual transitions were reported where there are none.
+
+| Pictures | Transition | Found right | Start error, mean / max | End error, mean / max | Boundary error, mean / max | Extra |
+|---|---|---|---|---|---|---|
+${summary.join("\n")}
+
+Dissolves, fades and dips are recognised by their frames being blends of the two pictures (or of a picture and flat
+black or white), so motion inside the shots makes them harder: the blend is checked against the pictures on both
+sides, and the frames at its ends that barely move towards the other picture are left out. A wipe is recognised when
+each frame is part one picture, part the other, split by a straight edge; on moving pictures its start can be a frame
+early here, and more on busier footage. A push (the new picture sliding the old one out) is not recognised as a transition: it is reported as
+a move. Wipes and pushes in real footage are rarer than cuts, dissolves and fades, and less tested here.
+
+On real footage, \`test/style/real-clip.test.ts\` checks the Big Buck Bunny trailer (CC BY 3.0, Blender Foundation;
+25 fps, 33 s) against frame-by-frame reading: its two title-card dissolves (3.48–4.44 s and 6.24–7.12 s), five dips to
+black (boundaries on the black frames at 18.88, 19.88, 20.88, 21.88 and 22.88 s) and a flash to white (26.72 s) are
+found with the boundaries on those frames, and its 11 hard cuts stay where they were.
+
+<details><summary>Every transition clip</summary>
+
+| fps | pictures | transition | frames | found | start error | end error | boundary error | extra |
+|---|---|---|---|---|---|---|---|---|
+${transitionRows.map((r) => `| ${r.fps} | ${r.condition} | ${r.name} | ${r.frames} | ${r.kind}${r.right ? "" : " (wrong)"} | ${r.startError ?? "—"} | ${r.endError ?? "—"} | ${r.boundaryError ?? "—"} | ${r.extra} |`).join("\n")}
+
+</details>`;
+}
+
 const md = `# Accuracy
 
 Measured by \`node scripts/benchmark.mjs\` on synthetic videos with known ground truth: a box moves 400 px with a
@@ -292,6 +421,10 @@ movement's weight sits; the exact curve of an important move is measured with \`
 ${rows.map((r) => `| ${r.fps} | ${r.frames} | ${r.easing} | ${r.found ? "yes" : "no"} | ${r.startError ?? "—"} | ${r.measuredFrames ?? "—"} | ${r.family} |`).join("\n")}
 
 </details>
+
+## Transitions (\`style\`)
+
+${transitionsMarkdown()}
 
 ## Tracked curves (\`track\`)
 
@@ -346,6 +479,10 @@ ${[...trackRows, ...varietyRows].map((r) => `| ${r.fps} | ${r.condition} | ${r.c
 
 </details>
 `;
+if (TRANSITIONS_ONLY) {
+  console.log(transitionsMarkdown().split("<details>")[0]);
+  process.exit(0);
+}
 if (!TRACK_ONLY) writeFileSync(join(repo, "docs", "ACCURACY.md"), md);
 console.log(md.split("<details>")[0]);
 console.log(["| Condition | Model | Shape mean / max | Control mean / max | Duration mean / max | Start mean / max | Spring k / c |", "|---|---|---|---|---|---|---|", ...trackSummary].join("\n"));

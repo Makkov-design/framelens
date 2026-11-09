@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Transcript } from "../speech/transcript.js";
-import type { MotionSpec } from "../style/spec.js";
+import { transitionName, type MotionSpec } from "../style/spec.js";
 import { oneLine, write } from "./exporters.js";
 import { safeHex } from "../text.js";
 
@@ -99,7 +99,7 @@ Source: ${oneLine(spec.source.url ?? spec.source.input, 2000)}, source time ${sp
 ## Measured facts
 
 - Picture: ${spec.timebase.width ?? "?"}×${spec.timebase.height ?? "?"}${fps ? ` at ${fps} fps${spec.timebase.vfr ? " (variable frame rate)" : ""}` : ""}, ${s2(spec.range.end - spec.range.start)} s analysed of ${s2(spec.timebase.duration)} s.
-- Rhythm: ${spec.rhythm.cuts} cuts (${spec.rhythm.cutsPerMinute} per minute); shots average ${spec.rhythm.meanShotSeconds} s, median ${spec.rhythm.medianShotSeconds} s; ${spec.rhythm.movesPerMinute} measured moves per minute.
+- Rhythm: ${spec.rhythm.cuts} cuts (${spec.rhythm.cutsPerMinute} per minute)${spec.rhythm.transitions ? ` and ${spec.rhythm.transitions} gradual transitions (dissolves, fades, dips, wipes)` : ""}; shots average ${spec.rhythm.meanShotSeconds} s, median ${spec.rhythm.medianShotSeconds} s; ${spec.rhythm.movesPerMinute} measured moves per minute.
 - Sound: ${spec.audio.tempo_bpm ? `${spec.audio.tempo_bpm} BPM` : "no steady tempo measured"}${spec.audio.cut_on_beat_ratio !== undefined ? `, ${Math.round(spec.audio.cut_on_beat_ratio * 100)}% of cuts land on a beat` : ""}${spec.audio.integrated_lufs !== undefined ? `, ${spec.audio.integrated_lufs} LUFS` : ""}${spec.audio.hits?.length ? `, ${spec.audio.hits.length} strong hits` : ""}.
 - Moves: ${spec.events.length}${kinds.size ? ` (${[...kinds.entries()].map(([k, v]) => `${v} ${k}`).join(", ")})` : ""}. Easing families come from how fast the whole picture changes, so they are starting curves, not fitted ones.
 - Words: ${spec.anchors.words.length} timed words in range.
@@ -133,10 +133,14 @@ export function hypitTimeline(spec: MotionSpec, workspace?: string): string {
     const beats = spec.anchors.beats.filter((b) => b.t >= shot.start && b.t < shot.end);
     const hits = (spec.audio.hits ?? []).filter((h) => h.t >= shot.start && h.t < shot.end);
     const cut = i > 0 ? spec.anchors.cuts.find((c) => Math.abs(c.t - shot.start) < 0.05) : undefined;
+    const into = (spec.transitions ?? []).find((x) => x.kind !== "cut" && x.to === shot.id);
+    const out = (spec.transitions ?? []).find((x) => x.kind !== "cut" && x.from === shot.id);
     const lines = [
       `- Shot ${shot.id}: in ${s2(shot.start)} s, out ${s2(shot.end)} s, length ${s2(shot.end - shot.start)} s (${shot.frames} frames).`,
       `- Colours: ${shot.palette.map((p) => `\`${safeHex(p)}\``).join(" ") || "none measured"}.`,
       ...(cut ? [`- Entered by a cut at ${s2(cut.t)} s (score ${cut.score}, ${cut.evidence}).`] : []),
+      ...(into ? [`- Entered by a ${transitionName(into)} from ${s2(into.start)} s to ${s2(into.end)} s (${into.frames} frames, ${into.evidence}).`] : []),
+      ...(out ? [`- Left by a ${transitionName(out)} from ${s2(out.start)} s to ${s2(out.end)} s (${out.frames} frames, ${out.evidence}).`] : []),
       ...moves.map((m) => `- Move at ${s2(m.start)} s to ${s2(m.end)} s (${m.frames} frames, ${m.easing}${m.curve ? `, tracked curve ${oneLine(m.curve, 400)}` : m.suggestion ? `, starting curve ${oneLine(m.suggestion, 120)}` : ""}, fastest at ${Math.round(m.peakAt * 100)}% of the move; ${m.evidence}).`),
       ...(words.length ? [`- Words: ${words.slice(0, 40).map((w) => `“${oneLine(w.text, 60)}” ${s2(w.t)}–${s2(w.end)}`).join(", ")}${words.length > 40 ? `, … ${words.length - 40} more` : ""}.`] : []),
       ...(beats.length ? [`- Beats at ${beats.map((b) => s2(b.t)).join(", ")} s.`] : []),

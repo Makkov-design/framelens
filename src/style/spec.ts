@@ -7,8 +7,18 @@ import type { SourceRecord, Workspace } from "../workspace/workspace.js";
 import { formatTimestamp } from "../youtube.js";
 import { oneLine } from "../text.js";
 import { mergePalettes, palette, type Swatch } from "./palette.js";
-import type { ClassifiedChange, MotionEvent } from "./motion.js";
+import { uniqueEvents, type ClassifiedChange, type MotionEvent } from "./motion.js";
+import type { Transition } from "./transitions.js";
 import type { TrackedMove } from "../track/run.js";
+
+/** A transition between two shots as motion-spec.json lists it. */
+export type SpecTransition = Transition & {
+  id: string;
+  /** The shot before and after it (a fade at the very start or end has only one). */
+  from?: string;
+  to?: string;
+  evidence: Evidence;
+};
 
 export type Evidence = "measured" | "derived" | "inferred";
 
@@ -32,8 +42,14 @@ export interface MotionSpec {
     beats: { id: string; t: number; downbeat?: boolean }[];
     cuts: { id: string; t: number; frame?: number; score: number; evidence: Evidence }[];
   };
-  /** Abrupt changes that are not cuts: fast motion and flashes. */
+  /** Abrupt changes that are not cuts or part of a transition: fast motion and flashes. */
   changes: { t: number; kind: "motion" | "flash"; score: number; evidence: Evidence }[];
+  /**
+   * How each shot gives way to the next: cuts (`measured`) and dissolves, fades, dips through black or white and
+   * wipes (`derived` from every frame). Shots are split at a cut, a dissolve's or wipe's halfway frame and a fade's
+   * black or white frame. Absent in specs made before 2.1 and in specs read from web pages, Lottie, Figma or Rive.
+   */
+  transitions?: SpecTransition[];
   palette: (Swatch & { role?: string; evidence: Evidence })[];
   typography: { role: string; family_guess?: string; weight?: number; case?: string; evidence: Evidence }[];
   shots: (Omit<Shot, "palette"> & { palette: string[] })[];
@@ -48,7 +64,15 @@ export interface MotionSpec {
   })[];
   /** Elements followed frame by frame with `track`, with the curve fitted to each property. */
   tracks?: TrackedMove[];
-  rhythm: { cuts: number; cutsPerMinute: number; meanShotSeconds: number; medianShotSeconds: number; movesPerMinute: number };
+  rhythm: {
+    cuts: number;
+    cutsPerMinute: number;
+    /** Gradual transitions (dissolves, fades, dips, wipes); shots end at a cut or at one of these. */
+    transitions?: number;
+    meanShotSeconds: number;
+    medianShotSeconds: number;
+    movesPerMinute: number;
+  };
   audio: {
     tempo_bpm?: number;
     cut_on_beat_ratio?: number;
@@ -83,6 +107,27 @@ export async function framePixels(source: string, t: number, probe: ProbeInfo, t
   }
 }
 
+/**
+ * When to sample a shot's colours: spread evenly over the part of the shot no transition covers (a dissolve's or
+ * fade's frames mix two pictures), so the palette and its background are what the shot shows over its time, not one
+ * frame from its middle. At most `count` times, one per frame at most; the middle for a shot that is all transition.
+ */
+export function paletteTimes(shot: { start: number; end: number }, transitions: Transition[], fps: number, count = 3): number[] {
+  const frame = 1 / fps;
+  let from = shot.start;
+  let to = shot.end;
+  for (const x of transitions) {
+    if (x.at <= shot.start + frame / 2 && x.end > from) from = Math.min(shot.end, x.end);
+    if (x.at >= shot.end - frame / 2 && x.start < to) to = Math.max(shot.start, x.start + frame);
+  }
+  if (to - from < frame) return [r3((shot.start + shot.end) / 2)];
+  const length = to - from;
+  const n = Math.max(1, Math.min(count, Math.floor(length * fps)));
+  return Array.from({ length: n }, (_, i) => r3(from + (length * (i + 0.5)) / n));
+}
+
+const r3 = (n: number) => Math.round(n * 1000) / 1000;
+
 /** Shots between cuts; slivers shorter than two frames are merged into their neighbour. */
 export function shotsFromCuts(cuts: number[], range: { start: number; end: number }, fps = 30): { start: number; end: number }[] {
   const edges = [range.start, ...cuts.filter((c) => c > range.start && c < range.end), range.end];
@@ -112,9 +157,12 @@ export function buildSpec(input: {
   shots: Shot[];
   overall: Swatch[];
   events: MotionEvent[];
+  /** Gradual transitions (dissolves, fades, dips, wipes); cuts come from `changes`. */
+  transitions?: Transition[];
   version: string;
 }): MotionSpec {
-  const { probe, range, shots, events } = input;
+  const { probe, range, shots } = input;
+  const events = uniqueEvents(input.events);
   const fps = probe.fps;
   const cuts = input.changes.filter((c) => c.kind === "cut").map((c, i) => ({
     id: `c${i + 1}`,
@@ -123,6 +171,25 @@ export function buildSpec(input: {
     score: c.score,
     evidence: "measured" as const,
   }));
+  const gradual = input.transitions ?? [];
+  const frameTime = 1 / (fps ?? probe.nominalFps ?? 30);
+  // A change inside a transition is the transition itself, not a separate one.
+  const inTransition = (t: number) => gradual.some((x) => t > x.start - frameTime / 2 && t <= x.end + frameTime / 2);
+  const shotAt = (t: number) => {
+    const last = shots.at(-1);
+    return shots.find((s) => t >= s.start - 1e-6 && t < s.end)?.id ?? (last && t >= last.end - 1e-6 && t <= last.end + frameTime ? last.id : undefined);
+  };
+  const transitions: SpecTransition[] = [
+    ...cuts.map((c) => ({ kind: "cut" as const, start: c.t, end: c.t, frames: 0, at: c.t, evidence: "measured" as const })),
+    ...gradual.map((x) => ({ ...x, evidence: "derived" as const })),
+  ]
+    .sort((a, b) => a.at - b.at)
+    .map((x, i) => {
+      // The shot boundary is at `at`: the shot before holds the frame before it, the shot after holds `at`.
+      const from = shotAt(Math.min(x.start, x.at - frameTime / 2));
+      const to = shotAt(Math.max(x.end, x.at));
+      return { id: `x${i + 1}`, ...x, ...(from && { from }), ...(to && to !== from && { to }) };
+    });
   const words = (input.transcript?.words ?? [])
     .filter((w) => w.t >= range.start && w.t <= range.end)
     .map((w, i) => ({ id: `w${i + 1}`, t: w.t, end: w.end, text: w.text }));
@@ -148,8 +215,9 @@ export function buildSpec(input: {
     },
     anchors: { words, beats: [], cuts },
     changes: input.changes
-      .filter((c): c is ClassifiedChange & { kind: "motion" | "flash" } => c.kind !== "cut")
+      .filter((c): c is ClassifiedChange & { kind: "motion" | "flash" } => c.kind !== "cut" && !inTransition(c.t))
       .map((c) => ({ t: c.t, kind: c.kind, score: c.score, evidence: "derived" as const })),
+    transitions,
     palette: input.overall.map((s) => ({ ...s, evidence: "measured" as const })),
     typography: [],
     shots: shots.map((s) => ({ ...s, palette: s.palette.slice(0, 4).map((p) => p.hex) })),
@@ -161,6 +229,7 @@ export function buildSpec(input: {
     rhythm: {
       cuts: cuts.length,
       cutsPerMinute: r2(cuts.length / minutes),
+      transitions: gradual.length,
       meanShotSeconds: r2(lengths.reduce((s, l) => s + l, 0) / (lengths.length || 1)),
       medianShotSeconds: r2(median(lengths)),
       movesPerMinute: r2(events.length / minutes),
@@ -188,18 +257,46 @@ export function writeWithMeasuredBlock(ws: Workspace, name: string, measured: st
 
 const fmt = (t: number) => `${formatTimestamp(t)}${(t % 1).toFixed(2).slice(1)}`;
 
+/** A transition in words: "dissolve", "dip through black", "fade out to white", "wipe right". */
+export function transitionName(x: Pick<Transition, "kind" | "via" | "direction">): string {
+  if (x.kind === "dip") return `dip through ${x.via ?? "black"}`;
+  if (x.kind === "fade-out") return `fade out to ${x.via ?? "black"}`;
+  if (x.kind === "fade-in") return `fade in from ${x.via ?? "black"}`;
+  if (x.kind === "wipe") return `wipe ${x.direction ?? ""}`.trim();
+  return x.kind;
+}
+
 export function styleMarkdown(spec: MotionSpec): { measured: string; skeleton: string } {
   const swatches = spec.palette.map((p) => `| \`${p.hex}\` | ${(p.share * 100).toFixed(1)}% | ${p.lightness} | ${p.chroma < 0.03 ? "neutral" : p.chroma} |`);
   const easing = new Map<string, number>();
   for (const e of spec.events) easing.set(e.easing, (easing.get(e.easing) ?? 0) + 1);
   const moveLines = spec.events.slice(0, 40).map((e) => `| ${fmt(e.start)} | ${e.frames} | ${e.easing}${e.track ? ` (tracked ${e.track})` : ""} | ${oneLine(e.curve ?? e.suggestion, 160) || "—"} | ${e.peakAt} |`);
+  const gradual = (spec.transitions ?? []).filter((x) => x.kind !== "cut");
+  const kinds = new Map<string, number>();
+  for (const x of gradual) {
+    const name = transitionName(x);
+    kinds.set(name, (kinds.get(name) ?? 0) + 1);
+  }
+  const transitionLines = gradual
+    .slice(0, 40)
+    .map((x) => `| ${fmt(x.start)}–${fmt(x.end)} | ${transitionName(x)} | ${x.frames} | ${fmt(x.at)} | ${x.from ?? "—"} → ${x.to ?? "—"} | ${x.easing ?? "—"} |`);
   const measured = [
     "## Measured",
     "",
     `Range ${fmt(spec.range.start)}–${fmt(spec.range.end)}, ${spec.timebase.width ?? "?"}×${spec.timebase.height ?? "?"} at ${spec.timebase.fps ?? "?"} fps${spec.timebase.vfr ? " (variable)" : ""}.`,
     "",
-    `**Rhythm:** ${spec.rhythm.cuts} cuts (${spec.rhythm.cutsPerMinute} per minute), shots ${spec.rhythm.meanShotSeconds} s on average (median ${spec.rhythm.medianShotSeconds} s), ${spec.rhythm.movesPerMinute} moves per minute.`,
+    `**Rhythm:** ${spec.rhythm.cuts} cuts (${spec.rhythm.cutsPerMinute} per minute)${gradual.length ? ` and ${gradual.length} gradual transitions` : ""}, shots ${spec.rhythm.meanShotSeconds} s on average (median ${spec.rhythm.medianShotSeconds} s), ${spec.rhythm.movesPerMinute} moves per minute.`,
     "",
+    ...(gradual.length
+      ? [
+          `**Transitions:** ${[...kinds.entries()].map(([k, v]) => `${v} ${k}`).join(", ")}. Derived from every frame: a dissolve's frames are blends of the two shots, a fade's or dip's end in flat black or white, a wipe's are split by a travelling edge. Shots are split at a dissolve's or wipe's halfway frame and at a fade's black or white frame.`,
+          "",
+          "| Span | Kind | Frames | Shot boundary | Shots | Blend easing |",
+          "|---|---|---|---|---|---|",
+          ...transitionLines,
+          "",
+        ]
+      : []),
     "**Palette** (OKLab clusters weighted by screen time):",
     "",
     "| Colour | Share | Lightness | Chroma |",
@@ -246,7 +343,14 @@ export function timelineMarkdown(spec: MotionSpec, transcript?: Transcript): { m
       .map((seg) => seg.text)
       .join(" ")
       .replace(/\s+/g, " ");
-    return `### ${fmt(s.start)}–${fmt(s.end)} · ${s.id} (${s.frames} frames)\n\nColours ${s.palette.map((p) => `\`${p}\``).join(" ")}.${said ? ` Said: “${oneLine(said, 300)}”` : ""}\n\n_What happens and why:_`;
+    const gradual = (spec.transitions ?? []).filter((x) => x.kind !== "cut");
+    const into = gradual.find((x) => x.to === s.id);
+    const out = gradual.find((x) => x.from === s.id);
+    const joins = [
+      into && `Comes in by a ${transitionName(into)} (${fmt(into.start)}–${fmt(into.end)}, ${into.frames} frames).`,
+      out && `Leaves by a ${transitionName(out)} (${fmt(out.start)}–${fmt(out.end)}, ${out.frames} frames).`,
+    ].filter(Boolean);
+    return `### ${fmt(s.start)}–${fmt(s.end)} · ${s.id} (${s.frames} frames)\n\nColours ${s.palette.map((p) => `\`${p}\``).join(" ")}.${joins.length ? ` ${joins.join(" ")}` : ""}${said ? ` Said: “${oneLine(said, 300)}”` : ""}\n\n_What happens and why:_`;
   });
   const measured = ["## Shots", "", ...sections].join("\n\n");
   const skeleton = `# Timeline: ${oneLine(spec.source.title ?? spec.source.input)}

@@ -1,4 +1,4 @@
-import { readFileSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { MediaTools } from "../media/exec.js";
@@ -60,17 +60,86 @@ export function parseEnergy(text: string): EnergySample[] {
 
 /** How much the picture changes from each frame to the next, over a range, at the native frame rate. */
 export async function motionEnergy(source: string, tools: MediaTools, range: { start: number; end: number }): Promise<EnergySample[]> {
-  const out = join(tmpdir(), `framelens-energy-${process.pid}-${Date.now()}.txt`);
+  return (await motionProfile(source, tools, range)).energy;
+}
+
+/** Every frame of a range as tiny RGB pictures (64×36): transitions, shot colours, real moves versus noise. */
+export interface PictureFrames {
+  width: number;
+  height: number;
+  /** Source time of each frame. */
+  times: number[];
+  /** Packed RGB, one frame after another. */
+  data: Uint8Array;
+}
+
+export const THUMB_WIDTH = 64;
+export const THUMB_HEIGHT = 36;
+
+/** The pixels of the first frame at or after `t` (the last frame when `t` is past the end); empty when there are none. */
+export function frameAt(frames: PictureFrames, t: number): Uint8Array {
+  const size = frames.width * frames.height * 3;
+  if (!frames.times.length) return new Uint8Array(0);
+  let k = frames.times.findIndex((time) => time >= t - 1e-4);
+  if (k < 0) k = frames.times.length - 1;
+  return frames.data.subarray(k * size, (k + 1) * size);
+}
+
+/** Frame times from `metadata=print` output. */
+export function parseFrameTimes(text: string): number[] {
+  const times: number[] = [];
+  for (const line of text.split("\n")) {
+    const time = /pts_time:\s*(-?[\d.]+)/.exec(line);
+    if (time) times.push(Number(time[1]));
+  }
+  return times;
+}
+
+/**
+ * One decoding pass over a range: the per-frame change (`energy`) and every frame as a tiny picture (`frames`), so
+ * transitions can be told from moves without decoding the video again.
+ */
+export async function motionProfile(source: string, tools: MediaTools, range: { start: number; end: number }): Promise<{ energy: EnergySample[]; frames: PictureFrames }> {
+  const stamp = `${process.pid}-${Date.now()}`;
+  const out = join(tmpdir(), `framelens-energy-${stamp}.txt`);
+  const times = join(tmpdir(), `framelens-thumbs-${stamp}.txt`);
+  const raw = join(tmpdir(), `framelens-thumbs-${stamp}.rgb`);
+  const input = ["-hide_banner", "-nostdin", "-v", "error", "-ss", String(range.start), "-t", String(range.end - range.start), "-i", source];
+  const base = "scale=160:-2,format=yuv444p";
+  const energyChain = `tblend=all_mode=difference,signalstats,metadata=print:file=${filterValue(out)}`;
+  const thumbChain = `scale=${THUMB_WIDTH}:${THUMB_HEIGHT}:flags=area,signalstats,metadata=print:file=${filterValue(times)},format=rgb24`;
+  const options = { timeoutMs: 20 * 60_000 };
   try {
-    await tools.exec(tools.ffmpeg, [
-      "-hide_banner", "-nostdin", "-v", "error",
-      "-ss", String(range.start), "-t", String(range.end - range.start), "-i", source, "-an",
-      "-vf", `scale=160:-2,format=yuv444p,tblend=all_mode=difference,signalstats,metadata=print:file=${filterValue(out)}`,
-      "-fps_mode", "passthrough", "-f", "null", "-",
-    ], { timeoutMs: 20 * 60_000 });
-    return parseEnergy(readFileSync(out, "utf8")).map((s) => ({ t: Math.round((s.t + range.start) * 1000) / 1000, energy: s.energy }));
+    try {
+      await tools.exec(tools.ffmpeg, [
+        ...input,
+        "-filter_complex", `[0:v:0]${base},split=2[e][p];[e]${energyChain}[eo];[p]${thumbChain}[po]`,
+        "-map", "[eo]", "-fps_mode", "passthrough", "-f", "null", "-",
+        "-map", "[po]", "-fps_mode", "passthrough", "-f", "rawvideo", raw,
+      ], options);
+    } catch {
+      // A one-frame video has no frame-to-frame change, and an output that never gets a frame fails the whole pass:
+      // decode for each output on its own.
+      for (const file of [out, times, raw]) rmSync(file, { force: true });
+      await tools.exec(tools.ffmpeg, [...input, "-an", "-vf", `${base},${energyChain}`, "-fps_mode", "passthrough", "-f", "null", "-"], options).catch(() => undefined);
+      await tools.exec(tools.ffmpeg, [...input, "-an", "-vf", `${base},${thumbChain}`, "-fps_mode", "passthrough", "-f", "rawvideo", raw], options);
+    }
+    const energy = existsSync(out) ? parseEnergy(readFileSync(out, "utf8")).map((s) => ({ t: Math.round((s.t + range.start) * 1000) / 1000, energy: s.energy })) : [];
+    const size = THUMB_WIDTH * THUMB_HEIGHT * 3;
+    const data = existsSync(raw) ? new Uint8Array(readFileSync(raw)) : new Uint8Array(0);
+    const stamps = existsSync(times) ? parseFrameTimes(readFileSync(times, "utf8")) : [];
+    const count = Math.min(stamps.length, Math.floor(data.length / size));
+    return {
+      energy,
+      frames: {
+        width: THUMB_WIDTH,
+        height: THUMB_HEIGHT,
+        times: stamps.slice(0, count).map((t) => Math.round((t + range.start) * 1000) / 1000),
+        data: data.subarray(0, count * size),
+      },
+    };
   } finally {
-    rmSync(out, { force: true });
+    for (const file of [out, times, raw]) rmSync(file, { force: true });
   }
 }
 
@@ -190,23 +259,35 @@ export function easingFromProfile(values: number[]): { easing: EasingFamily; pea
 
 /**
  * Moves: runs of frames whose change stays above a threshold. A single-frame spike at a cut is a cut,
- * not a move, and is left out.
+ * not a move, and is left out; so are the frames of `exclude` (transitions such as dissolves and fades, which change
+ * the whole picture but are not moves).
+ *
+ * Each run grows over its quiet edges (slow starts and tails). Two runs separated only by such slow frames grow into
+ * the same window: they are one move, reported once.
  */
-export function motionEvents(samples: EnergySample[], cutTimes: number[], fps: number, options: { threshold?: number; gapFrames?: number } = {}): MotionEvent[] {
+export function motionEvents(
+  samples: EnergySample[],
+  cutTimes: number[],
+  fps: number,
+  options: { threshold?: number; gapFrames?: number; exclude?: { start: number; end: number }[] } = {},
+): MotionEvent[] {
   if (!samples.length) return [];
   const sorted = [...samples.map((s) => s.energy)].sort((a, b) => a - b);
   const median = sorted[Math.floor(sorted.length / 2)]!;
   const threshold = options.threshold ?? Math.max(0.8, median * 3);
   const gap = options.gapFrames ?? 2;
   const frameTime = 1 / fps;
-  const isCut = (t: number) => cutTimes.some((c) => Math.abs(c - t) <= frameTime * 1.5);
+  const excluded = options.exclude ?? [];
+  // A transition's changed frames are those after its first state and up to its last: (start, end].
+  const isCut = (t: number) =>
+    cutTimes.some((c) => Math.abs(c - t) <= frameTime * 1.5) || excluded.some((x) => t > x.start + frameTime / 4 && t <= x.end + frameTime / 4);
 
-  const runs: EnergySample[][] = [];
-  let current: EnergySample[] = [];
+  const runs: number[][] = [];
+  let current: number[] = [];
   let quiet = 0;
-  for (const s of samples) {
+  samples.forEach((s, i) => {
     if (s.energy >= threshold && !isCut(s.t)) {
-      current.push(s);
+      current.push(i);
       quiet = 0;
     } else if (current.length) {
       quiet++;
@@ -216,31 +297,52 @@ export function motionEvents(samples: EnergySample[], cutTimes: number[], fps: n
         quiet = 0;
       }
     }
-  }
+  });
   if (current.length) runs.push(current);
 
   // Compression noise: what a still frame scores. Slow ease-in starts and ease-out tails sit just above it.
   const baseline = median * 1.5 + 0.05;
-  return runs
-    .filter((run) => run.length >= 3)
-    .map((run) => {
-      let first = samples.indexOf(run[0]!);
-      let last = samples.indexOf(run.at(-1)!);
-      // Grow the move over its quiet edges, where it is still moving but below the detection threshold.
-      while (first > 0 && samples[first - 1]!.energy > baseline && !isCut(samples[first - 1]!.t)) first--;
-      while (last < samples.length - 1 && samples[last + 1]!.energy > baseline && !isCut(samples[last + 1]!.t)) last++;
-      const profile = samples.slice(Math.max(0, first - 1), last + 2).map((s) => s.energy);
-      const { easing, peakAt } = easingFromProfile(profile);
-      // A frame's energy is its difference from the previous frame, so the move began one frame earlier.
-      const start = Math.max(0, Math.round((samples[first]!.t - frameTime) * 1000) / 1000);
-      return {
-        start,
-        end: samples[last]!.t,
-        frames: last - first + 1,
-        peak: Math.max(...run.map((s) => s.energy)),
-        peakAt: Math.round(peakAt * 100) / 100,
-        easing,
-        suggestion: EASING_SUGGESTIONS[easing],
-      };
+  const windows: { first: number; last: number; peak: number }[] = [];
+  for (const run of runs.filter((r) => r.length >= 3)) {
+    let first = run[0]!;
+    let last = run.at(-1)!;
+    // Grow the move over its quiet edges, where it is still moving but below the detection threshold.
+    while (first > 0 && samples[first - 1]!.energy > baseline && !isCut(samples[first - 1]!.t)) first--;
+    while (last < samples.length - 1 && samples[last + 1]!.energy > baseline && !isCut(samples[last + 1]!.t)) last++;
+    const peak = Math.max(...run.map((i) => samples[i]!.energy));
+    const previous = windows.at(-1);
+    // Grown over the same slow frames into the previous window: the same move, not a second one.
+    if (previous && first <= previous.last + 1) {
+      previous.last = Math.max(previous.last, last);
+      previous.peak = Math.max(previous.peak, peak);
+    } else windows.push({ first, last, peak });
+  }
+  return windows.map(({ first, last, peak }) => {
+    const profile = samples.slice(Math.max(0, first - 1), last + 2).map((s) => s.energy);
+    const { easing, peakAt } = easingFromProfile(profile);
+    // A frame's energy is its difference from the previous frame, so the move began one frame earlier.
+    const start = Math.max(0, Math.round((samples[first]!.t - frameTime) * 1000) / 1000);
+    return {
+      start,
+      end: samples[last]!.t,
+      frames: last - first + 1,
+      peak,
+      peakAt: Math.round(peakAt * 100) / 100,
+      easing,
+      suggestion: EASING_SUGGESTIONS[easing],
+    };
+  });
+}
+
+/** The same move listed more than once (same start, end and length) is kept once, in time order. */
+export function uniqueEvents<T extends { start: number; end: number; frames: number }>(events: T[]): T[] {
+  const seen = new Set<string>();
+  return [...events]
+    .sort((a, b) => a.start - b.start || a.end - b.end)
+    .filter((e) => {
+      const key = `${Math.round(e.start * 1000)}|${Math.round(e.end * 1000)}|${e.frames}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
     });
 }

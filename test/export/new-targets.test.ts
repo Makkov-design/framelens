@@ -92,9 +92,10 @@ describe("after-effects", () => {
     expect(scenes[0]!.bezier).toEqual([...BEZIER["ease-out"]]);
     // Shot 2: move at 2.5 s (0.5 into the shot), 12 frames.
     expect([scenes[1]!.keyStart, scenes[1]!.keyEnd]).toEqual([2.5, 2.98]);
-    // Shot 3 has no move: default 0.2 s enter, inside the shot.
-    expect(scenes[2]!.keyStart).toBeGreaterThanOrEqual(4);
-    expect(scenes[2]!.keyEnd).toBeLessThanOrEqual(6);
+    // Shot 3 has no measured move: its title holds still (no keys are invented).
+    expect(scenes[2]!.keyStart).toBeUndefined();
+    expect(scenes[2]!.bezier).toBeUndefined();
+    expect(source).toContain("position.setValue([WIDTH / 2, HEIGHT / 2]);");
     expect(scenes[0]!.background[0]).toBeCloseTo(0xe0 / 255, 3);
 
     const markers = JSON.parse(/var MARKERS = (\[[\s\S]*?\]);\n/.exec(source)![1]!) as { t: number; label: string }[];
@@ -116,10 +117,13 @@ describe("lottie", () => {
     expect(doc).toMatchObject({ fr: 25, ip: 0, op: 150, w: 1280, h: 720 });
     expect(typeof doc.v).toBe("string");
 
-    type Layer = { ty: number; ip: number; op: number; sc?: string; ks: { p: { k: { t: number; s: number[]; o?: { x: number[]; y: number[] }; i?: { x: number[]; y: number[] } }[] }; o: { k: { t: number; s: number[] }[] } } };
+    type Key = { t: number; s: number[]; o?: { x: number[]; y: number[] }; i?: { x: number[]; y: number[] } };
+    type Layer = { ty: number; ip: number; op: number; sc?: string; ks: { p: { a: number; k: Key[] }; o: { a: number; k: Key[] } } };
     const layers = doc.layers as unknown as Layer[];
-    const solids = layers.filter((l) => l.ty === 1);
-    const shapes = layers.filter((l) => l.ty === 4);
+    // Top-first: later shots above earlier ones, each placeholder right above its background.
+    expect(layers.map((l) => [l.ty, l.ip])).toEqual([[4, 100], [1, 100], [4, 50], [1, 50], [4, 0], [1, 0]]);
+    const solids = layers.filter((l) => l.ty === 1).sort((a, b) => a.ip - b.ip);
+    const shapes = layers.filter((l) => l.ty === 4).sort((a, b) => a.ip - b.ip);
     expect(solids).toHaveLength(3);
     expect(shapes).toHaveLength(3);
     expect(solids.map((l) => [l.ip, l.op])).toEqual([[0, 50], [50, 100], [100, 150]]);
@@ -129,16 +133,21 @@ describe("lottie", () => {
     const scenes = scenesFromSpec(spec);
     shapes.forEach((layer, n) => {
       const move = scenes[n]!.move;
+      if (!move) {
+        // No measured move: the placeholder holds still.
+        expect(layer.ks.p.a).toBe(0);
+        expect(layer.ks.o).toEqual({ a: 0, k: 100 });
+        return;
+      }
       const [a, b] = layer.ks.p.k;
-      const bezier = BEZIER[move?.easing ?? "ease-out"];
+      const bezier = BEZIER[move.easing];
       expect([a!.o!.x[0], a!.o!.y[0], a!.i!.x[0], a!.i!.y[0]]).toEqual([...bezier]);
       expect(layer.ks.o.k.map((k) => k.s[0])).toEqual([0, 100]);
       expect(b!.t).toBeGreaterThan(a!.t);
-      if (move) {
-        expect(a!.t).toBe(layer.ip + Math.round(move.offset * 25));
-        expect(b!.t - a!.t).toBe(Math.round(move.seconds * 25));
-      }
+      expect(a!.t).toBe(layer.ip + Math.round(move.offset * 25));
+      expect(b!.t - a!.t).toBe(Math.round(move.seconds * 25));
     });
+    expect(scenes[2]!.move).toBeUndefined();
   });
 });
 
