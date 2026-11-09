@@ -47,7 +47,7 @@ export interface ExactText {
 }
 
 export interface ExactAnalysis {
-  kind: "lottie" | "figma";
+  kind: "lottie" | "figma" | "rive";
   title: string;
   input: string;
   url?: string;
