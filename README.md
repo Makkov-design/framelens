@@ -179,12 +179,15 @@ can restrict an account it sees doing it: analyze videos you are allowed to watc
 **Self-hosted cobalt (opt-in).** This is meant for a [cobalt](https://github.com/imputnet/cobalt) instance you run
 yourself: set `FRAMELENS_COBALT_URL` to its API address (and `FRAMELENS_COBALT_KEY` to an API key if it asks for
 one). A link then goes to it only when yt-dlp has no extractor for it ("Unsupported URL"), or fails for a reason that
-is clearly not access control. A failure that mentions a login or sign-in, an age check, a bot check or challenge, a
-block, a rate limit, a private, members-only or paid post, or HTTP 401, 403 or 429, is never sent to cobalt: those
-stay with you (the extension, your own cookies or `framelens login`). The media comes through your instance only,
-and a redirect to this computer or the local network is refused. Nothing changes when it is unset. Frame Lens cannot
-tell someone else's public instance from yours; it only refuses the official cobalt.tools hosts by name, which are not
-for other projects.
+does not look like access control. A failure that mentions a login or sign-in, an age check, a bot check or
+challenge, a block, a rate limit, a password, DRM, a private, members-only or paid post, or HTTP 401, 403, 429 or
+451, is never sent to cobalt: those stay with you (the extension, your own cookies or `framelens login`). This is a
+word check on the error text, so it is deliberately wide; it cannot know every site's wording. Frame Lens asks the
+instance to pass the media through itself; when its answer or a redirect points somewhere else, Frame Lens follows it
+only over https to a public address, connects to the address it checked, refuses anything on this computer or the
+local network, and keeps only video or audio. Nothing changes when it is unset. Frame Lens cannot tell someone else's
+public instance from yours; it only refuses the official cobalt.tools hosts by name, which are not for other
+projects.
 
 ## Configuration
 

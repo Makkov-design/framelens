@@ -3,7 +3,8 @@ import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { Engine, localFileResolver } from "../../src/engine.js";
 import { silentLogger } from "../../src/logger.js";
-import { newestInboxFile, newestInboxItem, newestInboxReading } from "../../src/sources/inbox.js";
+import { inboxNote, newestInboxFile, newestInboxItem, newestInboxReading } from "../../src/sources/inbox.js";
+import { resolveSource } from "../../src/sources/resolve.js";
 import { READING_FORMAT } from "../../extension/src/names.js";
 import { downloadAndWait, type DownloadDelta } from "../../extension/src/downloads.js";
 import { tempDir } from "../media/fixtures.js";
@@ -43,11 +44,22 @@ describe("Frame Lens reads what the extension saved", () => {
   const env = { FRAMELENS_DOWNLOADS: downloads };
   const engine = new Engine({ tools: noTools, resolve: localFileResolver, root: join(dir, ".framelens"), logger: silentLogger });
 
-  it("takes the newest item of either kind as inbox, for every tool, and says what to do when it is the other kind", () => {
-    expect(newestInboxItem(env)).toEqual({ path: resolve(newer), kind: "reading" });
+  it("gives each tool the newest inbox item it can use, and names the other one", () => {
+    expect(newestInboxItem(env)).toMatchObject({ path: resolve(newer), kind: "reading" });
     expect(newestInboxReading(env)).toBe(resolve(newer));
-    expect(() => newestInboxFile(env)).toThrow(/newest item in the inbox is a page reading .*use `web` or `export` with "inbox".* For the newest video, pass its path: .*recording-x\.com/s);
+    // A page reading saved after the recording does not take `inbox` away from the video tools.
+    expect(newestInboxFile(env)).toBe(resolve(recording));
+    expect(inboxNote(env, "media")).toBe(`The inbox has a newer page reading, ${resolve(newer)}: \`web\` with "inbox" reads it.`);
+    expect(inboxNote(env, "reading")).toBe(`The inbox also has a video, ${resolve(recording)}: the video tools with "inbox" use it.`);
     expect(() => newestInboxReading({ FRAMELENS_DOWNLOADS: join(dir, "none") })).toThrow(/Frame Lens browser extension/);
+  });
+
+  it("frames, probe and the other video tools take the recording even when a page reading is newer, and say so", async () => {
+    const record = await resolveSource("inbox", { workspaceRoot: join(dir, ".framelens-src"), env });
+    expect(record.mediaPath).toBe(resolve(recording));
+    expect(record.inboxNote).toMatch(/newer page reading/);
+    // The note is for the result, never stored.
+    expect(JSON.parse(readFileSync(join(dir, ".framelens-src", record.id, "source.json"), "utf8")).inboxNote).toBeUndefined();
   });
 
   it("writes the same measured spec and STYLE.md as a live page, cleaned, and export finds it by path", async () => {
@@ -83,11 +95,35 @@ describe("Frame Lens reads what the extension saved", () => {
     await expect(engine.web(join(dir, "missing.json"), "test")).rejects.toThrow(/neither a web page address nor a page reading/);
   });
 
-  it("says when the newest inbox item is a video, for web", async () => {
+  it("web takes the newest page reading even when a video is newer, and says when there is only a video", async () => {
     const second = join(dir, "downloads2");
     mkdirSync(join(second, "FrameLens"), { recursive: true });
     writeFileSync(join(second, "FrameLens", "recording-a-20261109-120000.webm"), "webm");
-    await expect(engine.web("inbox", "test", { FRAMELENS_DOWNLOADS: second })).rejects.toThrow(/newest item in the inbox is a video/);
+    await expect(engine.web("inbox", "test", { FRAMELENS_DOWNLOADS: second })).rejects.toThrow(/holds no page reading, only a video/);
+    const page = join(second, "FrameLens", "page-a-20261109-110000.framelens.json");
+    writeFileSync(page, JSON.stringify(reading));
+    utimesSync(page, 1_700_000_000, 1_700_000_000);
+    const r = await engine.web("inbox", "test", { FRAMELENS_DOWNLOADS: second });
+    expect(r.savedReading).toBe(resolve(page));
+    expect(r.inboxNote).toMatch(/has a newer video/);
+  });
+
+  it("export inbox prefers the item already worked on, and names the other", async () => {
+    const third = join(dir, "downloads3");
+    mkdirSync(join(third, "FrameLens"), { recursive: true });
+    const page = join(third, "FrameLens", "page-a-1.framelens.json");
+    const video = join(third, "FrameLens", "recording-a-2.webm");
+    writeFileSync(page, JSON.stringify(reading));
+    writeFileSync(video, "webm");
+    utimesSync(page, 1_700_000_000, 1_700_000_000);
+    const env3 = { FRAMELENS_DOWNLOADS: third };
+    const own = new Engine({ tools: noTools, resolve: localFileResolver, root: join(dir, ".framelens-3"), logger: silentLogger, env: env3 });
+    // The page reading was read with `web`; the newer video was never opened: export takes the reading.
+    await own.web("inbox", "test");
+    const exported = await own.export("inbox", "css", "test");
+    expect(exported.files.some((f) => f.endsWith("motion.css"))).toBe(true);
+    expect(exported.inboxNote).toContain(resolve(video));
+    expect(exported.inboxNote).toContain(`this export is from ${resolve(page)}`);
   });
 });
 

@@ -6,7 +6,7 @@ import { join, resolve } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { runDoctor } from "../../src/doctor.js";
 import { capturableLogin } from "../../src/browser/capture.js";
-import { checkCobaltInstance, cobaltMayRetry, fetchWithCobalt, isPrivateAddress } from "../../src/sources/cobalt.js";
+import { checkCobaltInstance, cobaltMayRetry, fetchWithCobalt, isPrivateAddress, pinnedGet } from "../../src/sources/cobalt.js";
 import { SourceError } from "../../src/sources/errors.js";
 import { resolveSource } from "../../src/sources/resolve.js";
 import { mapYtDlpFailure } from "../../src/sources/ytdlp.js";
@@ -95,6 +95,29 @@ const ACCESS: [string, string, string][] = [
   ["Members only", "https://www.youtube.com/watch?v=dQw4w9WgXcQ", "ERROR: [youtube] dQw4w9WgXcQ: Join this channel to get access to members-only content like this video"],
   ["Private", "https://vimeo.com/1", "ERROR: [vimeo] 1: This video is private"],
   ["Unsupported, but behind a 403", "https://example.com/v", "WARNING: [generic] Falling back on generic information extractor\nWARNING: HTTP Error 403: Forbidden\nERROR: Unsupported URL: https://example.com/v"],
+  ["Vimeo password", "https://vimeo.com/1", "ERROR: [vimeo] 1: This video is protected by a password, use the --video-password option"],
+  ["Vimeo wrong password", "https://vimeo.com/1", "ERROR: [vimeo] 1: Wrong password"],
+  ["Vimeo album password", "https://vimeo.com/showcase/1", "ERROR: [vimeo:album] 1: This album is protected by a password, use the --video-password option"],
+  ["DRM", "https://www.youtube.com/watch?v=dQw4w9WgXcQ", "ERROR: [youtube] dQw4w9WgXcQ: This video is DRM protected"],
+  ["Known DRM site", "https://www.netflix.com/watch/1", "ERROR: The requested site is known to use DRM protection. It will NOT be supported."],
+  ["Payment", "https://www.youtube.com/watch?v=dQw4w9WgXcQ", "ERROR: [youtube] dQw4w9WgXcQ: This video requires payment to watch."],
+  ["Rental", "https://vimeo.com/1", "ERROR: [vimeo] 1: This video is available for rent or purchase only"],
+  ["HTTP 451", "https://example.com/v", "ERROR: [generic] Unable to download webpage: HTTP Error 451: Unavailable For Legal Reasons"],
+  ["YouTube session rate limit", "https://www.youtube.com/watch?v=dQw4w9WgXcQ", "ERROR: [youtube] abc: This content isn't available, try again later. The current session has been rate-limited by YouTube for up to an hour."],
+  ["TikTok JS challenge", "https://www.tiktok.com/@a/video/1", "ERROR: [TikTok] 1: Unable to solve JS challenge"],
+  ["X protected tweet", "https://x.com/a/status/1", "ERROR: [twitter] 1: You are not authorized to view this protected tweet"],
+  ["Instagram logged-in only", "https://www.instagram.com/reel/C1/", "ERROR: [Instagram] C1: Instagram sent an empty media response. Check if this post is accessible in your browser without being logged-in."],
+  ["PO token", "https://www.youtube.com/watch?v=dQw4w9WgXcQ", "WARNING: [youtube] abc: web client https formats require a GVS PO Token which was not provided.\nERROR: [youtube] abc: Requested format is not available."],
+];
+
+// Failures that say nothing about access: these may go to the user's own instance.
+const NOT_ACCESS: [string, string, string][] = [
+  ["Unable to extract (the report link mentions nothing)", "https://www.instagram.com/reel/C1/", "ERROR: [Instagram] C1: Unable to extract video url; please report this issue on  https://github.com/yt-dlp/yt-dlp/issues?q= , filling out the appropriate issue template."],
+  ["certificate verify failed", "https://vimeo.com/1", "ERROR: [vimeo] 1: Unable to download JSON metadata: <urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1006)>"],
+  ["DNS", "https://example.com/v", "ERROR: [generic] Unable to download webpage: <urlopen error [Errno 11001] getaddrinfo failed> (caused by URLError(gaierror(11001, 'getaddrinfo failed')))"],
+  ["TikTok status code", "https://www.tiktok.com/@a/video/1", "ERROR: [TikTok] 1: Video not available, status code 0"],
+  ["X no video", "https://x.com/a/status/1", "ERROR: [twitter] 1: No video could be found in this tweet"],
+  ["Requested format alone", "https://www.youtube.com/watch?v=abc", "ERROR: [youtube] abc: Requested format is not available. Use --list-formats for a list of available formats"],
 ];
 
 describe("which failures may go to cobalt", () => {
@@ -116,11 +139,25 @@ describe("which failures may go to cobalt", () => {
     expect(cobaltMayRetry(unsupported, { FRAMELENS_YTDLP: fake })).toBe(false);
   });
 
+  it.each(NOT_ACCESS)("may after %s", (_name, url, stderr) => {
+    expect(cobaltMayRetry(mapYtDlpFailure(stderr, url), env())).toBe(true);
+  });
+
   it("agrees with the login profile tier: nothing it excludes is sent either", () => {
     for (const [, url, stderr] of ACCESS) {
       const error = mapYtDlpFailure(stderr, url);
-      if (!capturableLogin(url, stderr)) expect(cobaltMayRetry(error, env())).toBe(false);
+      if (!capturableLogin(url, error.detail ?? "")) expect(cobaltMayRetry(error, env())).toBe(false);
     }
+  });
+
+  it("lets the login profile decide on yt-dlp's own words, not on Frame Lens's help text", () => {
+    const limited = mapYtDlpFailure(ACCESS.find(([n]) => n === "Instagram rate limit or login")![2], REEL);
+    expect(limited.code).toBe("login_required");
+    // The help text says nothing about a rate limit, so reading it would have let the login profile answer one.
+    expect(capturableLogin(REEL, limited.message)).toBe(true);
+    expect(capturableLogin(REEL, limited.detail!)).toBe(false);
+    const wall = mapYtDlpFailure("ERROR: [Instagram] C1: This content requires login. Use --cookies-from-browser", REEL);
+    expect(capturableLogin(REEL, wall.detail!)).toBe(true);
   });
 });
 
@@ -238,9 +275,37 @@ describe("where the media download may go", () => {
     expect(readdirSync(join(ws, "html"))).toEqual([]);
   });
 
-  it("tells addresses on this computer and the local network from public ones", () => {
-    for (const a of ["127.0.0.1", "10.1.2.3", "172.16.0.1", "192.168.0.1", "169.254.169.254", "100.64.0.1", "0.0.0.0", "::1", "fe80::1", "fd00::1", "::ffff:127.0.0.1", "224.0.0.1"]) expect(isPrivateAddress(a), a).toBe(true);
-    for (const a of ["93.184.216.34", "8.8.8.8", "172.32.0.1", "192.0.43.10", "2606:4700::1111"]) expect(isPrivateAddress(a), a).toBe(false);
+  it("tells addresses on this computer and the local network from public ones, IPv4 inside IPv6 included", () => {
+    const local = [
+      "127.0.0.1", "10.1.2.3", "172.16.0.1", "192.168.0.1", "169.254.169.254", "100.64.0.1", "0.0.0.0", "224.0.0.1",
+      "::1", "::", "fe80::1", "fd00::1", "fec0::1", "ff02::1", "::ffff:127.0.0.1", "::ffff:7f00:1", "::127.0.0.1", "::7f00:1",
+      "64:ff9b::7f00:1", "64:ff9b::10.0.0.1", "64:ff9b:1::5db8:d822", "2002:7f00:1::1", "2001:db8::1", "2001:0:1::1", "[::1]", "not:an:ipv6::addr:at:all:x",
+    ];
+    for (const a of local) expect(isPrivateAddress(a), a).toBe(true);
+    for (const a of ["93.184.216.34", "8.8.8.8", "172.32.0.1", "192.0.43.10", "2606:4700::1111", "::ffff:93.184.216.34", "64:ff9b::5db8:d822", "2002:5db8:d822::1"]) expect(isPrivateAddress(a), a).toBe(false);
+  });
+
+  it("refuses IPv4-compatible and NAT64 forms of local addresses in a redirect, and explains a broken Location", async () => {
+    for (const media of ["https://[::127.0.0.1]/x", "https://[64:ff9b::7f00:1]/x", "https://[fec0::1]/x", "https://2130706433/x", "https://0x7f.0.0.1/x"]) {
+      answer = () => ({ json: { status: "redirect", url: media } });
+      await expect(fetchWithCobalt({ url: REEL, mediaDir: join(ws, "v6"), env: env(), maxBytes: 1e6, lookup: publicLookup }), media).rejects.toThrow(/this computer or the local network/);
+    }
+    answer = (b) => ({ json: { status: "tunnel", url: `${b}/tunnel?id=1` } });
+    tunnel = (res) => {
+      res.writeHead(302, { location: "https://[::1" });
+      res.end();
+    };
+    await expect(fetchWithCobalt({ url: REEL, mediaDir: join(ws, "loc"), env: env(), maxBytes: 1e6 })).rejects.toThrow(/redirected to an address that is not valid/);
+  });
+
+  it("connects to the address it checked, not to a second DNS answer", async () => {
+    // media.example.test does not exist in DNS: the request can only arrive here through the checked address.
+    const port = (server.address() as AddressInfo).port;
+    const got = await pinnedGet(new URL(`http://media.example.test:${port}/tunnel?pinned`), "127.0.0.1", AbortSignal.timeout(10_000));
+    expect(got.status).toBe(200);
+    expect(got.headers.get("content-type")).toBe("video/mp4");
+    expect(Buffer.from(await new Response(got.body).arrayBuffer())).toEqual(VIDEO);
+    expect(seen.at(-1)).toMatchObject({ url: "/tunnel?pinned", headers: { host: `media.example.test:${port}` } });
   });
 });
 

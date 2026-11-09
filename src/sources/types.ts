@@ -28,6 +28,8 @@ export interface SourceRecord {
   tools: { ytDlp?: string; ffmpeg?: string; cobalt?: string };
   /** Set on the returned object only (not stored): the workspace already had the media. */
   reused?: boolean;
+  /** Set on the returned object only: `inbox` also holds an item of the other kind (a page reading). */
+  inboxNote?: string;
 }
 
 export interface ResolveOptions {

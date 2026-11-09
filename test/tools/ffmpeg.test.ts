@@ -179,6 +179,22 @@ describe("pinned ffmpeg", () => {
     expect(cleanStalePartials(join(home, "nowhere"))).toEqual([]);
   });
 
+  it("clears a killed session's partial file even when another session already finished the install", async () => {
+    const env = { FRAMELENS_HOME: home };
+    await prepareFfmpeg({ env, platform: "win32", arch: "x64", asset: asset() });
+    const left = `.download-${DEAD_PID}-deadbeef.zip`;
+    writeFileSync(join(pinnedDir(), left), "half an archive");
+    requests.length = 0;
+    expect((await prepareFfmpeg({ env, platform: "win32", arch: "x64", asset: asset() })).downloaded).toBe(false);
+    expect(requests).toEqual([]);
+    expect(readdirSync(pinnedDir()).sort()).toEqual(["ffmpeg.exe", "ffprobe.exe"]);
+    // The server's own lookup of the pinned binary clears it too (it does not call prepareFfmpeg then).
+    writeFileSync(join(pinnedDir(), left), "half an archive");
+    const setup = new ToolSetup({ env: { FRAMELENS_HOME: home, PATH: "" }, platform: "win32", arch: "x64", intact: () => true });
+    expect((await setup.locate("ffmpeg")).source).toBe("pinned");
+    expect(readdirSync(pinnedDir()).sort()).toEqual(["ffmpeg.exe", "ffprobe.exe"]);
+  });
+
   it("lets two installs run at once without either one breaking the other, and never deletes a good binary", async () => {
     const env = { FRAMELENS_HOME: home };
     const results = await Promise.all([

@@ -14,6 +14,8 @@ export interface SourceRecord {
   mediaPath: string;
   captions?: { path: string; language: string; auto: boolean }[];
   fetchedAt?: string;
+  /** Not stored: a line about the inbox's other item when the source was `inbox`. */
+  inboxNote?: string;
 }
 
 type Env = Record<string, string | undefined>;

@@ -1,5 +1,8 @@
 import { closeSync, mkdirSync, openSync, readdirSync, renameSync, rmSync, writeSync } from "node:fs";
 import { lookup as dnsLookup } from "node:dns/promises";
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
+import { Readable } from "node:stream";
 import { isIP } from "node:net";
 import { join } from "node:path";
 import { anySignal } from "../tools/download.js";
@@ -81,20 +84,54 @@ function explain(code: string): string {
   return code.slice(0, 120);
 }
 
-/** Loopback, private, link-local, carrier-grade NAT, multicast and unspecified addresses (IPv4 and IPv6). */
+function privateIPv4(a: number, b: number, c: number): boolean {
+  return (
+    a === 0 || a === 10 || a === 127 || a >= 224 ||
+    (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) ||
+    (a === 100 && b >= 64 && b <= 127) || (a === 198 && (b === 18 || b === 19)) || (a === 192 && b === 0 && (c === 0 || c === 2))
+  );
+}
+
+/** The eight 16-bit groups of an IPv6 address (an IPv4 tail such as ::127.0.0.1 included), or undefined. */
+function ipv6Groups(address: string): number[] | undefined {
+  let s = address.toLowerCase().replace(/^\[|\]$/g, "").split("%")[0]!;
+  const tail = /^(.*:)(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(s);
+  if (tail) {
+    const p = tail.slice(2).map(Number);
+    if (p.some((x) => x > 255)) return undefined;
+    s = `${tail[1]}${((p[0]! << 8) | p[1]!).toString(16)}:${((p[2]! << 8) | p[3]!).toString(16)}`;
+  }
+  const halves = s.split("::");
+  if (halves.length > 2) return undefined;
+  const left = halves[0] ? halves[0].split(":") : [];
+  const right = halves.length === 2 && halves[1] ? halves[1].split(":") : [];
+  const fill = halves.length === 2 ? 8 - left.length - right.length : 0;
+  if (fill < 0 || (halves.length === 2 && fill < 1)) return undefined;
+  const groups = [...left, ...Array<string>(fill).fill("0"), ...right].map((h) => (/^[0-9a-f]{1,4}$/.test(h) ? parseInt(h, 16) : NaN));
+  return groups.length === 8 && groups.every((g) => Number.isFinite(g)) ? groups : undefined;
+}
+
+/**
+ * Loopback, private, link-local, site-local, carrier-grade NAT, multicast and unspecified addresses, IPv4 and IPv6,
+ * including IPv4 addresses inside IPv6 ones (mapped ::ffff:, compatible ::a.b.c.d, NAT64 64:ff9b::, 6to4 2002::).
+ */
 export function isPrivateAddress(address: string): boolean {
   const ip = address.replace(/^\[|\]$/g, "").toLowerCase();
-  const v4 = /^(?:::ffff:)?(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(ip);
-  if (v4) {
-    const [a, b, c] = [Number(v4[1]), Number(v4[2]), Number(v4[3])];
-    return (
-      a === 0 || a === 10 || a === 127 || a >= 224 ||
-      (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) ||
-      (a === 100 && b >= 64 && b <= 127) || (a === 198 && (b === 18 || b === 19)) || (a === 192 && b === 0 && (c === 0 || c === 2))
-    );
-  }
-  if (isIP(ip) === 6) return ip === "::" || ip === "::1" || /^f[cd]/.test(ip) || /^fe[89ab]/.test(ip) || /^ff/.test(ip) || ip.startsWith("::ffff:");
-  return false;
+  const v4 = /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(ip);
+  if (v4) return privateIPv4(Number(v4[1]), Number(v4[2]), Number(v4[3]));
+  if (!ip.includes(":")) return false;
+  const g = ipv6Groups(ip);
+  // Something that looks like IPv6 but does not parse is not trusted.
+  if (!g) return true;
+  const embedded = (hi: number, lo: number) => privateIPv4(hi >> 8, hi & 255, lo >> 8);
+  const zero = (from: number, to: number) => g.slice(from, to).every((x) => x === 0);
+  if (zero(0, 8)) return true;
+  if (zero(0, 5) && (g[5] === 0 || g[5] === 0xffff)) return embedded(g[6]!, g[7]!);
+  if (g[0] === 0x64 && g[1] === 0xff9b) return zero(2, 6) ? embedded(g[6]!, g[7]!) : true;
+  if (g[0] === 0x2002) return embedded(g[1]!, g[2]!);
+  if (g[0] === 0x2001 && (g[1] === 0 || g[1] === 0xdb8)) return true;
+  if (g[0] === 0x100 && zero(1, 4)) return true;
+  return (g[0]! & 0xfe00) === 0xfc00 || (g[0]! & 0xffc0) === 0xfe80 || (g[0]! & 0xffc0) === 0xfec0 || (g[0]! & 0xff00) === 0xff00;
 }
 
 const LOCAL_NAMES = /(^|\.)(localhost|local|internal|intranet|lan|home\.arpa)$/;
@@ -105,10 +142,11 @@ const systemLookup: Lookup = async (host) => (await dnsLookup(host, { all: true 
 /**
  * Every address the media download goes to: the instance itself, or an https host on the public internet. A
  * redirect cannot point it at this computer or the local network (a cobalt answer or tunnel is third-party data).
+ * Returns the checked address to connect to (undefined for the instance), so a second DNS answer cannot differ.
  */
-async function checkHop(url: URL, instance: URL, lookup: Lookup): Promise<void> {
+async function checkHop(url: URL, instance: URL, lookup: Lookup): Promise<string | undefined> {
   if (url.protocol !== "http:" && url.protocol !== "https:") throw new SourceError("download_failed", "Your cobalt instance pointed to a media address that is not http(s); it was not downloaded.");
-  if (url.origin === instance.origin) return;
+  if (url.origin === instance.origin) return undefined;
   if (url.protocol !== "https:") throw new SourceError("download_failed", "Your cobalt instance pointed to a media address on another host that is not https; it was not downloaded.");
   if (url.username || url.password) throw new SourceError("download_failed", "Your cobalt instance pointed to a media address with credentials; it was not downloaded.");
   const host = url.hostname.toLowerCase().replace(/\.+$/, "").replace(/^\[|\]$/g, "");
@@ -125,6 +163,39 @@ async function checkHop(url: URL, instance: URL, lookup: Lookup): Promise<void> 
   if (!addresses.length || addresses.some(isPrivateAddress)) {
     throw new SourceError("download_failed", `Your cobalt instance pointed to ${host}, which is on this computer or the local network; it was not downloaded.`);
   }
+  return addresses[0];
+}
+
+/** What the media download needs from an HTTP answer. */
+export interface MediaResponse {
+  status: number;
+  headers: { get(name: string): string | null };
+  body: ReadableStream<Uint8Array> | null;
+}
+
+/**
+ * One GET, connected to `address` when given: the address that was just checked, not a fresh DNS answer (which a
+ * hostile name could switch to 127.0.0.1 in between). TLS still checks the certificate against the host name.
+ */
+export function pinnedGet(url: URL, address: string | undefined, signal: AbortSignal): Promise<MediaResponse> {
+  return new Promise((resolve, reject) => {
+    const family = address && isIP(address) === 6 ? 6 : 4;
+    const lookup = (_host: string, options: { all?: boolean }, callback: (error: Error | null, address: string | { address: string; family: number }[], family?: number) => void) => {
+      if (options?.all) callback(null, [{ address: address!, family }]);
+      else callback(null, address!, family);
+    };
+    const request = (url.protocol === "https:" ? httpsRequest : httpRequest)(
+      url,
+      { method: "GET", signal, headers: { accept: "*/*", "user-agent": "framelens" }, ...(address && { lookup: lookup as never }) },
+      (res) => {
+        const headers = new Headers();
+        for (const [name, value] of Object.entries(res.headers)) if (value !== undefined) headers.set(name, Array.isArray(value) ? value.join(", ") : value);
+        resolve({ status: res.statusCode ?? 0, headers, body: Readable.toWeb(res) as ReadableStream<Uint8Array> });
+      },
+    );
+    request.on("error", reject);
+    request.end();
+  });
 }
 
 /** Media types cobalt hands out; a generic binary type must start like a media file. */
@@ -220,23 +291,30 @@ export async function fetchWithCobalt(params: CobaltFetchParams): Promise<Cobalt
     throw new SourceError("download_failed", "Your cobalt instance returned an invalid media address.");
   }
 
-  // Redirects are followed by hand so that every hop is checked, not only the first address.
-  let file: Response | undefined;
+  // Redirects are followed by hand so that every hop is checked, not only the first address, and each request goes
+  // to the address that was checked. An injected fetchFn (tests) replaces the pinned request.
+  const get = (url: URL, address: string | undefined): Promise<MediaResponse> =>
+    params.fetchFn ? params.fetchFn(url.href, { redirect: "manual", signal }) : pinnedGet(url, address, signal);
+  let file: MediaResponse | undefined;
   for (let hop = 0; hop <= 5; hop++) {
-    await checkHop(current, instance, lookup);
+    const address = await checkHop(current, instance, lookup);
     try {
-      file = await doFetch(current.href, { redirect: "manual", signal });
+      file = await get(current, address);
     } catch (error) {
       throw new SourceError("download_failed", `Could not download the media from your cobalt instance: ${error instanceof Error ? error.message : String(error)}.`);
     }
     if (file.status < 300 || file.status >= 400) break;
     const location = file.headers.get("location");
     await file.body?.cancel().catch(() => undefined);
-    if (!location || hop === 5) throw new SourceError("download_failed", "The media address from your cobalt instance redirects too often; it was not downloaded.");
-    current = new URL(location, current);
+    if (!location || hop === 5) throw new SourceError("download_failed", "The media address from your cobalt instance redirects too often, or without saying where; it was not downloaded.");
+    try {
+      current = new URL(location, current);
+    } catch {
+      throw new SourceError("download_failed", "The media address from your cobalt instance redirected to an address that is not valid; it was not downloaded.");
+    }
     file = undefined;
   }
-  if (!file?.ok || !file.body) throw new SourceError("download_failed", `Your cobalt instance's media link answered HTTP ${file?.status ?? "?"}.`);
+  if (!file || file.status < 200 || file.status >= 300 || !file.body) throw new SourceError("download_failed", `Your cobalt instance's media link answered HTTP ${file?.status ?? "?"}.`);
   const type = file.headers.get("content-type") ?? "";
 
   mkdirSync(params.mediaDir, { recursive: true });

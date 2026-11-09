@@ -1,5 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { dirname } from "node:path";
 import type { Exec } from "../media/exec.js";
+import { cleanStalePartials } from "./download.js";
 import { readEnv, type Env } from "./env.js";
 import { ToolError } from "./errors.js";
 import { ffmpegAsset, pinnedFfmpegIntact, prepareFfmpeg, type PrepareFfmpegOptions, type PrepareFfmpegResult } from "./ffmpeg.js";
@@ -97,6 +99,9 @@ export class ToolSetup {
       found = find();
       if (!found || !this.intact(found)) throw new ToolError("not_found", missingToolMessage(name));
     }
+    // A session killed mid-download (while another one finished the install) left its partial file next to the
+    // pinned binary; this is the first time this server uses that folder, so clear it now.
+    if (found.source === "pinned") cleanStalePartials(dirname(found.path));
     this.located.set(name, found);
     return found;
   }

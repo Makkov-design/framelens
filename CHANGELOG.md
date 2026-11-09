@@ -6,9 +6,10 @@
   runs the `web` tool's own page reader in the user's browser, so pages behind their login can be read, and "Record
   this tab" saves a WebM of what they watch (with its duration written in; frame times stay the real, variable
   ones). Files go to `Downloads/FrameLens`; `web` takes `inbox` or the saved `.framelens.json` and writes the same
-  `motion-spec.json` and `STYLE.md` as for a live page, and video tools take `inbox` for a recording. `inbox` is the
-  newest item of either kind for every tool, `export inbox` included. A download the browser interrupts is reported,
-  not called saved. No network access, no host permissions. `npm run build:extension` builds `extension/dist` and a
+  `motion-spec.json` and `STYLE.md` as for a live page, and video tools take `inbox` for a recording. Each tool
+  takes the newest inbox item it can use (video tools a video, `web` a page reading, `export` either, preferring the
+  one already worked on) and the result names the other one. A download the browser interrupts is reported, not
+  called saved. No network access, no host permissions. `npm run build:extension` builds `extension/dist` and a
   zip.
 - **Automatic setup**: a missing ffmpeg/ffprobe or yt-dlp is downloaded on first use (FFmpeg 9.0.2 from gyan.dev for
   Windows x64 and from ffmpeg.martin-riedl.de for macOS and Linux x64; yt-dlp 2026.10.21), checked against SHA-256
@@ -17,11 +18,14 @@
   a killed install left behind is removed; downloads have a size cap, a time limit and a stall limit.
   `FRAMELENS_AUTO_INSTALL=0` turns it off; `doctor --prepare` does the same on demand.
 - **Self-hosted cobalt, opt-in**: with `FRAMELENS_COBALT_URL` (and `FRAMELENS_COBALT_KEY`), a link goes to the
-  user's own cobalt instance only when yt-dlp has no extractor for it or fails for a reason that is clearly not
-  access control; logins, age and bot checks, blocks, rate limits, private posts and HTTP 401/403/429 never go there.
-  Every redirect of the media download is checked (no local or private hosts, https off the instance) and the file
-  must be video or audio. Only the official cobalt.tools hosts are refused by name; it is meant for your own
-  instance.
+  user's own cobalt instance only when yt-dlp has no extractor for it or fails with wording that does not look like
+  access control; logins, age and bot checks, challenges, blocks, rate limits, passwords, DRM, private or paid posts
+  and HTTP 401/403/429/451 never go there. Every hop of the media download is checked (no local or private hosts,
+  IPv4 inside IPv6 included; https off the instance), the connection goes to the checked address, and the file must
+  be video or audio. Only the official cobalt.tools hosts are refused by name; it is meant for your own instance.
+- The login profile (`framelens login`, 2.0) now decides on yt-dlp's own words, not Frame Lens's help text, with the
+  same classifier as cobalt: "rate-limit reached or login required" and other bot checks, rate limits and blocks are
+  never played through the user's login.
 - **Workspace fallback**: when the server starts in a system folder (Claude Desktop on Windows uses
   `C:\WINDOWS\system32`; also through junctions, short names, `\\?\` paths and admin shares) or a folder it cannot
   write to, workspaces go to `~/.framelens/`; `FRAMELENS_WORKSPACE` overrides both (a relative one is taken from the

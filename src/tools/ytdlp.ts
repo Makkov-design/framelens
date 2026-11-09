@@ -80,7 +80,10 @@ export async function prepareYtDlp(options: PrepareOptions = {}): Promise<Prepar
   const log = options.log ?? (() => {});
   const base = options.baseUrl ?? `https://github.com/yt-dlp/yt-dlp/releases/download/${YTDLP_PIN.version}`;
 
-  if (hasHash(target, expected)) return { path: target, version: YTDLP_PIN.version, downloaded: false };
+  if (hasHash(target, expected)) {
+    cleanStalePartials(dirname(target));
+    return { path: target, version: YTDLP_PIN.version, downloaded: false };
+  }
   if (existsSync(target)) log("The yt-dlp file on disk does not match the pinned hash; downloading it again.");
 
   const dir = dirname(target);

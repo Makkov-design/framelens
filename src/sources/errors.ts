@@ -21,13 +21,16 @@ export class SourceError extends InvalidInputError {
    * post, HTTP 401/403/429): nothing may try to get past it another way.
    */
   readonly accessControl: boolean;
+  /** What the site or yt-dlp actually said, when the message is help text (classified in sources/access.ts). */
+  readonly detail: string | undefined;
 
   constructor(
     readonly code: SourceErrorCode,
     message: string,
-    options: { accessControl?: boolean } = {},
+    options: { accessControl?: boolean; detail?: string } = {},
   ) {
     super(message);
     this.accessControl = options.accessControl === true;
+    this.detail = options.detail;
   }
 }

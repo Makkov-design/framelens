@@ -14,7 +14,7 @@ import { findPhrase, readCaptions, toMarkdown, wordsAt, type Transcript } from "
 import { analyzeAudio, spectrogram, type AudioAnalysis } from "./audio/analyze.js";
 import { readPage, type PageResult } from "./browser/read.js";
 import { cleanReading, specFromPage, type PageReading } from "./browser/web.js";
-import { newestInboxItem, newestInboxReading } from "./sources/inbox.js";
+import { inboxContents, inboxNote, newestInboxItem, newestInboxReading } from "./sources/inbox.js";
 import { matchCuts, paletteDistance, similarity, verdict, type Comparison } from "./compare/compare.js";
 import { exportSpec, type ExportTarget } from "./export/exporters.js";
 import { onBeatRatio } from "./audio/dsp.js";
@@ -341,12 +341,18 @@ export class Engine {
   }
 
   /** Writes a starter project for a renderer from the source's motion-spec.json (running `style` first if needed). */
-  async export(input: string, target: ExportTarget, version: string, env: Record<string, string | undefined> = this.options.env ?? process.env): Promise<{ ws: Workspace; title: string; dir: string; files: string[] }> {
-    // `inbox` is the newest inbox item of any kind, as for `web`: a page reading or a video.
+  async export(input: string, target: ExportTarget, version: string, env: Record<string, string | undefined> = this.options.env ?? process.env): Promise<{ ws: Workspace; title: string; dir: string; files: string[]; inboxNote?: string }> {
+    // `inbox`: the newest video or page reading. When only one of the two was already worked on (`web inbox`, or
+    // `style inbox`), that one, since it is what the user just looked at; otherwise the newer of the two.
     let wanted = input;
+    let note: string | undefined;
     if (input.trim().toLowerCase() === "inbox") {
-      const item = newestInboxItem(env);
+      const { media, reading } = inboxContents(env);
+      const worked = [reading && this.webWorkspace(reading.path) ? reading : undefined, media && this.hasMediaWorkspace(media.path) ? media : undefined].filter((x) => x !== undefined);
+      const item = worked.length === 1 ? worked[0]! : newestInboxItem(env);
       wanted = item.path;
+      const other = item.kind === "reading" ? media : reading;
+      if (other) note = `The inbox also has a ${other.kind === "reading" ? "page reading" : "video"}, ${other.path}; this export is from ${item.path}. Pass a path to export the other.`;
       if (item.kind === "reading" && !this.webWorkspace(item.path)) await this.web(item.path, version, env);
     }
     // A web page read with `web` has its spec in its own workspace; anything else is a video source.
@@ -364,7 +370,23 @@ export class Engine {
     const dir = ws.ensure("export", target);
     const files = exportSpec(spec!, target, dir, { workspace: ws.dir });
     this.progress(ws, `export: ${target} starter with ${spec!.shots.length} scenes → ${ws.display(dir)}`);
-    return { ws, title: spec!.source.title ?? input, dir, files };
+    return { ws, title: spec!.source.title ?? input, dir, files, ...(note && { inboxNote: note }) };
+  }
+
+  /** Whether a local video already has a workspace here (a tool ran on it). */
+  private hasMediaWorkspace(mediaPath: string): boolean {
+    if (!existsSync(this.options.root)) return false;
+    const wanted = resolve(mediaPath);
+    for (const name of readdirSync(this.options.root)) {
+      if (!name.startsWith("file-")) continue;
+      try {
+        const record = new Workspace(this.options.root, name).readJson<{ mediaPath?: string }>("source.json");
+        if (record?.mediaPath && resolve(record.mediaPath) === wanted) return true;
+      } catch {
+        // An unreadable record is no workspace for this file.
+      }
+    }
+    return false;
   }
 
   /** The workspace of a page read with `web`, or a Lottie, Figma or Rive source read with `exact`, if any. */
@@ -454,7 +476,7 @@ export class Engine {
    * A live web page: reads its animations exactly (durations, delays, curves, keyframes) from the browser, plus fonts
    * and colours, films the opening motion frame by frame, and writes the same motion-spec.json as a video.
    */
-  async web(input: string, version: string, env: Record<string, string | undefined> = this.options.env ?? process.env): Promise<{ ws: Workspace; spec: MotionSpec; result: PageResult; files: Record<string, string>; savedReading?: string }> {
+  async web(input: string, version: string, env: Record<string, string | undefined> = this.options.env ?? process.env): Promise<{ ws: Workspace; spec: MotionSpec; result: PageResult; files: Record<string, string>; savedReading?: string; inboxNote?: string }> {
     const url = input.trim();
     let id: string;
     let result: PageResult;
@@ -501,7 +523,8 @@ export class Engine {
       `web: ${result.reading.animations.length} animations${result.reading.gsap ? " (GSAP found)" : ""}, ${result.reading.fonts.length} text styles, ` +
         (savedReading ? `read from ${savedReading}` : `${result.views.length} views`),
     );
-    return { ws, spec, result, files, ...(savedReading && { savedReading }) };
+    const note = url.toLowerCase() === "inbox" ? inboxNote(env, "reading") : undefined;
+    return { ws, spec, result, files, ...(savedReading && { savedReading }), ...(note && { inboxNote: note }) };
   }
 
   /** Appends a line to PROGRESS.md so a later session can see what was already done. */

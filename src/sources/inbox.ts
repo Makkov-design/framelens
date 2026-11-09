@@ -34,7 +34,7 @@ export function inboxFolders(env: Env): string[] {
   });
 }
 
-function newest(folders: string[], wanted: (name: string) => boolean): string | undefined {
+function newest(folders: string[], wanted: (name: string) => boolean): { path: string; mtime: number } | undefined {
   let best: { path: string; mtime: number } | undefined;
   for (const dir of folders) {
     let names: string[];
@@ -54,7 +54,7 @@ function newest(folders: string[], wanted: (name: string) => boolean): string | 
       }
     }
   }
-  return best && resolve(best.path);
+  return best && { path: resolve(best.path), mtime: best.mtime };
 }
 
 function nothingThere(env: Env, what: string): SourceError {
@@ -76,38 +76,52 @@ const isReading = (name: string) => name.toLowerCase().endsWith(READING_SUFFIX);
 export interface InboxItem {
   path: string;
   kind: "media" | "reading";
+  mtime: number;
+}
+
+/** The newest video (or GIF) and the newest page reading in the inbox, each when there is one. */
+export function inboxContents(env: Env): { media?: InboxItem; reading?: InboxItem } {
+  const folders = inboxFolders(env);
+  const media = newest(folders, isMedia);
+  const reading = newest(folders, isReading);
+  return { ...(media && { media: { ...media, kind: "media" as const } }), ...(reading && { reading: { ...reading, kind: "reading" as const } }) };
+}
+
+/** The newest item of either kind (what `export inbox` starts from). */
+export function newestInboxItem(env: Env): InboxItem {
+  const { media, reading } = inboxContents(env);
+  const item = media && reading ? (reading.mtime > media.mtime ? reading : media) : (media ?? reading);
+  if (!item) throw nothingThere(env, "video, GIF or page reading");
+  return item;
 }
 
 /**
- * The newest item in the inbox, a video (or GIF) or a page reading. `inbox` means this one item for every tool, so
- * `web inbox` and then `export inbox` work on the same thing.
+ * One line about the inbox item of the other kind, when there is one: a tool that took the newest video says that a
+ * page reading is there too (and the other way round), so the agent knows which `inbox` it got.
  */
-export function newestInboxItem(env: Env): InboxItem {
-  const found = newest(inboxFolders(env), (name) => isMedia(name) || isReading(name));
-  if (!found) throw nothingThere(env, "video, GIF or page reading");
-  return { path: found, kind: isReading(found) ? "reading" : "media" };
+export function inboxNote(env: Env, used: "media" | "reading"): string | undefined {
+  const contents = inboxContents(env);
+  const mine = contents[used];
+  const other = contents[used === "media" ? "reading" : "media"];
+  if (!other) return undefined;
+  const has = mine && other.mtime > mine.mtime ? "has a newer" : "also has a";
+  return used === "media"
+    ? `The inbox ${has} page reading, ${other.path}: \`web\` with "inbox" reads it.`
+    : `The inbox ${has} video, ${other.path}: the video tools with "inbox" use it.`;
 }
 
-/** The newest inbox item, which must be a video or GIF (the video tools). */
+/** The newest video or GIF in the inbox (the video tools); a newer page reading is left for `web`. */
 export function newestInboxFile(env: Env): string {
-  const item = newestInboxItem(env);
-  if (item.kind === "media") return item.path;
-  const video = newest(inboxFolders(env), isMedia);
-  throw new SourceError(
-    "bad_input",
-    `The newest item in the inbox is a page reading (${item.path}): use \`web\` or \`export\` with "inbox" for it.` +
-      (video ? ` For the newest video, pass its path: ${video}` : ""),
-  );
+  const { media, reading } = inboxContents(env);
+  if (media) return media.path;
+  if (reading) throw new SourceError("bad_input", `The inbox holds no video, only a page reading (${reading.path}): use \`web\` or \`export\` with "inbox" for it.`);
+  throw nothingThere(env, "video or GIF");
 }
 
-/** The newest inbox item, which must be a page reading the browser extension saved (`*.framelens.json`). */
+/** The newest page reading the browser extension saved (`*.framelens.json`), for `web`; a newer video is left alone. */
 export function newestInboxReading(env: Env): string {
-  const item = newestInboxItem(env);
-  if (item.kind === "reading") return item.path;
-  const reading = newest(inboxFolders(env), isReading);
-  throw new SourceError(
-    "bad_input",
-    `The newest item in the inbox is a video (${item.path}): use the video tools with "inbox" for it.` +
-      (reading ? ` For the newest page reading, pass its path: ${reading}` : ""),
-  );
+  const { media, reading } = inboxContents(env);
+  if (reading) return reading.path;
+  if (media) throw new SourceError("bad_input", `The inbox holds no page reading, only a video (${media.path}): use the video tools with "inbox" for it.`);
+  throw nothingThere(env, "page reading (*.framelens.json from the browser extension)");
 }

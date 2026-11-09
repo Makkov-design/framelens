@@ -7,7 +7,7 @@ import { parseVideoRef } from "../youtube.js";
 import { readToolVersion, requireTool, type Env, type ToolLocation } from "../tools/index.js";
 import { cobaltMayRetry, fetchWithCobalt } from "./cobalt.js";
 import { SourceError } from "./errors.js";
-import { newestInboxFile } from "./inbox.js";
+import { inboxNote, newestInboxFile } from "./inbox.js";
 import type { ResolveOptions, SourceKind, SourceRecord } from "./types.js";
 import { fetchWithYtDlp, maxDownloadMb, type FetchResult } from "./ytdlp.js";
 
@@ -80,7 +80,7 @@ function readRecord(dir: string): SourceRecord | undefined {
 }
 
 function writeRecord(dir: string, record: SourceRecord): void {
-  const { reused: _reused, ...stored } = record;
+  const { reused: _reused, inboxNote: _note, ...stored } = record;
   const tmp = join(dir, "source.json.tmp");
   writeFileSync(tmp, `${JSON.stringify(stored, null, 2)}\n`);
   renameSync(tmp, join(dir, "source.json"));
@@ -109,7 +109,9 @@ export async function resolveSource(input: string, options: ResolveOptions): Pro
       tools: {},
     };
     writeRecord(dir, record);
-    return record;
+    // `inbox` took the newest video; say so when a page reading is there too.
+    const note = input.trim().replace(/^["']|["']$/g, "").toLowerCase() === "inbox" ? inboxNote(env, "media") : undefined;
+    return note ? { ...record, inboxNote: note } : record;
   }
 
   const previous = readRecord(dir);
@@ -156,7 +158,7 @@ export async function resolveSource(input: string, options: ResolveOptions): Pro
     } catch (cobaltError) {
       const second = cobaltError instanceof Error ? cobaltError.message : String(cobaltError);
       const code = error instanceof SourceError ? error.code : "download_failed";
-      throw new SourceError(code, `${first} (${second})`);
+      throw new SourceError(code, `${first} (${second})`, error instanceof SourceError ? { accessControl: error.accessControl, ...(error.detail && { detail: error.detail }) } : {});
     }
     const record: SourceRecord = {
       id: target.id,

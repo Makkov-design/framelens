@@ -89,7 +89,7 @@ describe("resolveSource: local files and the inbox", () => {
     await expect(resolveSource("inbox", { workspaceRoot: ws, env: env() })).rejects.toThrow(/FRAMELENS_INBOX is not set/);
     const empty = join(root, "empty-inbox");
     mkdirSync(empty, { recursive: true });
-    await expect(resolveSource("inbox", { workspaceRoot: ws, env: env({ FRAMELENS_INBOX: empty }) })).rejects.toThrow(/No video, GIF or page reading/);
+    await expect(resolveSource("inbox", { workspaceRoot: ws, env: env({ FRAMELENS_INBOX: empty }) })).rejects.toThrow(/No video or GIF/);
   });
 
   it.skipIf(!findTool("ffmpeg"))("handles a real ffmpeg-generated clip", async () => {

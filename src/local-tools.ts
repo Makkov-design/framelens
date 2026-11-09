@@ -43,7 +43,7 @@ function sourceLine(source: Source, thirdParty = source.record.kind !== "file"):
     p.fps ? `${p.fps} fps${p.vfr ? " (variable)" : ""}` : "",
     p.hdr ? "HDR" : "",
   ].filter(Boolean);
-  return `> ${parts.join(" · ")}\n> Workspace: ${source.ws.display(source.ws.dir)}${thirdParty ? `\n> ${NOTICE}` : ""}`;
+  return `> ${parts.join(" · ")}\n> Workspace: ${source.ws.display(source.ws.dir)}${source.record.inboxNote ? `\n> ${source.record.inboxNote}` : ""}${thirdParty ? `\n> ${NOTICE}` : ""}`;
 }
 
 /**
@@ -357,10 +357,11 @@ export function registerLocalTools(server: McpServer, engine: Engine, logger: Lo
     },
     (args) =>
       run("export", async () => {
-        const { ws, title, dir, files } = await engine.export(args.source, args.target, options.version ?? "dev");
+        const { ws, title, dir, files, inboxNote } = await engine.export(args.source, args.target, options.version ?? "dev");
         const text = [
           `> ${oneLine(title)}`,
           `> Workspace: ${ws.display(ws.dir)}`,
+          ...(inboxNote ? [`> ${inboxNote}`] : []),
           "",
           `${args.target} starter written to ${ws.display(dir)}:`,
           ...files.map((f) => `- ${ws.display(f)}`),

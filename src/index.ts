@@ -36,7 +36,7 @@ function createEngine(logger: Logger, transcriptFallback?: TranscriptFallback): 
         return await resolveSource(input, { ...options, log: (line) => logger.info(line), locate: (name, signal) => setup.locate(name, signal) });
       } catch (error) {
         // Tier 3: a site that needs a login, and the user has logged in to the Frame Lens browser profile.
-        if (!(error instanceof SourceError) || error.code !== "login_required" || !hasLoginProfile() || !capturableLogin(input, error.message)) throw error;
+        if (!(error instanceof SourceError) || error.code !== "login_required" || !hasLoginProfile() || !capturableLogin(input, error.detail ?? error.message)) throw error;
         const id = `url-${createHash("sha1").update(input.trim()).digest("hex").slice(0, 10)}`;
         const ws = new Workspace(options.workspaceRoot, id);
         logger.info("login required; capturing through the Frame Lens browser profile", { id });

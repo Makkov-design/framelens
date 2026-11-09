@@ -240,7 +240,11 @@ export async function prepareFfmpeg(options: PrepareFfmpegOptions = {}): Promise
   const log = options.log ?? (() => {});
   const files = asset.archives.flatMap((a) => a.files);
   const verified = (f: FfmpegFile) => hasHash(target[f.tool], f.sha256);
-  if (files.every(verified)) return { ffmpeg, ffprobe, version: FFMPEG_PIN.version, source: asset.source, downloaded: false };
+  if (files.every(verified)) {
+    // Another session may have finished the install while this one was killed mid-download: clear its leftovers too.
+    cleanStalePartials(dir);
+    return { ffmpeg, ffprobe, version: FFMPEG_PIN.version, source: asset.source, downloaded: false };
+  }
 
   mkdirSync(dir, { recursive: true });
   // A server killed mid-download leaves its partial archive (up to 115 MB) behind: clear those first.
