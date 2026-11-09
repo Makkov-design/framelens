@@ -52,8 +52,15 @@ export async function readTab(tabId: number, options: { maxScroll?: number } = {
     const reading = mergeReadings(readings);
     const now = new Date();
     const filename = readingFileName(reading.url, now);
-    const json = JSON.stringify({ framelens: READING_FORMAT, capturedWith: `Frame Lens extension ${FRAMELENS_VERSION}`, capturedAt: now.toISOString(), ...reading }, null, 2);
-    await chrome.downloads.download({ url: `data:application/json;charset=utf-8,${encodeURIComponent(json)}`, filename, conflictAction: "uniquify", saveAs: false });
+    const json = JSON.stringify({ framelens: READING_FORMAT, capturedWith: `Frame Lens extension ${FRAMELENS_VERSION}`, capturedAt: now.toISOString(), ...reading });
+    // A service worker cannot make blob: addresses, so the file goes as a data: address (base64 is the shortest;
+    // the browser takes up to 2 MB, far more than a reading).
+    const bytes = new TextEncoder().encode(json);
+    let binary = "";
+    for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    const url = `data:application/json;base64,${btoa(binary)}`;
+    if (url.length > 2 * 1024 * 1024 - 64) throw new Error("This page's reading is too large to save (over 2 MB).");
+    await chrome.downloads.download({ url, filename, conflictAction: "uniquify", saveAs: false });
     return { reading, filename };
   } finally {
     await inPage(tabId, { func: scrollPage, args: [start?.x ?? 0, start?.y ?? 0, 0] }).catch(() => undefined);

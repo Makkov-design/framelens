@@ -68,7 +68,7 @@ describe("cobalt, the user's own instance", () => {
     const post = seen.find((s) => s.method === "POST")!;
     expect(post.headers.authorization).toBe("Api-Key secret-key");
     expect(post.headers.accept).toBe("application/json");
-    expect(post.body).toMatchObject({ url: "https://example.com/page", alwaysProxy: true, localProcessing: "disabled" });
+    expect(post.body).toEqual({ url: "https://example.com/page", videoQuality: "1080", downloadMode: "auto", filenameStyle: "basic", alwaysProxy: true });
     expect(JSON.parse(readFileSync(join(ws, record.id, "source.json"), "utf8")).tools.cobalt).toBe(base);
   });
 

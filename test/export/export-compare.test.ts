@@ -77,7 +77,8 @@ describe.skipIf(!tools)("export and compare on real files", () => {
     expect(comparison.cuts.extra).toEqual([]);
     expect(comparison.similarity.mean).toBeGreaterThan(0.97);
     expect(comparison.verdict).toEqual(["Structure, timing and colour match the reference within tolerance."]);
-  });
+    // Two full style passes and a similarity pass on real files: about 4 s, more on a busy machine.
+  }, 30_000);
 
   it("names the late cut and the colour drift of a render", async () => {
     const { comparison, files, sheet } = await engine.compare(reference, shifted, "test");
@@ -87,5 +88,5 @@ describe.skipIf(!tools)("export and compare on real files", () => {
     expect(comparison.verdict.join(" ")).toMatch(/Missing cuts at 2\.00 s/);
     expect(existsSync(files.report!)).toBe(true);
     expect(sheet && existsSync(sheet.file)).toBe(true);
-  });
+  }, 30_000);
 });

@@ -88,7 +88,11 @@ describe.skipIf(!canRun)("the browser extension in a real browser", () => {
 
   afterAll(() => {
     server?.close();
-    rmSync(dir, { recursive: true, force: true, maxRetries: 5 });
+    try {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    } catch {
+      // Windows can hold a file the killed browser had open a moment longer; it is a temp folder.
+    }
   });
 
   it("reads a page in the browser the way the web tool does, and Frame Lens turns the saved file into the same spec", async (ctx) => {
@@ -131,9 +135,10 @@ describe.skipIf(!canRun)("the browser extension in a real browser", () => {
     expect(exported.files.some((f) => f.endsWith("motion.css"))).toBe(true);
   }, 120_000);
 
-  it("records a WebM with its duration, and Frame Lens reads its real, variable frame times", async (ctx) => {
-    let recorded: { base64: string; durationMs: number; bytes: number };
-    const b = PipeBrowser.launch(browser!, { args: ["--autoplay-policy=no-user-gesture-required"] });
+  it("records a WebM with its duration, saves it to Downloads/FrameLens, and Frame Lens reads its real, variable frame times", async (ctx) => {
+    let recorded: { base64: string; durationMs: number; bytes: number; saved: { ok: boolean; filename?: string; error?: string } };
+    const downloads = join(dir, "rec-downloads");
+    const b = PipeBrowser.launch(browser!, { downloads, args: ["--autoplay-policy=no-user-gesture-required"] });
     try {
       const loaded = await withExtension(b, ext);
       if (!loaded) return ctx.skip("this browser does not load unpacked extensions headless");
@@ -156,16 +161,19 @@ describe.skipIf(!canRun)("the browser extension in a real browser", () => {
           const file = await framelensRecorder.stop();
           const buf = new Uint8Array(await (await fetch(file.url)).arrayBuffer());
           let s = ""; for (let k = 0; k < buf.length; k += 0x8000) s += String.fromCharCode(...buf.subarray(k, k + 0x8000));
-          return { durationMs: file.durationMs, bytes: file.bytes, base64: btoa(s) };
+          // The message the recorder sends when it stops: the service worker saves the blob: file as a download.
+          const saved = await chrome.runtime.sendMessage({ target: "background", type: "recorded", url: file.url, pageUrl: "https://example.test/reel/1" });
+          return { durationMs: file.durationMs, bytes: file.bytes, base64: btoa(s), saved };
         })()`,
         40_000,
       );
     } finally {
       b.close();
     }
-    const file = join(dir, "recording.webm");
+    expect(recorded.saved).toMatchObject({ ok: true, filename: expect.stringMatching(/^FrameLens\/recording-example\.test-\d{8}-\d{6}\.webm$/) });
+    const file = join(downloads, recorded.saved.filename!);
     const data = Buffer.from(recorded.base64, "base64");
-    writeFileSync(file, data);
+    expect(readFileSync(file)).toEqual(data);
     expect(data.length).toBe(recorded.bytes);
     const written = readWebmDurationMs(new Uint8Array(data.subarray(0, 64 * 1024)));
     expect(written).toBeGreaterThan(2300);

@@ -107,8 +107,9 @@ export async function fetchWithCobalt(params: CobaltFetchParams): Promise<Cobalt
     response = await doFetch(instance.href, {
       method: "POST",
       headers: { Accept: "application/json", "Content-Type": "application/json", ...(key && { Authorization: `Api-Key ${key}` }) },
-      // alwaysProxy: the media then comes through the user's own instance only; localProcessing off so it merges.
-      body: JSON.stringify({ url: params.url, videoQuality: "1080", downloadMode: "auto", filenameStyle: "basic", alwaysProxy: true, localProcessing: "disabled" }),
+      // alwaysProxy: the media then comes through the user's own instance only. Only fields cobalt 10 already knew,
+      // because it rejects unknown ones; the instance merges video and sound itself by default.
+      body: JSON.stringify({ url: params.url, videoQuality: "1080", downloadMode: "auto", filenameStyle: "basic", alwaysProxy: true }),
       // A redirect would resend the request (and the key) somewhere else: say where instead of following it.
       redirect: "manual",
       signal: AbortSignal.any([signal, AbortSignal.timeout(90_000)]),
