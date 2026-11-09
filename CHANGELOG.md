@@ -1,5 +1,17 @@
 # Changelog
 
+## [Unreleased]
+
+- `exact` reads Rive files (`.riv`, a path or a direct link; extensionless links by the `RIVE` fingerprint; rive.app
+  pages are refused with how to get the file, never scraped). A dependency-free reader of the runtime format: header,
+  table of contents (unknown properties of newer exports are skipped by it), artboards, nodes, fills and strokes,
+  linear animations timed as the runtime plays them (work area, speed, backwards for negative speed), keyframes (double, colour, bool, id) with their exact cubic,
+  cubic-value and elastic curves, and state machines (inputs, layers, states, transitions with blend times and
+  conditions). Writes the usual `motion-spec.json` and `STYLE.md` plus `RIVE.md`; `export` works from it like from a
+  Lottie spec. Hard limits on file size, object count and string length; names are treated as untrusted text.
+- `STYLE.md` from `exact` (Lottie and Figma too) escapes names and text from the file as Markdown, so they cannot add
+  links, HTML or table columns.
+
 ## 2.0.0 — 2026-11-09
 
 **ytlens is now Frame Lens** (`framelens`): eyes and ears for AI agents for any video or animation. It measures
