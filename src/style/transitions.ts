@@ -236,10 +236,18 @@ function sameStructure(fr: Frames, a: number, b: number): boolean {
   }
   const varA = saa / n - (sa / n) ** 2;
   const varB = sbb / n - (sb / n) ** 2;
-  // Colours that map one to one (a hue turn can move edge strengths between channels, but every colour still goes to
-  // one colour): measured 0.87–0.97 for recolours and relighting, 0.01–0.49 for dissolves. Or the same edges (a
-  // flat frame has none to compare).
-  if (colourMapped(fr, a, b) >= 0.75) return true;
+  // Colours that map one to one, both ways (a hue turn can move edge strengths between channels, but every colour
+  // still goes to one colour): measured 0.86–0.97 for recolours and relighting, at most 0.80 for dissolves (0.78 for
+  // two pictures with large flat areas).
+  const forward = colourMapped(fr, a, b);
+  const backward = colourMapped(fr, b, a);
+  if (Math.min(forward, backward) >= 0.83) return true;
+  // One way only, with the contrast washed out or crushed: the picture pushed towards light or dark (a camera flash),
+  // where clipped detail cannot be mapped back.
+  const ca = fr.luma(a).sd;
+  const cb = fr.luma(b).sd;
+  if ((forward >= 0.75 && cb < 0.7 * ca) || (backward >= 0.75 && ca < 0.7 * cb)) return true;
+  // Or the same edges (a flat frame has none to compare).
   if (sa / n < 6 || sb / n < 6 || varA <= 0 || varB <= 0) return false;
   return (sab / n - (sa / n) * (sb / n)) / Math.sqrt(varA * varB) >= 0.7;
 }
@@ -631,6 +639,7 @@ export function detectTransitions(frames: PictureFrames, fps: number, options: T
   const candidates: Candidate[] = [];
   // Runs of frames whose changes lean the same way (one quiet frame, such as a repeated frame, may sit inside). The
   // bar is low because motion inside the two shots adds its own changes to a dissolve's; the blend model decides.
+  const runs: [number, number][] = [];
   for (let k = 1; k < n; ) {
     if (!active(k)) {
       k++;
@@ -643,13 +652,33 @@ export function detectTransitions(frames: PictureFrames, fps: number, options: T
       if (!active(j) || fr.coherence(last, j) < 0.3) break;
       last = j;
     }
-    // A fade into or out of a flat frame is unmistakable from two frames on; a dissolve needs `minFrames`.
-    if (last - k + 1 >= Math.min(2, minFrames)) {
-      const [a, b] = trimBlend(fr, k - 1, last, Math.min(2, minFrames));
-      const found = blendCandidate(fr, a, b);
-      if (found && (found.kind !== "dissolve" || b - a >= minFrames)) candidates.push(found);
-    }
+    runs.push([k, last]);
     k = last + 1;
+  }
+  // A fade into or out of a flat frame is unmistakable from two frames on; a dissolve needs `minFrames`.
+  const tryRun = (k: number, last: number): Candidate | undefined => {
+    if (last - k + 1 < Math.min(2, minFrames)) return undefined;
+    const [a, b] = trimBlend(fr, k - 1, last, Math.min(2, minFrames));
+    const found = blendCandidate(fr, a, b);
+    return found && (found.kind !== "dissolve" || b - a >= minFrames) ? found : undefined;
+  };
+  for (let i = 0; i < runs.length; i++) {
+    const [k, last] = runs[i]!;
+    // Motion in the shots can break one dissolve into two runs, and half of one is the same picture as its start:
+    // try two touching runs together first.
+    const next = runs[i + 1];
+    let between = false;
+    for (let j = last + 1; next && j <= next[0]; j++) if (cutAt(j)) between = true;
+    if (next && next[0] <= last + 2 && !between) {
+      const joined = tryRun(k, next[1]);
+      if (joined?.kind === "dissolve") {
+        candidates.push(joined);
+        i++;
+        continue;
+      }
+    }
+    const found = tryRun(k, last);
+    if (found) candidates.push(found);
   }
 
   const overlaps = (a: number, b: number) => candidates.some((c) => c.a < b && c.b > a);

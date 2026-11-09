@@ -85,6 +85,50 @@ describe.skipIf(!tools)("audit of #22: transitions on clips that move, recolour 
     expect(spec.shots).toHaveLength(1);
   }, 60_000);
 
+  it("5: HDR shot colours come from the one pass (tone-mapped), with no seek per shot", async () => {
+    const file = join(dir, "hdr.mp4");
+    // Two hard changes in a PQ-tagged 10-bit HEVC clip: three shots.
+    execFileSync("ffmpeg", [
+      "-hide_banner", "-v", "error", "-y", "-f", "lavfi", "-i", `testsrc2=s=${S}:r=30:d=3`,
+      "-vf", "hue=h='180*mod(floor(t),2)'", "-an", "-c:v", "libx265", "-preset", "ultrafast", "-crf", "28", "-pix_fmt", "yuv420p10le",
+      "-x265-params", "log-level=error:colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc",
+      "-color_primaries", "bt2020", "-color_trc", "smpte2084", "-colorspace", "bt2020nc", file,
+    ], { windowsHide: true, timeout: 60_000 });
+    const seeks: string[][] = [];
+    const counting = new Engine({
+      tools: { ...tools!, exec: (cmd, args, options) => (args.includes("-frames:v") && seeks.push(args), tools!.exec(cmd, args, options)) },
+      resolve: localFileResolver,
+      root: join(dir, ".framelens-hdr"),
+      logger: silentLogger,
+    });
+    const { spec, source } = await counting.style(file, { version: "test" });
+    expect(source.probe.hdr).toBe(true);
+    expect(spec.shots.length).toBeGreaterThanOrEqual(2);
+    for (const s of spec.shots) expect(s.palette.length).toBeGreaterThan(0);
+    // Before: three tone-mapped seeks per shot.
+    expect(seeks).toEqual([]);
+  }, 90_000);
+
+  it("6: a range too long to keep its frames gets the energy and a note, not a crash", async () => {
+    const file = clip("long-ish", ["-f", "lavfi", "-i", `testsrc2=s=${S}:r=30:d=2`]);
+    const { motionProfile } = await import("../src/style/motion.js");
+    const range = { start: 0, end: 2 };
+    // Expected too many frames for the budget: decided before decoding.
+    const early = await motionProfile(file, tools!, range, { expectedFrames: 60, maxBytes: 64 * 36 * 3 * 10 });
+    expect(early.skipped).toBe(true);
+    expect(early.frames.times).toEqual([]);
+    expect(early.energy.length).toBeGreaterThan(50);
+    // More frames than expected: stopped while streaming, same result.
+    const late = await motionProfile(file, tools!, range, { expectedFrames: 5, maxBytes: 64 * 36 * 3 * 10 });
+    expect(late.skipped).toBe(true);
+    expect(late.energy.length).toBeGreaterThan(50);
+    // Within the budget: every frame, streamed.
+    const all = await motionProfile(file, tools!, range, { expectedFrames: 60 });
+    expect(all.skipped).toBeUndefined();
+    expect(all.frames.times).toHaveLength(60);
+    expect(all.frames.data.length).toBe(60 * 64 * 36 * 3);
+  }, 60_000);
+
   it("a fast pan over a smooth picture and a smooth picture dimming are not dissolves", async () => {
     const pan = clip("pan-smooth", ["-f", "lavfi", "-i", "gradients=s=960x540:r=30:d=3:speed=0:n=3:seed=5", "-vf", "crop=320:180:x='min(600,max(0,(t-1)*600))':y=100"]);
     const dim = clip("dim-smooth", ["-f", "lavfi", "-i", `gradients=s=${S}:r=30:d=4:speed=0:n=3:seed=2`, "-vf", "geq=r='r(X,Y)*(1-0.85*min(1,max(0,(T-1)/2)))':g='g(X,Y)*(1-0.85*min(1,max(0,(T-1)/2)))':b='b(X,Y)*(1-0.85*min(1,max(0,(T-1)/2)))'"]);

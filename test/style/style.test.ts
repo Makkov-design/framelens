@@ -108,7 +108,8 @@ describe("motion", () => {
 
   it("keeps a move listed twice once", () => {
     const e = { start: 3.48, end: 7.12, frames: 91 };
-    expect(uniqueEvents([{ ...e, n: 2 }, { start: 1, end: 2, frames: 25, n: 1 }, { ...e, n: 3 }]).map((x) => x.n)).toEqual([1, 2]);
+    // Kept at its first place: a page's or a Lottie's own order of animations is not re-sorted.
+    expect(uniqueEvents([{ ...e, n: 2 }, { start: 1, end: 2, frames: 25, n: 1 }, { ...e, n: 3 }]).map((x) => x.n)).toEqual([2, 1]);
   });
 
   it("samples a shot's colours over its own frames, not over the transitions at its ends", () => {

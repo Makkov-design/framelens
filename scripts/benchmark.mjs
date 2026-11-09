@@ -451,8 +451,8 @@ ${summary.join("\n")}
 Dissolves, fades and dips are recognised by their frames being blends of the two pictures (or of a picture and flat
 black or white), so motion inside the shots makes them harder: the blend is checked against the pictures on both
 sides, and the frames at its ends that barely move towards the other picture are left out. A wipe is recognised when
-each frame is part one picture, part the other, split by a straight edge; on moving pictures its start can be a frame
-early here, and more on busier footage. A push (the new picture sliding the old one out) is not recognised as a transition: it is reported as
+each frame is part one picture, part the other, split by a straight edge, revealing a picture with detail (a flat panel
+sliding in stays a move); its end can be a frame early, and on moving pictures its start up to 6 frames off here. A push (the new picture sliding the old one out) is not recognised as a transition: it is reported as
 a move. Wipes and pushes in real footage are rarer than cuts, dissolves and fades, and less tested here.
 
 On real footage, \`test/style/real-clip.test.ts\` checks the Big Buck Bunny trailer (CC BY 3.0, Blender Foundation;

@@ -109,7 +109,7 @@ export function joinWindows<T extends { start: number; end: number }>(windows: T
 /** How many ×10 passages and every-frame windows a video of this length gets, and how long a passage is. */
 export function loupeBudget(duration: number): { passages: number; passageSeconds: number; dense: number } {
   return {
-    // About an eighth of the video at ×10, in one to three passages of 2–8 s.
+    // One to three ×10 passages, each about 12 % of the video (2–8 s): 24 % of a 33 s piece, 20 % of a 2 min one.
     passages: duration <= 20 ? 1 : duration <= 90 ? 2 : 3,
     passageSeconds: Math.min(8, Math.max(2, Math.round(duration * 0.12))),
     // One every-frame window per 8 s, at least 2, at most 8.
@@ -117,22 +117,31 @@ export function loupeBudget(duration: number): { passages: number; passageSecond
   };
 }
 
-/** Longest every-frame window: longer stretches of change are what the ×10 passages are for. */
+/** Longest every-frame window: a longer stretch of change is split into windows of this length. */
 export const MAX_DENSE_SECONDS = 2;
 
 /**
  * Every-frame windows around the strongest changes: one second around each, windows that overlap or touch joined,
- * each at most `MAX_DENSE_SECONDS` long (centred on its strongest change), the `count` strongest kept in time order.
+ * longer stretches split into windows of at most `MAX_DENSE_SECONDS`, the `count` strongest kept in time order.
  */
 export function denseWindows(list: { t: number; score: number }[], duration: number, count: number): { start: number; end: number; peak: number; changes: number }[] {
   const around = list.map((c) => ({ start: Math.max(0, c.t - 0.5), end: Math.min(duration, c.t + 0.5), peak: c.t, score: c.score, changes: 1 }));
   const joined = joinWindows(around, 0.1, (a, b) => ({ ...a, peak: b.score > a.score ? b.peak : a.peak, score: Math.max(a.score, b.score), changes: a.changes + b.changes }));
-  return joined
-    .map((w) => {
-      if (w.end - w.start <= MAX_DENSE_SECONDS) return w;
-      const start = Math.max(w.start, Math.min(w.peak - MAX_DENSE_SECONDS / 2, w.end - MAX_DENSE_SECONDS));
-      return { ...w, start, end: start + MAX_DENSE_SECONDS };
-    })
+  // A long burst of changes is split into windows of at most `MAX_DENSE_SECONDS`, each scored by its own strongest
+  // change, so a busy stretch can use several windows of the budget instead of one.
+  const pieces = joined.flatMap((w) => {
+    const n = Math.ceil((w.end - w.start) / MAX_DENSE_SECONDS - 1e-9);
+    if (n <= 1) return [w];
+    const length = (w.end - w.start) / n;
+    return Array.from({ length: n }, (_, i) => {
+      const start = w.start + i * length;
+      const end = i === n - 1 ? w.end : start + length;
+      const inside = list.filter((c) => c.t >= start && c.t < end + (i === n - 1 ? 1e-9 : 0));
+      const best = inside.reduce<{ t: number; score: number } | undefined>((b, c) => (!b || c.score > b.score ? c : b), undefined);
+      return { ...w, start, end, peak: best?.t ?? (start + end) / 2, score: best?.score ?? 0 };
+    });
+  });
+  return pieces
     .sort((a, b) => b.score - a.score || a.start - b.start)
     .slice(0, count)
     .sort((a, b) => a.start - b.start)

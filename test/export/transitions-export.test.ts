@@ -61,14 +61,16 @@ describe("exporters render measured transitions and invent no motion", () => {
     exportSpec(makeSpec(), "css", out);
     const css = readFileSync(join(out, "motion.css"), "utf8");
     expect(css).not.toMatch(/h1 \{[^}]*animation/);
-    expect(css).toContain("#shot-1 h1 { color: #1EA0E0; } /* no move measured in this shot: the title holds still */");
+    expect(css).toContain("#shot-1 h1 { color: #1EA0E0; } /* no move found in this shot: the title holds still */");
     expect(css).toMatch(/@keyframes fl-show-2 \{ 0% \{ opacity: 0; animation-timing-function: linear; \} 18\.182% \{ opacity: 1; \} 100% \{ opacity: 1; \} \}/);
     expect(css).toContain("#shot-2 { background: #434E43; animation: fl-show-2 2.2s linear 1.8s; }");
     expect(css).toContain("#shot-1 { background: #FFFFFF; animation: fl-show 2.2s linear 0s; }");
-    expect(css).toMatch(/#shot-2 \.fl-veil \{ background: #000000; animation: fl-veil-2 2\.2s linear 1\.8s both; \}/);
-    expect(css).toMatch(/#shot-3 \.fl-veil \{ background: #000000;/);
+    expect(css).toMatch(/#shot-2 \.fl-veil-out \{ background: #000000; animation: fl-veil-out-2 2\.2s linear 1\.8s both; \}/);
+    expect(css).toMatch(/#shot-3 \.fl-veil-in \{ background: #000000;/);
+    expect(css).toContain("/* dissolve, derived from the reference */");
+    expect(css).not.toMatch(/measured (dissolve|fade|move)/);
     const html = readFileSync(join(out, "preview.html"), "utf8");
-    expect(html).toContain('<section class="fl-scene" id="shot-2"><h1>shot 2</h1><div class="fl-veil"></div></section>');
+    expect(html).toContain('<section class="fl-scene" id="shot-2"><h1>shot 2</h1><div class="fl-veil fl-veil-out"></div></section>');
     expect(html).toContain('<section class="fl-scene" id="shot-1"><h1>shot 1</h1></section>');
     expect(readFileSync(join(out, "REFERENCE.md"), "utf8")).toMatch(/## Defaults \(not measured\)[\s\S]*title still for the whole shot/);
   });
@@ -79,15 +81,15 @@ describe("exporters render measured transitions and invent no motion", () => {
     const index = readFileSync(join(out, "index.html"), "utf8");
     expect(index).toMatch(/id="shot-2"[\s\S]*?data-start="1\.8"[\s\S]*?data-duration="2\.2"[\s\S]*?data-track-index="2"[\s\S]*?style="z-index: 2"/);
     const one = readFileSync(join(out, "compositions/shot-1.html"), "utf8");
-    expect(one).toContain("// Nothing was measured moving in this shot: the title holds still.");
+    expect(one).toContain("// No move or transition was found in this shot: the title holds still.");
     expect(one).not.toContain("fromTo");
     const two = readFileSync(join(out, "compositions/shot-2.html"), "utf8");
-    expect(two).toContain('tl.fromTo("#shot-2-frame", { opacity: 0 }, { opacity: 1, duration: 0.4, ease: "none" }, 0); // measured dissolve');
-    expect(two).toContain('tl.to("#shot-2-veil", { opacity: 1, duration: 0.3, ease: "none" }, 1.9); // measured fade out to black');
+    expect(two).toContain('tl.fromTo("#shot-2-frame", { opacity: 0 }, { opacity: 1, duration: 0.4, ease: "none" }, 0); // dissolve, derived from the reference');
+    expect(two).toContain('tl.to("#shot-2-veil-out", { opacity: 1, duration: 0.3, ease: "none" }, 1.9); // fade out to black, derived');
     expect(two).not.toContain('"#shot-2-title", { opacity: 0');
     const three = readFileSync(join(out, "compositions/shot-3.html"), "utf8");
-    expect(three).toContain('tl.set("#shot-3-veil", { opacity: 1 }, 0);');
-    expect(three).toContain('tl.to("#shot-3-veil", { opacity: 0, duration: 0.3, ease: "none" }, 0); // measured fade in from black');
+    expect(three).toContain('tl.set("#shot-3-veil-in", { opacity: 1 }, 0);');
+    expect(three).toContain('tl.to("#shot-3-veil-in", { opacity: 0, duration: 0.3, ease: "none" }, 0); // fade in from black, derived');
   });
 
   it("Remotion: sequences cover the overlap, ramps carry the measured frames, the component parses", () => {
@@ -148,9 +150,54 @@ describe("exporters render measured transitions and invent no motion", () => {
     exportSpec(spec, "css", join(dir, "wipe-css"));
     expect(readFileSync(join(dir, "wipe-css", "motion.css"), "utf8")).toMatch(/@keyframes fl-show-2 \{ 0% \{ opacity: 1; clip-path: inset\(0% 0% 0% 100%\); animation-timing-function: linear; \} 18\.182% \{ opacity: 1; clip-path: inset\(0% 0% 0% 0%\); \}/);
     exportSpec(spec, "hyperframes", join(dir, "wipe-hf"));
-    expect(readFileSync(join(dir, "wipe-hf", "compositions/shot-2.html"), "utf8")).toContain('tl.fromTo("#shot-2-frame", { clipPath: "inset(0% 0% 0% 100%)" }, { clipPath: "inset(0% 0% 0% 0%)", duration: 0.4, ease: "none" }, 0); // measured wipe');
+    expect(readFileSync(join(dir, "wipe-hf", "compositions/shot-2.html"), "utf8")).toContain('tl.fromTo("#shot-2-frame", { clipPath: "inset(0% 0% 0% 100%)" }, { clipPath: "inset(0% 0% 0% 0%)", duration: 0.4, ease: "none" }, 0); // wipe, derived from the reference');
     exportSpec(spec, "remotion", join(dir, "wipe-remotion"));
     expect(readFileSync(join(dir, "wipe-remotion", "src/timing.ts"), "utf8")).toContain('"wipeFrom": "inset(0% 0% 0% 100%)"');
+  });
+
+  it("gives a fade in and a fade out of one scene a veil each, in their own colours and easings", () => {
+    const spec = makeSpec();
+    // s2 fades in from white (a dip through white from s1), and dips through black into s3 with its own easings.
+    spec.transitions![0] = { id: "x1", kind: "dip", start: 1.7, end: 2.3, frames: 15, at: 2, via: "white", hold: { start: 2, end: 2 }, outEasing: "ease-in", inEasing: "ease-out", evidence: "derived", from: "s1", to: "s2" };
+    spec.transitions![1] = { ...spec.transitions![1]!, outEasing: "ease-in-out", inEasing: "linear" };
+    const scenes = scenesFromSpec(spec);
+    expect(scenes[1]!.fadeIn).toMatchObject({ via: "white", easing: "ease-out" });
+    expect(scenes[1]!.fadeOut).toMatchObject({ via: "black", easing: "ease-in-out" });
+    expect(scenes[0]!.fadeOut).toMatchObject({ via: "white", easing: "ease-in" });
+    exportSpec(spec, "css", join(dir, "two-veils-css"));
+    const css = readFileSync(join(dir, "two-veils-css", "motion.css"), "utf8");
+    expect(css).toMatch(/#shot-2 \.fl-veil-in \{ background: #FFFFFF;/);
+    expect(css).toMatch(/#shot-2 \.fl-veil-out \{ background: #000000;/);
+    exportSpec(spec, "hyperframes", join(dir, "two-veils-hf"));
+    const hf = readFileSync(join(dir, "two-veils-hf", "compositions/shot-2.html"), "utf8");
+    expect(hf).toMatch(/#shot-2-veil-in \{[^}]*background: #FFFFFF;/);
+    expect(hf).toMatch(/#shot-2-veil-out \{[^}]*background: #000000;/);
+  });
+
+  it("After Effects: each title right above its own background, and a veil that clears has negative speeds", () => {
+    const out = join(dir, "ae-order");
+    exportSpec(makeSpec(), "after-effects", out);
+    const source = readFileSync(join(out, "framelens-reference.jsx"), "utf8");
+    // One loop adds a shot's solid and then its title (new layers go on top), shot after shot.
+    const loop = source.slice(source.indexOf("for (i = 0; i < SCENES.length; i++)"), source.indexOf("for (i = 0; i < VEILS.length; i++)"));
+    expect(loop.match(/for \(i = 0; i < SCENES\.length; i\+\+\)/g)).toHaveLength(1);
+    expect(loop.indexOf("addSolid")).toBeLessThan(loop.indexOf("addText"));
+    const veils = JSON.parse(/var VEILS = (\[[\s\S]*?\]);\n/.exec(source)![1]!) as { from: number; to: number; ease: { outSpeed: number; inSpeed: number } }[];
+    const clearing = veils.find((v) => v.from > v.to)!;
+    expect(clearing.ease.outSpeed).toBeLessThan(0);
+    const covering = veils.find((v) => v.from < v.to)!;
+    expect(covering.ease.outSpeed).toBeGreaterThan(0);
+  });
+
+  it("exports a hostile spec whose transitions are not a list, or lie outside the range", () => {
+    const notAList = makeSpec();
+    (notAList as unknown as Record<string, unknown>).transitions = "dissolve";
+    expect(() => exportSpec(notAList, "css", join(dir, "not-a-list"))).not.toThrow();
+    const far = makeSpec();
+    far.transitions![0] = { ...far.transitions![0]!, start: -1e9, end: 1e12, at: 5e11 };
+    for (const target of ["css", "hyperframes", "remotion", "after-effects", "lottie"] as const) expect(() => exportSpec(far, target, join(dir, `far-${target}`))).not.toThrow();
+    const css = readFileSync(join(dir, "far-css", "motion.css"), "utf8");
+    expect(css).not.toMatch(/\d{7,}/);
   });
 
   it("drops transition fields that are not known values before they reach code", () => {

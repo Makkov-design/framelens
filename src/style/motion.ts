@@ -180,7 +180,8 @@ export async function motionProfile(
   const input = ["-hide_banner", "-nostdin", "-v", "error", "-ss", String(range.start), "-t", String(range.end - range.start), "-i", source];
   const energyChain = `format=yuv444p,tblend=all_mode=difference,signalstats,metadata=print:file=${filterValue(out)}`;
   const thumbChain = (hdr: boolean) =>
-    `${hdr ? `${HDR_TONEMAP},` : ""}format=yuv444p,scale=${THUMB_WIDTH}:${THUMB_HEIGHT}:flags=area,signalstats,metadata=print:file=${filterValue(times)},format=rgb24`;
+    // Only the frame times are needed here: print one key per frame, not all of signalstats (a long range's log).
+    `${hdr ? `${HDR_TONEMAP},` : ""}format=yuv444p,scale=${THUMB_WIDTH}:${THUMB_HEIGHT}:flags=area,signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=${filterValue(times)},format=rgb24`;
   const timeoutMs = 20 * 60_000;
   const energyOnly = () =>
     tools.exec(tools.ffmpeg, [...input, "-map", "0:v:0", "-an", "-vf", `scale=160:-2,${energyChain}`, "-fps_mode", "passthrough", "-f", "null", "-"], { timeoutMs }).catch(() => undefined);
@@ -469,15 +470,14 @@ export function motionEvents(
   });
 }
 
-/** The same move listed more than once (same start, end and length) is kept once, in time order. */
+/** The same move listed more than once (same start, end and length) is kept once, at its first place. */
 export function uniqueEvents<T extends { start: number; end: number; frames: number }>(events: T[]): T[] {
   const seen = new Set<string>();
-  return [...events]
-    .sort((a, b) => a.start - b.start || a.end - b.end)
-    .filter((e) => {
-      const key = `${Math.round(e.start * 1000)}|${Math.round(e.end * 1000)}|${e.frames}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
+  // The order is kept: a web page's or Lottie's own order of animations means something.
+  return events.filter((e) => {
+    const key = `${Math.round(e.start * 1000)}|${Math.round(e.end * 1000)}|${e.frames}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }

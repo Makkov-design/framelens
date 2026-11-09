@@ -69,6 +69,18 @@ describe("router", () => {
     expect(denseWindows(candidates.slice(1, 3), 33, 8)).toEqual([{ start: 6.02, end: 7.5, peak: 6.52, changes: 2 }]);
   });
 
+  it("splits a long burst of changes into several every-frame windows of the budget", () => {
+    // Changes every half second from 10 to 20 s, the strongest at 14 s and 18 s, and nothing else.
+    const burst = Array.from({ length: 21 }, (_, i) => ({ t: 10 + i * 0.5, score: i === 8 || i === 16 ? 0.9 : 0.5 }));
+    const windows = denseWindows(burst, 60, 4);
+    // Before: one joined 10 s stretch, cut to a single 2 s window, three windows of the budget unused.
+    expect(windows).toHaveLength(4);
+    for (const w of windows) expect(w.end - w.start).toBeLessThanOrEqual(MAX_DENSE_SECONDS + 1e-9);
+    for (let i = 1; i < windows.length; i++) expect(windows[i]!.start).toBeGreaterThanOrEqual(windows[i - 1]!.end);
+    expect(windows.some((w) => w.start <= 14 && w.end >= 14)).toBe(true);
+    expect(windows.some((w) => w.start <= 18 && w.end >= 18)).toBe(true);
+  });
+
   it("keeps the style plan on a 33 s trailer far below the old 606 frames", () => {
     const times = [4, 6.52, 7, 9.52, 11.52, 13.52, 14, 15, 16, 17, 19, 19.52, 22.92, 24.92, 26, 26.72, 30.24];
     const plan = buildPlan({ goal: "style", probe: { ...probe(33), fps: 25, width: 1920, height: 1080 }, boundaries: bounds(30, 0.15, times), hasSpeech: false });

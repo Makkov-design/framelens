@@ -133,7 +133,7 @@ says so. To check your machine ahead of time: `npx -y framelens doctor --prepare
 | `transcript` | Word-timed transcript from captions (Gemini as a fallback for YouTube) |
 | `frames` | Frames and contact sheets with time, frame number and the words spoken under each picture: `at`, `every`, `fps`, `every_frame` (every native frame with real timestamps) or `around` a phrase |
 | `boundaries` | Where the picture changes abruptly, scored, plus how dynamic the video is |
-| `style` | Cuts told apart from fast motion and flashes, shots with palettes, moves with duration and easing family; writes `motion-spec.json`, `STYLE.md`, `TIMELINE.md`, `ANALYSIS.md` |
+| `style` | Cuts told apart from fast motion and flashes, dissolves, fades, dips through black or white and wipes (derived), shots split at them with palettes, moves with duration and easing family; writes `motion-spec.json`, `STYLE.md`, `TIMELINE.md`, `ANALYSIS.md` |
 | `track` | Follows one element (found automatically or from a box) and fits the exact curve of each property that moves (x, y, scale, opacity): `cubic-bezier`, spring (stiffness, damping, mass), linear or steps, with fit error, duration in frames, delay and a quality grade; writes `TRACK.md`, and `export` then uses the exact curve |
 | `audio` | Loudness (LUFS), silences, onsets, tempo and beats, cuts on the beat, spectrogram |
 | `export` | Starter project from the motion spec (see [Exports](#exports)) |

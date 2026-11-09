@@ -103,8 +103,9 @@ describe.skipIf(!tools || !existsSync(clip))("style on the Big Buck Bunny traile
     const css = readFileSync(files.find((f) => f.endsWith("motion.css"))!, "utf8");
     expect(css).toContain("#shot-1 h1 { color:");
     expect(css).not.toMatch(/#shot-1 h1 \{[^}]*animation/);
-    expect(css).toMatch(/@keyframes fl-show-2 [^\n]*\/\* measured dissolve \*\//);
-    expect(css).toMatch(/#shot-11 \.fl-veil \{ background: #000000;/);
+    expect(css).toMatch(/@keyframes fl-show-2 [^\n]*\/\* dissolve, derived from the reference \*\//);
+    expect(css).toMatch(/#shot-11 \.fl-veil-in \{ background: #000000;/);
+    expect(css).toMatch(/#shot-11 \.fl-veil-out \{ background: #000000;/);
     const moving = spec.shots.filter((s) => spec.events.some((e) => e.start >= s.start && e.start < s.end)).length;
     expect(css.match(/animation: fl-enter/g)?.length ?? 0).toBe(moving);
   }, 60_000);

@@ -44,8 +44,8 @@ deferred, load them with ToolSearch query `framelens` first.
    family; unreliable ones (above 3 % error, cut by the window, 5 frames or shorter) are reported only. When `auto`
    picks the wrong thing or reports few matched frames, pass a box around the element.
 7. **Rebuild** in the user's tool: `export` with `hyperframes`, `remotion`, `css`, `after-effects`, `lottie` or
-   `hypit`. It carries structure, timing, colours, eases and the measured dissolves and fades; only measured moves
-   animate (other titles hold still, and REFERENCE.md lists the defaults). Put the user's own content in place of the placeholders.
+   `hypit`. It carries structure, timing, colours, eases and the dissolves and fades `style` derived; only the moves
+   it found animate (other titles hold still, and REFERENCE.md lists the defaults). Put the user's own content in place of the placeholders.
    Never copy the reference's footage, logos or people. After rendering, `compare` the render with the reference and
    fix what it names.
 8. **Without ffmpeg or in a cloud session**: use the Gemini tools for YouTube links, and say that timing and colours

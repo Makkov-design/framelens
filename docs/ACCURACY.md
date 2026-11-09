@@ -19,6 +19,26 @@ ease-in (or the last of an ease-out) move the box by less than a pixel at analys
 begins a few frames late or ends early. Short moves and cuts are exact. The easing family is read from where the
 movement's weight sits; the exact curve of an important move is measured with `track` (below).
 
+### Short shots and flashes
+
+A montage of textured pictures at 24, 30 and 60 fps: a 1 s shot, then shots of 2, 3, 2, 3 and 2 frames, then a shot
+with a 2-frame white flash in it and one with a 3-frame black flash (the picture comes back after each flash). Two cuts
+three frames apart look like a flash in the per-frame change alone; the frames tell them apart (after a flash the
+picture is the one before it, after a short shot it is a new one).
+
+| fps | Cuts on the exact frame | Within one frame | Flash frames read as cuts | Other extra cuts |
+|---|---|---|---|---|
+| 24 | 7 of 7 | 7 of 7 | 0 | 0 |
+| 30 | 7 of 7 | 7 of 7 | 0 | 0 |
+| 60 | 7 of 7 | 7 of 7 | 0 | 0 |
+
+Limit: a cut inside part of the frame only (a picture-in-picture or a loupe that changes its image while the rest
+stays) is judged on the whole frame. Between two similar pictures in a third of the frame (white card to white card
+in Frame Lens's own demo) the whole-frame change is 2 on a 0–255 scale and the cut is not found, although the cell of
+a 4×4 grid that holds it changes by 10 against about 1 on the frames around it. A per-region check over the 64×36
+frames is cheap, but it would also fire on text and interface changes inside one region (a slide's next bullet, a
+screen recording's new window), so it is not used to find cuts.
+
 <details><summary>Every move</summary>
 
 | fps | frames | easing | found | start error (frames) | measured frames | family |
@@ -77,20 +97,20 @@ transitions and cuts reported in the same clips. In the 3 move-and-cut videos ab
 |---|---|---|---|---|---|---|
 | still | dissolve | 6 of 6 | 0.00 / 0.00 | 0.00 / 0.00 | 0.00 / 0.00 | 0 |
 | still | dip through black | 6 of 6 | 0.00 / 0.00 | 0.00 / 0.00 | 0.00 / 0.00 | 0 |
-| still | dip through white | 6 of 6 | 0.00 / 0.00 | 0.00 / 0.00 | 0.00 / 0.00 | 1 |
-| still | wipe left | 6 of 6 | 0.00 / 0.00 | 0.00 / 0.00 | 0.00 / 0.00 | 0 |
-| still | wipe down | 6 of 6 | 0.00 / 0.00 | 0.00 / 0.00 | 0.00 / 0.00 | 0 |
-| moving | dissolve | 6 of 6 | 0.50 / 3.00 | 0.00 / 0.00 | 0.33 / 2.00 | 0 |
+| still | dip through white | 6 of 6 | 0.00 / 0.00 | 0.00 / 0.00 | 0.00 / 0.00 | 0 |
+| still | wipe left | 6 of 6 | 0.00 / 0.00 | 0.50 / 1.00 | 0.00 / 0.00 | 0 |
+| still | wipe down | 6 of 6 | 0.00 / 0.00 | 0.50 / 1.00 | 0.00 / 0.00 | 0 |
+| moving | dissolve | 6 of 6 | 0.33 / 2.00 | 0.00 / 0.00 | 0.17 / 1.00 | 0 |
 | moving | dip through black | 6 of 6 | 0.00 / 0.00 | 0.00 / 0.00 | 0.00 / 0.00 | 0 |
 | moving | dip through white | 6 of 6 | 0.00 / 0.00 | 0.00 / 0.00 | 0.00 / 0.00 | 0 |
-| moving | wipe left | 6 of 6 | 0.67 / 1.00 | 0.00 / 0.00 | 0.00 / 0.00 | 0 |
-| moving | wipe down | 6 of 6 | 0.67 / 1.00 | 0.00 / 0.00 | 0.00 / 0.00 | 0 |
+| moving | wipe left | 6 of 6 | 1.33 / 6.00 | 0.50 / 1.00 | 0.50 / 3.00 | 0 |
+| moving | wipe down | 6 of 6 | 0.33 / 1.00 | 0.50 / 1.00 | 0.50 / 1.00 | 0 |
 
 Dissolves, fades and dips are recognised by their frames being blends of the two pictures (or of a picture and flat
 black or white), so motion inside the shots makes them harder: the blend is checked against the pictures on both
 sides, and the frames at its ends that barely move towards the other picture are left out. A wipe is recognised when
-each frame is part one picture, part the other, split by a straight edge; on moving pictures its start can be a frame
-early here, and more on busier footage. A push (the new picture sliding the old one out) is not recognised as a transition: it is reported as
+each frame is part one picture, part the other, split by a straight edge, revealing a picture with detail (a flat panel
+sliding in stays a move); its end can be a frame early, and on moving pictures its start up to 6 frames off here. A push (the new picture sliding the old one out) is not recognised as a transition: it is reported as
 a move. Wipes and pushes in real footage are rarer than cuts, dissolves and fades, and less tested here.
 
 On real footage, `test/style/real-clip.test.ts` checks the Big Buck Bunny trailer (CC BY 3.0, Blender Foundation;
@@ -106,22 +126,22 @@ found with the boundaries on those frames, and its 11 hard cuts stay where they 
 | 24 | still | dissolve | 24 | dissolve | 0 | 0 | 0 | 0 |
 | 24 | still | dip through black | 12 | dip black | 0 | 0 | 0 | 0 |
 | 24 | still | dip through black | 24 | dip black | 0 | 0 | 0 | 0 |
-| 24 | still | dip through white | 12 | dip white | 0 | 0 | 0 | 1 |
+| 24 | still | dip through white | 12 | dip white | 0 | 0 | 0 | 0 |
 | 24 | still | dip through white | 24 | dip white | 0 | 0 | 0 | 0 |
 | 24 | still | wipe left | 12 | wipe left | 0 | 0 | 0 | 0 |
-| 24 | still | wipe left | 24 | wipe left | 0 | 0 | 0 | 0 |
+| 24 | still | wipe left | 24 | wipe left | 0 | -1 | 0 | 0 |
 | 24 | still | wipe down | 12 | wipe down | 0 | 0 | 0 | 0 |
-| 24 | still | wipe down | 24 | wipe down | 0 | 0 | 0 | 0 |
+| 24 | still | wipe down | 24 | wipe down | 0 | -1 | 0 | 0 |
 | 24 | moving | dissolve | 12 | dissolve | 0 | 0 | 0 | 0 |
-| 24 | moving | dissolve | 24 | dissolve | 3 | 0 | 2 | 0 |
+| 24 | moving | dissolve | 24 | dissolve | 2 | 0 | 1 | 0 |
 | 24 | moving | dip through black | 12 | dip black | 0 | 0 | 0 | 0 |
 | 24 | moving | dip through black | 24 | dip black | 0 | 0 | 0 | 0 |
 | 24 | moving | dip through white | 12 | dip white | 0 | 0 | 0 | 0 |
 | 24 | moving | dip through white | 24 | dip white | 0 | 0 | 0 | 0 |
 | 24 | moving | wipe left | 12 | wipe left | -1 | 0 | 0 | 0 |
-| 24 | moving | wipe left | 24 | wipe left | -1 | 0 | 0 | 0 |
+| 24 | moving | wipe left | 24 | wipe left | -1 | -1 | 0 | 0 |
 | 24 | moving | wipe down | 12 | wipe down | -1 | 0 | 0 | 0 |
-| 24 | moving | wipe down | 24 | wipe down | -1 | 0 | 0 | 0 |
+| 24 | moving | wipe down | 24 | wipe down | -1 | -1 | 1 | 0 |
 | 30 | still | dissolve | 12 | dissolve | 0 | 0 | 0 | 0 |
 | 30 | still | dissolve | 24 | dissolve | 0 | 0 | 0 | 0 |
 | 30 | still | dip through black | 12 | dip black | 0 | 0 | 0 | 0 |
@@ -129,19 +149,19 @@ found with the boundaries on those frames, and its 11 hard cuts stay where they 
 | 30 | still | dip through white | 12 | dip white | 0 | 0 | 0 | 0 |
 | 30 | still | dip through white | 24 | dip white | 0 | 0 | 0 | 0 |
 | 30 | still | wipe left | 12 | wipe left | 0 | 0 | 0 | 0 |
-| 30 | still | wipe left | 24 | wipe left | 0 | 0 | 0 | 0 |
+| 30 | still | wipe left | 24 | wipe left | 0 | -1 | 0 | 0 |
 | 30 | still | wipe down | 12 | wipe down | 0 | 0 | 0 | 0 |
-| 30 | still | wipe down | 24 | wipe down | 0 | 0 | 0 | 0 |
+| 30 | still | wipe down | 24 | wipe down | 0 | -1 | 0 | 0 |
 | 30 | moving | dissolve | 12 | dissolve | 0 | 0 | 0 | 0 |
 | 30 | moving | dissolve | 24 | dissolve | 0 | 0 | 0 | 0 |
 | 30 | moving | dip through black | 12 | dip black | 0 | 0 | 0 | 0 |
 | 30 | moving | dip through black | 24 | dip black | 0 | 0 | 0 | 0 |
 | 30 | moving | dip through white | 12 | dip white | 0 | 0 | 0 | 0 |
 | 30 | moving | dip through white | 24 | dip white | 0 | 0 | 0 | 0 |
-| 30 | moving | wipe left | 12 | wipe left | -1 | 0 | 0 | 0 |
-| 30 | moving | wipe left | 24 | wipe left | -1 | 0 | 0 | 0 |
-| 30 | moving | wipe down | 12 | wipe down | -1 | 0 | 0 | 0 |
-| 30 | moving | wipe down | 24 | wipe down | -1 | 0 | 0 | 0 |
+| 30 | moving | wipe left | 12 | wipe left | 0 | 0 | 0 | 0 |
+| 30 | moving | wipe left | 24 | wipe left | 0 | -1 | 0 | 0 |
+| 30 | moving | wipe down | 12 | wipe down | 0 | 0 | 0 | 0 |
+| 30 | moving | wipe down | 24 | wipe down | 0 | -1 | 1 | 0 |
 | 60 | still | dissolve | 12 | dissolve | 0 | 0 | 0 | 0 |
 | 60 | still | dissolve | 24 | dissolve | 0 | 0 | 0 | 0 |
 | 60 | still | dip through black | 12 | dip black | 0 | 0 | 0 | 0 |
@@ -149,9 +169,9 @@ found with the boundaries on those frames, and its 11 hard cuts stay where they 
 | 60 | still | dip through white | 12 | dip white | 0 | 0 | 0 | 0 |
 | 60 | still | dip through white | 24 | dip white | 0 | 0 | 0 | 0 |
 | 60 | still | wipe left | 12 | wipe left | 0 | 0 | 0 | 0 |
-| 60 | still | wipe left | 24 | wipe left | 0 | 0 | 0 | 0 |
+| 60 | still | wipe left | 24 | wipe left | 0 | -1 | 0 | 0 |
 | 60 | still | wipe down | 12 | wipe down | 0 | 0 | 0 | 0 |
-| 60 | still | wipe down | 24 | wipe down | 0 | 0 | 0 | 0 |
+| 60 | still | wipe down | 24 | wipe down | 0 | -1 | 0 | 0 |
 | 60 | moving | dissolve | 12 | dissolve | 0 | 0 | 0 | 0 |
 | 60 | moving | dissolve | 24 | dissolve | 0 | 0 | 0 | 0 |
 | 60 | moving | dip through black | 12 | dip black | 0 | 0 | 0 | 0 |
@@ -159,9 +179,9 @@ found with the boundaries on those frames, and its 11 hard cuts stay where they 
 | 60 | moving | dip through white | 12 | dip white | 0 | 0 | 0 | 0 |
 | 60 | moving | dip through white | 24 | dip white | 0 | 0 | 0 | 0 |
 | 60 | moving | wipe left | 12 | wipe left | 0 | 0 | 0 | 0 |
-| 60 | moving | wipe left | 24 | wipe left | 0 | 0 | 0 | 0 |
+| 60 | moving | wipe left | 24 | wipe left | 6 | -1 | 3 | 0 |
 | 60 | moving | wipe down | 12 | wipe down | 0 | 0 | 0 | 0 |
-| 60 | moving | wipe down | 24 | wipe down | 0 | 0 | 0 | 0 |
+| 60 | moving | wipe down | 24 | wipe down | 0 | -1 | 1 | 0 |
 
 </details>
 

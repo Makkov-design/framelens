@@ -44,7 +44,7 @@ function sampledAnimated(keys: [number, number][], hold: boolean, from: number[]
   };
 }
 
-/** A Bodymovin 5.x document: a solid and a rectangle placeholder per measured shot. */
+/** A Bodymovin 5.x document: a solid and a rectangle placeholder per shot. */
 export function lottieDocument(spec: MotionSpec) {
   const fps = spec.timebase.fps ?? 30;
   const width = spec.timebase.width ?? 1920;
@@ -61,7 +61,7 @@ export function lottieDocument(spec: MotionSpec) {
     // The layers live while the scene is on screen: from the start of a dissolve into it to the end of one out of it.
     const ip = frame(s.show.start);
     const op = Math.max(ip + 1, frame(s.show.end));
-    // A measured dissolve (or wipe, drawn as a dissolve here): the incoming scene's opacity ramps up over it.
+    // A dissolve (derived; a wipe is drawn as a dissolve here): the incoming scene's opacity ramps up over it.
     const revealed = s.reveal && animated(frame(s.reveal.start), Math.max(frame(s.reveal.start) + 1, frame(s.reveal.start + s.reveal.seconds)), [0], [100], BEZIER[s.reveal.easing]);
     const move: SceneMove | undefined = s.move;
     let ks: ReturnType<typeof transform>;
@@ -77,7 +77,7 @@ export function lottieDocument(spec: MotionSpec) {
       const position = (from: number[], to: number[]) => (bezier ? animated(t0, t1, from, to, bezier) : sampledAnimated(keys!, sampled!.hold, from, to));
       ks = transform(position([width / 2, height / 2 + travel, 0], [width / 2, height / 2, 0]), position([0], [100]));
     } else {
-      // No measured move: the placeholder holds still, coming in only with its scene.
+      // No move found: the placeholder holds still, coming in only with its scene.
       ks = transform(still([width / 2, height / 2, 0]), revealed ?? still([100]));
     }
     for (const [fade, from, to, start, end] of [
@@ -169,8 +169,8 @@ export function exportLottie(spec: MotionSpec, root: string): string[] {
 ## What is in reference.json
 
 - Bodymovin 5.x document at ${spec.timebase.fps ?? 30} fps; times are frames. One solid layer (\`ty: 1\`, \`sc\` colour) per shot with its in and out frame.
-- One shape layer per shot with a rectangle placeholder. Where a move was measured in the shot, its position and opacity keyframes carry that move's timing; the easing is written as \`o\` and \`i\` handles, equal to the CSS cubic-bezier(x1, y1, x2, y2) as \`o\` = (x1, y1) and \`i\` = (x2, y2). Without a measured move the placeholder holds still.
-- Measured transitions: a dissolve is an opacity ramp on the incoming shot's layers, which start with the dissolve and sit above the outgoing shot; a fade or dip is a black or white solid over the shot whose opacity covers or clears it. A wipe is drawn as a dissolve of the same length (its direction is in motion-spec.json); add a mask for its edge.
+- One shape layer per shot with a rectangle placeholder. Where \`style\` found a move in the shot, its position and opacity keyframes carry that move's timing; the easing (a derived family, or a fitted curve when tracked) is written as \`o\` and \`i\` handles, equal to the CSS cubic-bezier(x1, y1, x2, y2) as \`o\` = (x1, y1) and \`i\` = (x2, y2). Without a move the placeholder holds still.
+- Transitions (derived from the frames): a dissolve is an opacity ramp on the incoming shot's layers, which start with the dissolve and sit above the outgoing shot; a fade or dip is a black or white solid over the shot whose opacity covers or clears it. A wipe is drawn as a dissolve of the same length (its direction is in motion-spec.json); add a mask for its edge.
 - Layers are listed top-first: fades, then later shots above earlier ones, each placeholder above its background.
 - Moves measured with Frame Lens \`track\` use their fitted curve: a cubic-bezier as the handles above, a spring as a keyframe on every frame with straight handles, steps as held keyframes (\`h: 1\`).
 - Replace the placeholder rectangles with your own shapes or text layers; keep the in and out frames and the easing.
