@@ -153,6 +153,23 @@ export function logout(): boolean {
   return true;
 }
 
+/**
+ * Whether a failed link may be played through the user's logged-in Frame Lens profile: only a real login wall on a
+ * site from LOGIN_PAGES. A bot check ("confirm you're not a bot", CAPTCHA, YouTube) is never answered this way:
+ * Frame Lens does not get around bot checks.
+ */
+export function capturableLogin(input: string, message: string): boolean {
+  if (/not a bot|bot check|captcha|unusual traffic|rate.?limit/i.test(message)) return false;
+  let host: string;
+  try {
+    host = new URL(input.trim()).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  if (/(^|\.)(youtube\.com|youtu\.be)$/.test(host)) return false;
+  return /(^|\.)(instagram\.com|facebook\.com|fb\.watch|x\.com|twitter\.com|threads\.net|threads\.com|linkedin\.com|vimeo\.com|tiktok\.com)$/.test(host);
+}
+
 export function hasLoginProfile(): boolean {
   return existsSync(join(profileDir(), "Default"));
 }

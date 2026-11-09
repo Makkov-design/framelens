@@ -1,7 +1,7 @@
 {
   "name": "framelens",
-  "version": "1.2.0",
-  "description": "MCP server that lets AI assistants watch YouTube videos (frames + audio) through Google Gemini.",
+  "version": "2.0.0",
+  "description": "Eyes and ears for AI agents: measured analysis of any video or animation (frames, cuts, easing, palette, beats, transcripts) and starter projects for HyperFrames, Remotion, CSS, After Effects and Lottie. MCP server.",
   "type": "module",
   "bin": {
     "framelens": "dist/framelens.mjs"
@@ -28,11 +28,18 @@
     "mcp",
     "model-context-protocol",
     "claude-code",
-    "gemini",
-    "youtube",
     "video",
-    "vision",
-    "transcript"
+    "video-analysis",
+    "motion-design",
+    "animation",
+    "easing",
+    "youtube",
+    "transcript",
+    "ffmpeg",
+    "lottie",
+    "remotion",
+    "hyperframes",
+    "gemini"
   ],
   "author": "Makkov",
   "license": "MIT",
