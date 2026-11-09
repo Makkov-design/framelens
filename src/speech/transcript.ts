@@ -162,6 +162,18 @@ export function findPhrase(transcript: Transcript, phrase: string, occurrence = 
   return undefined;
 }
 
+/** How many times `findPhrase` can find a phrase: occurrences 1 to this number exist. */
+export function countPhrase(transcript: Transcript, phrase: string): number {
+  const target = normalize(phrase).split(" ").filter(Boolean);
+  if (!target.length) return 0;
+  const tokens = transcript.words.map((w) => normalize(w.text));
+  let inWords = 0;
+  for (let i = 0; i + target.length <= tokens.length; i++) if (target.every((word, j) => tokens[i + j] === word)) inWords++;
+  // findPhrase counts segments separately, once per segment that holds the phrase.
+  const inSegments = transcript.segments.filter((s) => normalize(s.text).includes(target.join(" "))).length;
+  return Math.max(inWords, inSegments);
+}
+
 /** A readable transcript with [m:ss] marks. */
 export function toMarkdown(transcript: Transcript, title?: string): string {
   const lines = [`# Transcript${title ? `: ${oneLine(title)}` : ""}`, "", `Source: ${transcript.source}${transcript.language ? `, language ${transcript.language}` : ""}.`, ""];

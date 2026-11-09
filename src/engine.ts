@@ -10,12 +10,12 @@ import { extractFrames, type FrameRequest } from "./media/frames.js";
 import { probeMedia, type ProbeInfo } from "./media/probe.js";
 import { buildSheets, type Sheet } from "./media/sheets.js";
 import { buildPlan, type Goal, type Plan } from "./router/plan.js";
-import { findPhrase, readCaptions, toMarkdown, wordsAt, type Transcript } from "./speech/transcript.js";
+import { countPhrase, findPhrase, readCaptions, toMarkdown, wordsAt, type Transcript } from "./speech/transcript.js";
 import { analyzeAudio, spectrogram, type AudioAnalysis } from "./audio/analyze.js";
 import { readPage, type PageResult } from "./browser/read.js";
 import { cleanReading, specFromPage, type PageReading } from "./browser/web.js";
 import { inboxContents, inboxNote, newestInboxItem, newestInboxReading } from "./sources/inbox.js";
-import { matchCuts, paletteDistance, similarity, verdict, type Comparison } from "./compare/compare.js";
+import { matchCuts, momentList, paletteDistance, similarity, verdict, WORST_MOMENTS, type Comparison } from "./compare/compare.js";
 import { exportSpec, type ExportTarget } from "./export/exporters.js";
 import { onBeatRatio } from "./audio/dsp.js";
 import { classifyChanges, energySpikeCuts, frameAt, motionEvents, motionProfile } from "./style/motion.js";
@@ -30,6 +30,7 @@ import {
   styleMarkdown,
   timelineMarkdown,
   writeWithMeasuredBlock,
+  type Evidence,
   type MotionSpec,
   type Shot,
 } from "./style/spec.js";
@@ -108,6 +109,26 @@ export const localFileResolver: SourceResolver = async (input, { workspaceRoot }
 
 const r3 = (n: number) => Math.round(n * 1000) / 1000;
 
+/** Where `boundaries` keeps a result in the workspace, so the same call is answered from it next time. */
+const boundariesFile = (rate: number, threshold: number, start: number, end: number) => `boundaries-r${rate}-t${threshold}-${r3(start)}-${r3(end)}.json`;
+
+/**
+ * Why there is no transcript and what can give one. Frame Lens reads captions and, for YouTube links with a key,
+ * asks Gemini; it runs no speech-to-text of its own, so a local one is something the user runs.
+ */
+function noTranscriptMessage(source: Source, gemini: boolean): string {
+  if (!source.probe.hasAudio) return "This source has no sound, so there is no speech to transcribe. Use `frames` to read what is on screen.";
+  // With a key, the fallback answers for every YouTube link, so only a link without one gets here.
+  const ways = [
+    "captions: a link to the same video on a site that has them (YouTube and many others), which Frame Lens reads",
+    source.record.kind === "youtube" && !gemini
+      ? "for this YouTube link, the Gemini transcript: set GEMINI_API_KEY (the user's own key) and run `transcript` again, or use `get_video_transcript`"
+      : "for a YouTube link, the Gemini transcript with the user's own GEMINI_API_KEY",
+    "a transcript the user makes with a speech-to-text tool on their own computer, such as Whisper (Frame Lens runs none itself)",
+  ];
+  return `This source has no captions, and Frame Lens could not get its words another way. What can give a transcript: ${ways.join("; ")}.`;
+}
+
 /** A page reading is a few hundred KB; anything far larger is not one. */
 const MAX_READING_BYTES = 20 * 1024 * 1024;
 
@@ -181,12 +202,7 @@ export class Engine {
     }
     if (!transcript && this.options.transcriptFallback) transcript = await this.options.transcriptFallback(source.record, options.language);
     if (!transcript) {
-      if (options.required) {
-        throw new InvalidInputError(
-          "This source has no captions, and no speech-to-text engine is available. Add a Gemini key (GEMINI_API_KEY) " +
-            "for YouTube links, or run framelens doctor to see local options.",
-        );
-      }
+      if (options.required) throw new InvalidInputError(noTranscriptMessage(source, Boolean(this.options.transcriptFallback)));
       return { source };
     }
     source.ws.writeJson("transcript.json", transcript);
@@ -199,7 +215,7 @@ export class Engine {
     const source = await this.source(input);
     const rate = options.rate ?? 4;
     const threshold = options.threshold ?? 0.3;
-    const name = `boundaries-r${rate}-t${threshold}-${r3(options.start ?? 0)}-${r3(options.end ?? source.probe.duration)}.json`;
+    const name = boundariesFile(rate, threshold, options.start ?? 0, options.end ?? source.probe.duration);
     let boundaries = source.ws.readJson<Boundaries>(name);
     if (!boundaries) {
       boundaries = await findBoundaries(source.record.mediaPath, this.options.tools, { ...options, rate, threshold });
@@ -217,10 +233,20 @@ export class Engine {
 
     let frameRequest: FrameRequest = { ...request };
     if (request.around) {
-      const found = findPhrase(transcript!, request.around, request.occurrence ?? 1);
-      if (!found) throw new InvalidInputError(`"${request.around}" is not in the transcript. Check the wording in transcript.md.`);
+      if (request.at?.length) throw new InvalidInputError("`at` and `around` cannot be combined: `at` lists the moments itself, `around` finds them from a phrase. Pass one of them.");
+      const occurrence = request.occurrence ?? 1;
+      const found = findPhrase(transcript!, request.around, occurrence);
+      if (!found) {
+        const times = countPhrase(transcript!, request.around);
+        const where = source.ws.display(source.ws.path("transcript.md"));
+        throw new InvalidInputError(
+          times
+            ? `"${oneLine(request.around, 300)}" appears ${times === 1 ? "once" : `${times} times`} in the transcript; occurrence ${occurrence} does not exist. Pass an occurrence from 1 to ${times}.`
+            : `"${oneLine(request.around, 300)}" is not in the transcript. Check the wording in ${where}.`,
+        );
+      }
       const padding = request.padding ?? 1.5;
-      frameRequest = { ...frameRequest, start: Math.max(0, found.start - padding), end: Math.min(source.probe.duration, found.end + padding) };
+      frameRequest = { ...frameRequest, start: r3(Math.max(0, found.start - padding)), end: r3(Math.min(source.probe.duration, found.end + padding)) };
       if (frameRequest.every === undefined && frameRequest.fps === undefined && !frameRequest.everyFrame) frameRequest.fps = 4;
     }
     if (!frameRequest.at?.length && frameRequest.every === undefined && frameRequest.fps === undefined && !frameRequest.everyFrame) {
@@ -231,9 +257,10 @@ export class Engine {
     const rows = Math.min(Math.max(request.rows ?? 4, 1), 8);
     const width = frameRequest.width ?? (columns >= 6 ? 240 : 320);
     const mode = frameRequest.at?.length ? "at" : frameRequest.everyFrame ? "all" : frameRequest.fps !== undefined ? `fps${frameRequest.fps}` : `every${frameRequest.every}`;
+    // Rounded to the millisecond like every time Frame Lens reports (4.86, not 4.859999999999999).
     const range = frameRequest.at?.length
-      ? { start: Math.min(...frameRequest.at), end: Math.max(...frameRequest.at) }
-      : { start: frameRequest.start ?? 0, end: frameRequest.end ?? source.probe.duration };
+      ? { start: r3(Math.min(...frameRequest.at)), end: r3(Math.max(...frameRequest.at)) }
+      : { start: r3(frameRequest.start ?? 0), end: r3(Math.min(frameRequest.end ?? source.probe.duration, source.probe.duration)) };
     const name = `${mode}-${range.start.toFixed(2)}-${range.end.toFixed(2)}-w${width}`.replace(/[^A-Za-z0-9._-]/g, "_");
 
     const framesDir = source.ws.ensure("frames", name);
@@ -259,9 +286,19 @@ export class Engine {
     const { transcript } = await this.transcript(source);
     const { boundaries } = source.probe.hasVideo ? await this.boundaries(input, { rate: 2, threshold: 0.3 }) : { boundaries: undefined };
     // Moves found by an earlier `style` run: the plan points `track` at them.
-    const moves = source.ws.readJson<MotionSpec>("motion-spec.json")?.events.map((e) => ({ start: e.start, end: e.end, frames: e.frames, tracked: Boolean(e.track) }));
+    const spec = source.ws.readJson<MotionSpec>("motion-spec.json");
+    const moves = spec?.events.map((e) => ({ start: e.start, end: e.end, frames: e.frames, tracked: Boolean(e.track) }));
+    const duration = source.probe.duration;
+    // What earlier runs left in the workspace, so steps that need them get real times: boundaries over the whole
+    // video, and the shots of a `style` run that covered all of it.
+    const wholeSpec = spec !== undefined && spec.range.start <= 0.05 && spec.range.end >= duration - 0.05 && spec.shots.length > 0;
+    const known = {
+      boundaries: (rate: number, threshold: number) => source.ws.readJson<Boundaries>(boundariesFile(rate, threshold, 0, duration)),
+      ...(wholeSpec && { shots: spec.shots.map((s) => ({ start: s.start, end: s.end })) }),
+    };
     const plan = buildPlan({
       probe: source.probe,
+      known,
       ...(moves && { moves }),
       hasSpeech: Boolean(transcript?.segments.length),
       ...(boundaries && { boundaries }),
@@ -443,13 +480,22 @@ export class Engine {
       const cuts = spec.anchors.cuts.map((c) => c.t).filter((t) => t >= start && t <= end);
       // No cuts is not "0% on the beat": leave the ratio out.
       cutOnBeat = analysis.beats.length && cuts.length ? onBeatRatio(cuts, analysis.beats) : undefined;
-      spec.anchors.beats = analysis.beats.map((t, i) => ({ id: `b${i + 1}`, t }));
+      // The beat grid and the tempo are fitted to the onsets (derived), loudness is measured (EBU R128), and the share
+      // of cuts on a beat is derived from the two.
+      spec.anchors.beats = analysis.beats.map((t, i) => ({ id: `b${i + 1}`, t, evidence: "derived" }));
+      const { tempo_bpm: _tempo, cut_on_beat_ratio: _ratio, integrated_lufs: _lufs, evidence: _labels, ...kept } = spec.audio;
+      const evidence: Record<string, Evidence> = {
+        ...(analysis.tempo && { tempo_bpm: "derived" as const }),
+        ...(cutOnBeat !== undefined && { cut_on_beat_ratio: "derived" as const }),
+        ...(analysis.integratedLufs !== undefined && { integrated_lufs: "measured" as const }),
+      };
       spec.audio = {
-        ...spec.audio,
+        ...kept,
         ...(analysis.tempo && { tempo_bpm: analysis.tempo.bpm }),
         ...(cutOnBeat !== undefined && { cut_on_beat_ratio: cutOnBeat }),
         ...(analysis.integratedLufs !== undefined && { integrated_lufs: analysis.integratedLufs }),
         hits: analysis.onsets.filter((o) => o.strength >= 0.5).map((o) => ({ t: o.t, strength: o.strength, evidence: "measured" })),
+        ...(Object.keys(evidence).length > 0 && { evidence }),
       };
       files.spec = ws.writeJson("motion-spec.json", spec);
     }
@@ -539,11 +585,42 @@ export class Engine {
    * similarity over time, with a side-by-side sheet of the least similar moments. Writes COMPARE.md.
    */
   async compare(reference: string, render: string, version: string): Promise<{ source: Source; comparison: Comparison; files: Record<string, string>; sheet?: Sheet }> {
+    // Both sources first, before the long style passes, and an error says which of the two it is about.
+    for (const [name, input] of [["reference", reference], ["render", render]] as const) {
+      try {
+        await this.source(input);
+      } catch (error) {
+        if (error instanceof InvalidInputError) error.message = `\`${name}\`: ${error.message}`;
+        throw error;
+      }
+    }
     const ref = await this.style(reference, { version });
     const out = await this.style(render, { version });
     const fps = ref.source.probe.fps ?? 30;
     const samples = await similarity(ref.source.record.mediaPath, out.source.record.mediaPath, this.options.tools);
-    const worst = [...samples].sort((a, b) => a.ssim - b.ssim).slice(0, 6).sort((a, b) => a.t - b.t);
+    let worst = [...samples].sort((a, b) => a.ssim - b.ssim).slice(0, WORST_MOMENTS).sort((a, b) => a.t - b.t);
+
+    // The side-by-side sheet of those moments. Each moment is named by the reference frame shown at it, so the
+    // report and the sheet give the same times.
+    const ws = ref.source.ws;
+    let sheet: Sheet | undefined;
+    const shown = worst.filter((w) => w.t <= Math.min(ref.source.probe.duration, out.source.probe.duration));
+    if (shown.length) {
+      const dir = ws.ensure("frames", "compare");
+      const a = await extractFrames(ref.source.record.mediaPath, join(dir, "reference"), { at: shown.map((w) => w.t), width: 480 }, ref.source.probe, this.options.tools);
+      // Two moments that show the same frame (a low frame rate) are one moment, the less similar of the two.
+      const byFrame = new Map<number, { sample: { t: number; ssim: number }; frame: { t: number; file: string } }>();
+      shown.forEach((w, i) => {
+        const frame = a[i];
+        const previous = frame && byFrame.get(frame.t);
+        if (frame && (!previous || w.ssim < previous.sample.ssim)) byFrame.set(frame.t, { sample: { ...w, t: frame.t }, frame });
+      });
+      const picked = [...byFrame.values()].sort((x, y) => x.frame.t - y.frame.t);
+      worst = picked.map((p) => p.sample);
+      const b = await extractFrames(out.source.record.mediaPath, join(dir, "render"), { at: worst.map((w) => Math.min(w.t, out.source.probe.duration)), width: 480 }, out.source.probe, this.options.tools);
+      const pairs = picked.flatMap((p, i) => [{ ...p.frame, side: "reference" }, { ...b[i]!, side: "render" }]);
+      [sheet] = await buildSheets(pairs, ws.ensure("sheets"), "compare", { columns: 2, rows: Math.min(8, worst.length), label: (f) => `${(f as { side?: string }).side} · ${f.t.toFixed(2)} s` }, this.options.tools);
+    }
     const partial = {
       durations: {
         reference: ref.source.probe.duration,
@@ -562,27 +639,17 @@ export class Engine {
       },
     };
     const comparison: Comparison = { ...partial, verdict: verdict(partial, fps) };
-
-    const ws = ref.source.ws;
-    let sheet: Sheet | undefined;
-    const times = worst.map((w) => w.t).filter((t) => t <= Math.min(ref.source.probe.duration, out.source.probe.duration));
-    if (times.length) {
-      const dir = ws.ensure("frames", "compare");
-      const a = await extractFrames(ref.source.record.mediaPath, join(dir, "reference"), { at: times, width: 480 }, ref.source.probe, this.options.tools);
-      const b = await extractFrames(out.source.record.mediaPath, join(dir, "render"), { at: times, width: 480 }, out.source.probe, this.options.tools);
-      const pairs = a.flatMap((f, i) => [{ ...f, side: "reference" }, { ...b[i]!, side: "render" }]);
-      [sheet] = await buildSheets(pairs, ws.ensure("sheets"), "compare", { columns: 2, rows: Math.min(8, times.length), label: (f) => `${(f as { side?: string }).side} · ${f.t.toFixed(3)} s` }, this.options.tools);
-    }
+    const shift = comparison.cuts.shift;
     const md = [
       `# Compare: ${oneLine(ref.source.record.title ?? reference)} vs ${oneLine(out.source.record.title ?? render)}`,
       "",
       ...comparison.verdict.map((v) => `- ${v}`),
       "",
       `Duration: reference ${comparison.durations.reference.toFixed(3)} s, render ${comparison.durations.render.toFixed(3)} s.`,
-      `Cuts: ${comparison.cuts.matched.length - comparison.cuts.missing.length} of ${comparison.cuts.matched.length} matched within 3 frames.`,
+      `Cuts: ${comparison.cuts.matched.length - comparison.cuts.missing.length} of ${comparison.cuts.matched.length} matched within 3 frames${shift ? ` after the ${shift.frames > 0 ? "+" : ""}${shift.frames}-frame shift` : ""}.`,
       `Palette distance (OKLab, 0 = same): ${comparison.palette.distance}.`,
       `Mean picture similarity (SSIM): ${comparison.similarity.mean}.`,
-      sheet ? `\nSide by side at the least similar moments: ${ws.display(sheet.file)}` : "",
+      sheet ? `\nSide by side at the ${worst.length} least similar moments (${momentList(worst)}): ${ws.display(sheet.file)}` : "",
     ].join("\n");
     const files: Record<string, string> = { report: ws.writeText("COMPARE.md", `${md}\n`), json: ws.writeJson("compare.json", comparison) };
     this.progress(ws, `compare: with ${oneLine(render)}: ${comparison.verdict.join(" ")}`);

@@ -27,8 +27,10 @@ export interface DoctorOptions {
   env?: Env;
   /** The folder a server started here would use (defaults to the current folder). */
   cwd?: string;
-  /** Defaults to stderr: stdout belongs to the MCP protocol. */
+  /** The report, line by line. Defaults to stdout: `doctor` is a command, not the server, so stdout is free. */
   write?: (line: string) => void;
+  /** What could not be done (a failed `--prepare` download). Defaults to stderr. */
+  warn?: (line: string) => void;
   signal?: AbortSignal;
   /** Injected in tests. */
   prepareYtDlp?: typeof prepareYtDlp;
@@ -44,7 +46,8 @@ const UNLOCKS: Record<ToolName, string> = {
 /** Prints what is installed and what each tool unlocks. Returns the process exit code. */
 export async function runDoctor(options: DoctorOptions = {}): Promise<number> {
   const env = options.env ?? process.env;
-  const out = options.write ?? ((line: string) => process.stderr.write(`${line}\n`));
+  const out = options.write ?? ((line: string) => process.stdout.write(`${line}\n`));
+  const warn = options.warn ?? (options.write ? out : (line: string) => process.stderr.write(`${line}\n`));
   let exitCode = 0;
 
   if (options.prepare) {
@@ -53,7 +56,7 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<number> {
       out(prepared.downloaded ? `yt-dlp ${prepared.version} installed and verified.` : `yt-dlp ${prepared.version} was already installed and verified.`);
     } catch (error) {
       exitCode = 1;
-      out(`Could not prepare yt-dlp: ${error instanceof Error ? error.message : String(error)}`);
+      warn(`Could not prepare yt-dlp: ${error instanceof Error ? error.message : String(error)}`);
     }
     // An ffmpeg the user installed stays in use; the pinned build is fetched only when one of the two is missing.
     const have = (["ffmpeg", "ffprobe"] as const).map((name) => {
@@ -71,7 +74,7 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<number> {
         out(`FFmpeg ${prepared.version} (${prepared.source}) ${prepared.downloaded ? "installed and verified" : "was already installed and verified"}.`);
       } catch (error) {
         exitCode = 1;
-        out(`Could not prepare ffmpeg: ${error instanceof Error ? error.message : String(error)}`);
+        warn(`Could not prepare ffmpeg: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
     out("");
@@ -126,6 +129,11 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<number> {
   out(`  Inbox (source "inbox", newest file): ${inbox ? `${inbox}${existsSync(inbox) ? "" : " (missing)"} and ` : "FRAMELENS_INBOX not set; "}${downloads}${existsSync(downloads) ? "" : " (not created yet)"}, where the browser extension saves`);
   const cookies = readEnv(env, "FRAMELENS_COOKIES_FILE") ? "cookies file" : readEnv(env, "FRAMELENS_COOKIES_FROM_BROWSER") ? "browser profile" : "off";
   out(`  Cookies (opt-in): ${cookies}`);
-  out(`  Overrides: ${Object.values(TOOL_ENV).filter((n) => readEnv(env, n)).join(", ") || "none"}`);
+  // FRAMELENS_HOME moves the downloaded tools and the fallback workspaces.
+  const overrides = ["FRAMELENS_HOME", ...Object.values(TOOL_ENV)].flatMap((n) => {
+    const value = readEnv(env, n);
+    return value ? [`${n}=${value}`] : [];
+  });
+  out(`  Overrides: ${overrides.join(", ") || "none"}`);
   return exitCode;
 }

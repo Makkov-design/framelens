@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { InvalidInputError } from "../src/errors.js";
-import { initProject, SERVER_SPEC } from "../src/init.js";
+import { GITHUB_SERVER_SPEC, INIT_NEXT_STEPS, initProject, SERVER_SPEC } from "../src/init.js";
 import { VERSION } from "../src/version.js";
 
 let dir: string;
@@ -20,8 +20,22 @@ const mcpJson = () => JSON.parse(readFileSync(join(dir, ".mcp.json"), "utf8"));
 const skill = () => readFileSync(join(dir, ".claude", "skills", "framelens", "SKILL.md"), "utf8");
 
 describe("initProject", () => {
-  it("pins the server to this version on GitHub", () => {
-    expect(SERVER_SPEC).toBe(`github:Makkov-design/framelens#v${VERSION}`);
+  it("pins the server to this version of the npm package, with GitHub kept as a documented fallback", () => {
+    // 2.1.0 wrote github:Makkov-design/framelens#v2.1.0: a 16 MB download that needs the tag to exist.
+    expect(SERVER_SPEC).toBe(`framelens@${VERSION}`);
+    expect(GITHUB_SERVER_SPEC).toBe(`github:Makkov-design/framelens#v${VERSION}`);
+    initProject(dir);
+    expect(mcpJson().mcpServers.framelens).toMatchObject({ command: "npx", args: ["-y", `framelens@${VERSION}`] });
+    expect(readFileSync(new URL("../README.md", import.meta.url), "utf8")).toContain(GITHUB_SERVER_SPEC.replace(VERSION, "<version>"));
+  });
+
+  it("puts asking the agent first and the Gemini key last, as optional", () => {
+    const steps = INIT_NEXT_STEPS.split(/\n\s*\d\.\s/).slice(1);
+    expect(steps[1]).toMatch(/ask your agent about any video, link, file, site, Lottie or\s+Rive/);
+    expect(steps[1]).toMatch(/local tools need no API key/);
+    expect(steps.at(-1)).toMatch(/^Optional, only for the Gemini YouTube tools/);
+    expect(steps.slice(0, -1).join(" ")).not.toContain("GEMINI_API_KEY");
+    expect(INIT_NEXT_STEPS).not.toMatch(/share a YouTube link/);
   });
 
   it("creates .mcp.json and the skill in an empty project", () => {

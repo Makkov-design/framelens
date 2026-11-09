@@ -63,8 +63,9 @@ function nothingThere(env: Env, what: string): SourceError {
   if (!configured && !existsSync(extensionFolder(env))) {
     return new SourceError(
       "inbox_empty",
-      "FRAMELENS_INBOX is not set and there is no Downloads/FrameLens folder yet. Save the file with the Frame Lens browser " +
-        `extension (it saves to Downloads/FrameLens), or set FRAMELENS_INBOX to the folder where you put ${what}, then use source "inbox".`,
+      `There is no ${what} in the inbox: FRAMELENS_INBOX is not set and there is no Downloads/FrameLens folder yet. The inbox holds ` +
+        "a video, GIF, page reading or recording: record the tab or read the page with the Frame Lens browser extension (it saves " +
+        'to Downloads/FrameLens), or set FRAMELENS_INBOX to the folder where you keep such files, then use source "inbox".',
     );
   }
   return new SourceError("inbox_empty", `No ${what} found in the inbox (${inboxFolders(env).join(", ") || extensionFolder(env)}). Save it there and try again.`);
@@ -91,7 +92,7 @@ export function inboxContents(env: Env): { media?: InboxItem; reading?: InboxIte
 export function newestInboxItem(env: Env): InboxItem {
   const { media, reading } = inboxContents(env);
   const item = media && reading ? (reading.mtime > media.mtime ? reading : media) : (media ?? reading);
-  if (!item) throw nothingThere(env, "video, GIF or page reading");
+  if (!item) throw nothingThere(env, "video, GIF, page reading or recording");
   return item;
 }
 
@@ -115,7 +116,7 @@ export function newestInboxFile(env: Env): string {
   const { media, reading } = inboxContents(env);
   if (media) return media.path;
   if (reading) throw new SourceError("bad_input", `The inbox holds no video, only a page reading (${reading.path}): use \`web\` or \`export\` with "inbox" for it.`);
-  throw nothingThere(env, "video or GIF");
+  throw nothingThere(env, "video, GIF or recording");
 }
 
 /** The newest page reading the browser extension saved (`*.framelens.json`), for `web`; a newer video is left alone. */

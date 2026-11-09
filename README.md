@@ -74,7 +74,7 @@ Real Frame Lens readings from the [website](https://makkov-design.github.io/fram
     </td>
     <td width="56%" valign="top">
       <img src="docs/assets/readme/contact-sheet.webp" alt="A contact sheet of 32 trailer frames, one a second, with red marks where a cut falls">
-      <p><b>The first pass.</b> One frame a second for the style goal, red where a cut falls. Dense frames come only after this, around the moments that matter.</p>
+      <p><b>The first pass.</b> An overview of the whole piece, red where a cut falls (this sheet holds one frame a second; for a video this short the style plan takes one every 0.5 s). Dense frames come only after this, around the moments that matter.</p>
     </td>
   </tr>
 </table>
@@ -93,8 +93,9 @@ Real Frame Lens readings from the [website](https://makkov-design.github.io/fram
 npx -y framelens init
 ```
 
-This adds `.mcp.json` (the Frame Lens server) and the agent skill to the project. For Claude Code in every project,
-Codex, Cursor and other clients, see [Install in your client](#install-in-your-client).
+This adds `.mcp.json` (the Frame Lens server, pinned to `framelens@<version>` on npm) and the agent skill to the
+project. For Claude Code in every project, Codex, Cursor and other clients, see
+[Install in your client](#install-in-your-client).
 
 **2. Ask your agent in plain words.** Start a new session and paste a link or a file path:
 
@@ -284,9 +285,15 @@ VS Code (`.vscode/mcp.json`):
 }
 ```
 
-`npx -y framelens init` writes `.mcp.json` with the server pinned to its own version from GitHub
-(`github:Makkov-design/framelens#v<version>`), adds the skill, and replaces an old `ytlens` entry. Without npm the
-server also runs from GitHub: `npx -y github:Makkov-design/framelens#v2.1.0`.
+`npx -y framelens init` writes `.mcp.json` with the server pinned to its own version on npm
+(`"args": ["-y", "framelens@<version>"]`), adds the skill, and replaces an old `ytlens` entry. The entry calls `npx`
+directly, without the Windows `cmd /c` wrapper, because the file is shared with cloud sessions, which run Linux; on
+your own Windows computer, add Frame Lens for every project as in the table above (`-- cmd /c npx -y framelens`).
+
+**From GitHub instead of npm.** The same version also runs straight from its release tag, without the npm registry:
+`npx -y github:Makkov-design/framelens#v<version>` (for example `#v2.1.0`; in JSON, `"args": ["-y",
+"github:Makkov-design/framelens#v2.1.0"]`). npm then downloads the tagged commit, a larger download than the
+package.
 </details>
 
 ### Workflow
@@ -294,7 +301,9 @@ server also runs from GitHub: `npx -y github:Makkov-design/framelens#v2.1.0`.
 1. **Pick the route.** A video (link, file, `inbox`) → `plan`. A website → `web`. A Lottie, dotLottie, Rive file or a
    Figma prototype link → `exact`.
 2. **`plan` first.** Pass the source and the user's request in their own words (or `goal`). Run the steps it returns,
-   in order. Its estimate tells you the image-token cost before you spend it.
+   in order: their `args` are ready to pass; a step with `then` says what to add first from an earlier step's result
+   (the change times `boundaries` found, or a box around the element to `track`). Its estimate tells you the
+   image-token cost before you spend it.
 3. **Motion reference** (the `style` goal): `style` → `track` for the moves that matter (`move: n`, `element: "auto"`
    or a box) → `frames` with `every_frame` ±0.5 s around them → `export` to the user's renderer → render → `compare`
    with the reference, fix what it names.
@@ -322,8 +331,10 @@ tool runs so a later session can continue.
 
 Every number in `motion-spec.json` carries one: **`measured`** (read from pixels, audio or the source's own data),
 **`derived`** (fitted from measurements, such as an easing family or a tracked curve) or **`inferred`** (a model's
-judgement, such as a font guess). Quote the label with the number, quote a tracked curve's error and grade, and keep
-facts apart from interpretation.
+judgement, such as a font guess). The label sits on the object that holds the number (`"evidence": "measured"`), or,
+where an object's numbers differ, one per field (`audio`: tempo and cuts on the beat derived, loudness measured).
+Only `range`, the span that was asked for, has none. Quote the label with the number, quote a tracked curve's error
+and grade, and keep facts apart from interpretation.
 
 ### Rules
 
@@ -348,7 +359,10 @@ facts apart from interpretation.
   Frame Lens downloads a pinned build into `~/.framelens/tools/`, checks its SHA-256 against the hash in the code,
   and tells the agent. `FRAMELENS_AUTO_INSTALL=0` turns this off.
 - **Check and prepare:** `npx -y framelens doctor` reports what is found, which workspace folder is used and why;
-  `doctor --prepare` fetches the pinned yt-dlp (and ffmpeg when missing) right away.
+  `doctor --prepare` fetches the pinned yt-dlp (and ffmpeg when missing) right away. `npx -y framelens --help` lists
+  the commands.
+- **Paths:** pass absolute paths to local files. A relative path is taken from the server's working folder, which
+  for Claude Desktop is `C:\Windows\System32` on Windows and `/` on macOS, not your project.
 - **Gemini tools (optional):** `GEMINI_API_KEY` from [Google AI Studio](https://aistudio.google.com/apikey).
 
 <details>
@@ -497,4 +511,6 @@ Trailer frames on the website and in this README: *Big Buck Bunny*, © Blender F
 [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/), [peach.blender.org](https://peach.blender.org).
 Fonts on the website and banner: Panchang and General Sans from [Fontshare](https://www.fontshare.com), JetBrains Mono.
 Frame Lens uses [ffmpeg](https://ffmpeg.org) and [yt-dlp](https://github.com/yt-dlp/yt-dlp), downloaded separately on
-your machine, and speaks the [Model Context Protocol](https://modelcontextprotocol.io).
+your machine, and speaks the [Model Context Protocol](https://modelcontextprotocol.io). The one-file bundle includes
+code from the MCP TypeScript SDK, Zod and Google's Gen AI SDK (`@google/genai`, Apache-2.0) with their dependencies,
+under their own licences: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

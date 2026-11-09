@@ -57,6 +57,12 @@ describe("classifyInput", () => {
     expect(() => classifyInput(root)).toThrow(/folder/);
     expect(() => classifyInput("not a thing")).toThrow();
   });
+
+  it("says a relative path is taken from the server's working folder, and asks for an absolute one", () => {
+    // Claude Desktop starts the server in System32, where "clips/promo.mp4" never is.
+    expect(() => classifyInput("clips/promo-that-is-not-here.mp4")).toThrow(/relative path is taken from the server's working folder.*System32.*absolute path/s);
+    expect(() => classifyInput(join(root, "no-such-file.mp4"))).not.toThrow(/relative path/);
+  });
 });
 
 describe("resolveSource: local files and the inbox", () => {
@@ -89,7 +95,7 @@ describe("resolveSource: local files and the inbox", () => {
     await expect(resolveSource("inbox", { workspaceRoot: ws, env: env() })).rejects.toThrow(/FRAMELENS_INBOX is not set/);
     const empty = join(root, "empty-inbox");
     mkdirSync(empty, { recursive: true });
-    await expect(resolveSource("inbox", { workspaceRoot: ws, env: env({ FRAMELENS_INBOX: empty }) })).rejects.toThrow(/No video or GIF/);
+    await expect(resolveSource("inbox", { workspaceRoot: ws, env: env({ FRAMELENS_INBOX: empty }) })).rejects.toThrow(/No video, GIF or recording/);
   });
 
   it.skipIf(!findTool("ffmpeg"))("handles a real ffmpeg-generated clip", async () => {
@@ -126,6 +132,20 @@ describe("resolveSource: links through yt-dlp", () => {
     expect(download![download!.indexOf("-f") + 1]).toContain("height<=1080");
     expect(download![download!.indexOf("--sub-langs") + 1]).toBe("en-orig");
     expect(download![download!.indexOf("--sub-format") + 1]).toBe("json3/vtt/best");
+  });
+
+  it("leaves no empty workspace folder behind when a link cannot be fetched", async () => {
+    // 2.1.0 left an empty yt-<id> folder for every failed probe.
+    process.env.FAKE_YTDLP_MODE = "private";
+    await expect(resolveSource(YT, { workspaceRoot: ws, env: env() })).rejects.toThrow();
+    expect(existsSync(join(ws, "yt-jNQXAC9IVRw"))).toBe(false);
+    // A workspace that was there before (an earlier download, its media since deleted) is kept.
+    delete process.env.FAKE_YTDLP_MODE;
+    const first = await resolveSource(YT, { workspaceRoot: ws, env: env() });
+    rmSync(first.mediaPath);
+    process.env.FAKE_YTDLP_MODE = "private";
+    await expect(resolveSource(YT, { workspaceRoot: ws, env: env() })).rejects.toThrow();
+    expect(existsSync(join(ws, "yt-jNQXAC9IVRw", "source.json"))).toBe(true);
   });
 
   it("marks uploader-made captions as not automatic", async () => {

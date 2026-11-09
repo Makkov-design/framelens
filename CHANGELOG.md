@@ -7,39 +7,8 @@ reads pages and records tabs from a browser extension, and sets up ffmpeg and yt
 through an independent audit, fixes and a re-check; see the sections below. Website:
 https://makkov-design.github.io/framelens/
 
+### Added
 
-- Listed for the official MCP Registry as `io.github.Makkov-design/framelens` (`server.json`, `mcpName` in
-  `package.json`, and a manual "Publish to MCP Registry" workflow); `glama.json`; a PNG icon for the Claude Code
-  plugin. Contributing guide, code of conduct, issue forms (including "Wrong measurement") and a pull request
-  template.
-- **Browser extension** for Chrome and Edge (`extension/`, Manifest V3, Load unpacked): "Read this page's motion"
-  runs the `web` tool's own page reader in the user's browser, so pages behind their login can be read, and "Record
-  this tab" saves a WebM of what they watch (with its duration written in; frame times stay the real, variable
-  ones). Files go to `Downloads/FrameLens`; `web` takes `inbox` or the saved `.framelens.json` and writes the same
-  `motion-spec.json` and `STYLE.md` as for a live page, and video tools take `inbox` for a recording. Each tool
-  takes the newest inbox item it can use (video tools a video, `web` a page reading, `export` either, preferring the
-  one already worked on) and the result names the other one. A download the browser interrupts is reported, not
-  called saved. No network access, no host permissions. `npm run build:extension` builds `extension/dist` and a
-  zip.
-- **Automatic setup**: a missing ffmpeg/ffprobe or yt-dlp is downloaded on first use (FFmpeg 9.0.2 from gyan.dev for
-  Windows x64 and from ffmpeg.martin-riedl.de for macOS and Linux x64; yt-dlp 2026.10.21), checked against SHA-256
-  hashes in the code, and the tool call that needed it says so. A pinned binary is trusted only after its hash
-  matches; two servers installing at once each use their own temporary files and never delete a good binary; what
-  a killed install left behind is removed; downloads have a size cap, a time limit and a stall limit.
-  `FRAMELENS_AUTO_INSTALL=0` turns it off; `doctor --prepare` does the same on demand.
-- **Self-hosted cobalt, opt-in**: with `FRAMELENS_COBALT_URL` (and `FRAMELENS_COBALT_KEY`), a link goes to the
-  user's own cobalt instance only when yt-dlp has no extractor for it or fails with wording that does not look like
-  access control; logins, age and bot checks, challenges, blocks, rate limits, passwords, DRM, private or paid posts
-  and HTTP 401/403/429/451 never go there. Every hop of the media download is checked (no local or private hosts,
-  IPv4 inside IPv6 included; https off the instance), the connection goes to the checked address, and the file must
-  be video or audio. Only the official cobalt.tools hosts are refused by name; it is meant for your own instance.
-- The login profile (`framelens login`, 2.0) now decides on yt-dlp's own words, not Frame Lens's help text, with the
-  same classifier as cobalt: "rate-limit reached or login required" and other bot checks, rate limits and blocks are
-  never played through the user's login.
-- **Workspace fallback**: when the server starts in a system folder (Claude Desktop on Windows uses
-  `C:\WINDOWS\system32`; also through junctions, short names, `\\?\` paths and admin shares) or a folder it cannot
-  write to, workspaces go to `~/.framelens/`; `FRAMELENS_WORKSPACE` overrides both (a relative one is taken from the
-  home folder). Tool results show absolute paths, and `doctor` says which folder is used and why.
 - `track`: follows one element through a window at the full frame rate (found automatically as the biggest moving
   region, or from a box) with subpixel template matching, and fits the exact timing of each property that moves
   (x, y, scale, opacity): a `cubic-bezier`, a damped spring (stiffness, damping, mass; also duration and bounce),
@@ -61,8 +30,6 @@ https://makkov-design.github.io/framelens/
   cubic-value and elastic curves, and state machines (inputs, layers, states, transitions with blend times and
   conditions). Writes the usual `motion-spec.json` and `STYLE.md` plus `RIVE.md`; `export` works from it like from a
   Lottie spec. Hard limits on file size, object count and string length; names are treated as untrusted text.
-- `STYLE.md` from `exact` (Lottie and Figma too) escapes names and text from the file as Markdown, so they cannot add
-  links, HTML or table columns.
 - `style` reports transitions: cuts (`measured`) and dissolves, fades in and out, dips through black or white and wipes
   (`derived`), each with start, end, duration in frames, the shot boundary, the colour or direction and the blend's
   easing, in `transitions` of `motion-spec.json`, `STYLE.md` and `TIMELINE.md`. Shots split at a dissolve's halfway
@@ -74,9 +41,48 @@ https://makkov-design.github.io/framelens/
   (dissolves at 3.48–4.44 s and 6.24–7.12 s, five dips to black at 18.88–22.88 s, a flash to white at 26.72 s), and
   the opening title's fade from white and the end card's fade to white are found. A push is not recognised (reported
   as a move). The benchmark adds 60 rendered transitions: see [docs/ACCURACY.md](docs/ACCURACY.md).
-- `style` no longer lists the same move twice (two bursts of motion that grew over the same slow frames), and moves
-  leave out transition frames and still frames whose change is only grain. Exporters and `plan` drop duplicates from
-  older specs.
+- **Browser extension** for Chrome and Edge (`extension/`, Manifest V3, Load unpacked): "Read this page's motion"
+  runs the `web` tool's own page reader in the user's browser, so pages behind their login can be read, and "Record
+  this tab" saves a WebM of what they watch (with its duration written in; frame times stay the real, variable
+  ones). Files go to `Downloads/FrameLens`; `web` takes `inbox` or the saved `.framelens.json` and writes the same
+  `motion-spec.json` and `STYLE.md` as for a live page, and video tools take `inbox` for a recording. Each tool
+  takes the newest inbox item it can use (video tools a video, `web` a page reading, `export` either, preferring the
+  one already worked on) and the result names the other one. A download the browser interrupts is reported, not
+  called saved. No network access, no host permissions. `npm run build:extension` builds `extension/dist` and a
+  zip.
+- **Automatic setup**: a missing ffmpeg/ffprobe or yt-dlp is downloaded on first use (FFmpeg 9.0.2 from gyan.dev for
+  Windows x64 and from ffmpeg.martin-riedl.de for macOS and Linux x64; yt-dlp 2026.10.21), checked against SHA-256
+  hashes in the code, and the tool call that needed it says so. A pinned binary is trusted only after its hash
+  matches; two servers installing at once each use their own temporary files and never delete a good binary; what
+  a killed install left behind is removed; downloads have a size cap, a time limit and a stall limit.
+  `FRAMELENS_AUTO_INSTALL=0` turns it off; `doctor --prepare` does the same on demand.
+- **Self-hosted cobalt, opt-in**: with `FRAMELENS_COBALT_URL` (and `FRAMELENS_COBALT_KEY`), a link goes to the
+  user's own cobalt instance only when yt-dlp has no extractor for it or fails with wording that does not look like
+  access control; logins, age and bot checks, challenges, blocks, rate limits, passwords, DRM, private or paid posts
+  and HTTP 401/403/429/451 never go there. Every hop of the media download is checked (no local or private hosts,
+  IPv4 inside IPv6 included; https off the instance), the connection goes to the checked address, and the file must
+  be video or audio. Only the official cobalt.tools hosts are refused by name; it is meant for your own instance.
+- **Workspace fallback**: when the server starts in a system folder (Claude Desktop on Windows uses
+  `C:\WINDOWS\system32`; also through junctions, short names, `\\?\` paths and admin shares) or a folder it cannot
+  write to, workspaces go to `~/.framelens/`; `FRAMELENS_WORKSPACE` overrides both (a relative one is taken from the
+  home folder). Tool results show absolute paths, and `doctor` says which folder is used and why.
+- Listed for the official MCP Registry as `io.github.Makkov-design/framelens` (`server.json`, `mcpName` in
+  `package.json`, and a manual "Publish to MCP Registry" workflow); `glama.json`; a PNG icon for the Claude Code
+  plugin. Contributing guide, code of conduct, issue forms (including "Wrong measurement") and a pull request
+  template.
+- `framelens --help` lists the commands (it used to answer "Unknown command").
+- `THIRD_PARTY_NOTICES.md`, shipped in the npm package: the licences of the code bundled into `dist/framelens.mjs`
+  (the MCP TypeScript SDK, Zod, Google's Gen AI SDK under Apache-2.0, and what they bring in).
+
+### Changed
+
+- `export` animates only what Frame Lens read from the reference: titles move where `style` found a move (easing
+  family derived) or `track` fitted a curve, dissolves are cross-fades and fades and dips go through black or white,
+  each with its own colour and easing (CSS keyframes, HyperFrames tweens, Remotion opacity, After Effects and Lottie
+  opacity keys; a wipe is a clip-path edge where the target has one; in After Effects each title sits above its own
+  shot, so a dissolve covers the outgoing title too). Shots without a move hold still instead of getting an invented
+  0.2 s entrance; REFERENCE.md says what is derived and lists what is a default. A spec whose `transitions` is not a
+  list, or lies outside the range, is cleaned instead of crashing the export.
 - Shot palettes and backgrounds come from the shot's own frames over its whole length (outside its transitions), not
   from one frame at its middle: a title card that dissolves into the film is white, not the blend. The frames come
   from the same decoding pass as the per-frame change, through a pipe (tone-mapped for HDR, so HDR shots need no
@@ -85,6 +91,33 @@ https://makkov-design.github.io/framelens/
   24 % of the 33 s trailer in all), every-frame windows around the strongest changes (one per 8 s of video, 2–8 of
   them) joined when they overlap or touch and split into windows of at most 2 s, and the estimate counts frames and
   tokens per sheet layout. On the 33 s trailer: 272 frames and 22,417 image tokens, down from 606 frames and 63,043.
+- The login profile (`framelens login`, 2.0) now decides on yt-dlp's own words, not Frame Lens's help text, with the
+  same classifier as cobalt: "rate-limit reached or login required" and other bot checks, rate limits and blocks are
+  never played through the user's login.
+- `framelens init` pins `framelens@<version>` from npm instead of `github:Makkov-design/framelens#v<version>`, a
+  16 MB download that needed the tag to exist; running from GitHub stays documented. Its next steps start with
+  asking the agent about any video, link, file, site, Lottie or Rive, and end with the Gemini key, as optional.
+- Without a Gemini key, only the Gemini YouTube tools say how to add one, once, and that the local tools need none.
+  The message said "To use framelens, add a Gemini API key", twice.
+- `plan` lists only steps the tools accept as they are. Learn and production get their moments when the boundaries or
+  shots are already in the workspace, and otherwise a `then` that says what to add from the `boundaries` result
+  (before: `at: "each boundary + 0.5 s"` and a `labels` parameter that does not exist). A source without sound gets
+  no `transcript` step. `track` steps offer `element: "auto"` for graphics and UI footage and ask for a box in camera
+  footage, where the biggest moving region is often the camera.
+- Every number in a video's `motion-spec.json` carries an evidence label on the object that holds it: `timebase` and
+  words measured, beats derived, shots measured (derived when an end is a gradual transition), `rhythm` derived, a
+  dip's `hold` derived, and `audio` one label per field (tempo and cuts on the beat derived, loudness measured). The
+  rule is in docs/DESIGN.md, and a test walks a real spec for numbers without one.
+- `compare` finds a render shifted as a whole and says so first ("the render is 5 frames early") instead of calling
+  every cut missing and every cut extra, and its text and side-by-side sheet name the same least similar moments.
+- `doctor` and the other commands print to stdout (only the server keeps stdout for MCP); `doctor` lists
+  `FRAMELENS_HOME` among the overrides, with each override's value.
+
+### Fixed
+
+- `style` no longer lists the same move twice (two bursts of motion that grew over the same slow frames), and moves
+  leave out transition frames and still frames whose change is only grain. Exporters and `plan` drop duplicates from
+  older specs.
 - ffmpeg numbers in scientific notation are read whole: signalstats prints tiny averages as `6.94444e-05`, which
   2.0 read as 6.94, so a still frame with a few changed pixels became a false cut (six on Frame Lens's own demo) and
   moves on flat graphics looked stronger. Fixed in every ffmpeg log Frame Lens parses (energy, scene scores, frame
@@ -93,13 +126,21 @@ https://makkov-design.github.io/framelens/
   shot does not, and `style` now compares those frames. Montage cuts are found (the benchmark adds a montage of 2- and
   3-frame shots with flashes in it). A cut inside part of the frame only is still judged on the whole frame (a limit,
   in ACCURACY.md).
-- `export` animates only what Frame Lens read from the reference: titles move where `style` found a move (easing
-  family derived) or `track` fitted a curve, dissolves are cross-fades and fades and dips go through black or white,
-  each with its own colour and easing (CSS keyframes, HyperFrames tweens, Remotion opacity, After Effects and Lottie
-  opacity keys; a wipe is a clip-path edge where the target has one; in After Effects each title sits above its own
-  shot, so a dissolve covers the outgoing title too). Shots without a move hold still instead of getting an invented
-  0.2 s entrance; REFERENCE.md says what is derived and lists what is a default. A spec whose `transitions` is not a
-  list, or lies outside the range, is cleaned instead of crashing the export.
+- `STYLE.md` from `exact` (Lottie and Figma too) escapes names and text from the file as Markdown, so they cannot add
+  links, HTML or table columns.
+- `frames`: `around` with an occurrence past the last says how many there are ("appears 3 times; occurrence 5 does not
+  exist") instead of "not in the transcript"; `at` together with `every`, `fps`, `every_frame` or `around` is an
+  error instead of an option silently dropped, and the error names `around`; ranges are given to the millisecond
+  (4.86, not 4.859999999999999).
+- `transcript` on a source without captions says what can give a transcript (captions on a site that has them, the
+  Gemini transcript of a YouTube link with the user's key, a speech-to-text such as Whisper that the user runs)
+  instead of sending the agent to `doctor`, which lists none; on a source without sound it says there is none.
+- Errors: a `compare` source that cannot be opened names its argument (`reference` or `render`); a relative path
+  that is not found says it is taken from the server's working folder (System32 under Claude Desktop) and asks for
+  an absolute one; the empty-inbox message says what the inbox holds (a video, GIF, page reading or recording); a
+  link that cannot be fetched leaves no empty `yt-<id>` folder behind.
+- Every local tool parameter has a description (`audio.start`, `boundaries.start` and `end`, `frames.columns` and
+  `rows` had none).
 
 ## 2.0.0 — 2026-11-09
 
