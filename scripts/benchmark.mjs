@@ -84,18 +84,88 @@ const TRACK_CONDITIONS = [
 const MOVE_SECONDS = 0.5; // bezier moves
 const REST = 0.4;
 
-async function trackClip(file, fps, curve, condition) {
+// More kinds of motion, at 30 fps, clean and on a busy background: other directions, y, a diagonal spring, scale,
+// opacity, a fade-out, and a window that is mostly rest after the move. All found with `element: auto` unless a box
+// is given; `property` is the one compared with the truth.
+const VARIETY = [
+  { name: "left, custom bezier", property: "x", curve: TRACK_CURVES[2], from: [500, 180], to: [120, 180] },
+  { name: "up, ease-in-out", property: "y", curve: TRACK_CURVES[1], from: [320, 300], to: [320, 60] },
+  { name: "diagonal, spring 170/12", property: "x", curve: TRACK_CURVES[4], from: [120, 80], to: [480, 280] },
+  { name: "scale 1 → 1.6, ease", property: "scale", curve: TRACK_CURVES[0], from: [320, 180], to: [320, 180], scale: (i, p) => 1 + 0.6 * p },
+  { name: "fade in, ease-in-out", property: "opacity", curve: TRACK_CURVES[1], from: [320, 180], to: [320, 180], opacity: (i, p) => p },
+  { name: "fade out (box given), ease", property: "opacity", curve: TRACK_CURVES[0], from: [320, 180], to: [320, 180], opacity: (i, p) => 1 - p, box: { x: 285, y: 145, w: 70, h: 70 } },
+  { name: "right, then 1.5 s of rest", property: "x", curve: TRACK_CURVES[0], from: [120, 180], to: [500, 180], tail: 1.5 },
+];
+const VARIETY_CONDITIONS = [TRACK_CONDITIONS[0], TRACK_CONDITIONS[2]];
+
+async function trackClip(file, fps, curve, condition, motion = { from: [120, 180], to: [500, 180] }) {
   const startFrame = Math.round(REST * fps);
   const moveFrames = Math.round(MOVE_SECONDS * fps);
-  const seconds = curve.kind === "spring" ? 2 : REST + MOVE_SECONDS + 0.5;
+  const seconds = (curve.kind === "spring" ? 2 : REST + MOVE_SECONDS + 0.5) + (motion.tail ?? 0);
   const progress = curve.kind === "spring" ? (i) => springAt(curve.stiffness, curve.damping, (i - startFrame) / fps) : (i) => bezierAt(curve.bezier, (i - startFrame) / moveFrames);
-  await encode(file, clipFrames({ total: Math.round(seconds * fps), progress, from: [120, 180], to: [500, 180], size: 70, busy: condition.busy, noise: condition.noise, seed: fps }), { fps, timeoutMs: 120_000 });
+  await encode(
+    file,
+    clipFrames({ total: Math.round(seconds * fps), progress, from: motion.from, to: motion.to, size: 70, busy: condition.busy, noise: condition.noise, seed: fps, ...(motion.scale && { scale: motion.scale }), ...(motion.opacity && { opacity: motion.opacity }) }),
+    { fps, timeoutMs: 120_000 },
+  );
   return { startFrame, moveFrames, seconds };
+}
+
+/** Value progress of a fitted curve (as `track` reports it) at move progress u. */
+function fittedAt(curve, u, seconds) {
+  if (u <= 0) return 0;
+  if (curve.kind === "spring") return springAt(curve.stiffness, curve.damping, u * seconds);
+  if (u >= 1) return 1;
+  if (curve.kind === "linear") return u;
+  if (curve.kind === "steps") return Math.floor(u * curve.steps) / curve.steps;
+  return bezierAt(curve.bezier, u);
+}
+
+/**
+ * Largest difference between the fitted and the true motion over time, as a share of the travel: shape and timing
+ * together. Control points are not unique (different points can draw nearly the same curve), this is.
+ */
+function shapeError(p, curve, truth, fps) {
+  const t0 = truth.startFrame / fps;
+  const length = truth.moveFrames / fps;
+  const span = curve.kind === "spring" ? 1.6 : length;
+  let worst = 0;
+  for (let k = 0; k <= 400; k++) {
+    const t = t0 - 0.1 + ((span + 0.2) * k) / 400;
+    const truthValue = curve.kind === "spring" ? springAt(curve.stiffness, curve.damping, t - t0) : bezierAt(curve.bezier, (t - t0) / length);
+    const fitted = fittedAt(p.curve, (t - p.start) / Math.max(1e-6, p.end - p.start), p.end - p.start);
+    worst = Math.max(worst, Math.abs(fitted - truthValue));
+  }
+  return worst;
+}
+
+/** One tracked clip compared with its truth. */
+function trackRow(base, result, curve, truth, fps, property) {
+  const track = result?.structuredContent?.track;
+  const p = track?.properties?.find((q) => q.property === property);
+  const row = { ...base, expected: curve.kind, kind: p?.curve.kind ?? "none", quality: p?.quality ?? "—", startError: p ? p.start * fps - truth.startFrame : null };
+  if (!p) {
+    row.fitted = track?.unfitted?.map((u) => `${u.property}: ${u.reason}`).join("; ") || (result?.isError ? "error" : "not found");
+    return row;
+  }
+  row.shapeError = shapeError(p, curve, truth, fps);
+  if (curve.kind === "bezier") {
+    row.durationError = p.frames - truth.moveFrames;
+    row.controlError = p.curve.kind === "bezier" ? Math.max(...p.curve.bezier.map((c, i) => Math.abs(c - curve.bezier[i]))) : null;
+    row.fitted = p.curve.kind === "bezier" ? `cubic-bezier(${p.curve.bezier.join(", ")})` : p.curve.kind;
+  } else {
+    row.stiffnessError = p.curve.kind === "spring" ? Math.abs(p.curve.stiffness - curve.stiffness) / curve.stiffness : null;
+    row.dampingError = p.curve.kind === "spring" ? Math.abs(p.curve.damping - curve.damping) / curve.damping : null;
+    row.fitted = p.curve.kind === "spring" ? `stiffness ${p.curve.stiffness}, damping ${p.curve.damping}` : p.curve.kind;
+  }
+  row.rmse = p.rmse;
+  return row;
 }
 
 const rows = [];
 const cutErrors = [];
 const trackRows = [];
+const varietyRows = [];
 const server = startServer(work);
 let id = 1;
 try {
@@ -142,23 +212,22 @@ try {
         const file = join(work, `t-${fps}-${condition.noise}-${condition.busy ? "busy" : "plain"}-${curve.name.replace(/\W+/g, "_")}.mp4`);
         const truth = await trackClip(file, fps, curve, condition);
         const result = await call(server, id++, "track", { source: file, start: 0, end: truth.seconds });
-        const track = result?.structuredContent?.track;
-        const x = track?.properties?.find((p) => p.property === "x");
-        const row = { fps, condition: condition.name, curve: curve.name, expected: curve.kind, kind: x?.curve.kind ?? "none", startError: x ? (x.start * fps - truth.startFrame) : null };
-        if (x && curve.kind === "bezier") {
-          row.durationError = x.frames - truth.moveFrames;
-          row.controlError = x.curve.kind === "bezier" ? Math.max(...x.curve.bezier.map((c, i) => Math.abs(c - curve.bezier[i]))) : null;
-          row.fitted = x.curve.kind === "bezier" ? `cubic-bezier(${x.curve.bezier.join(", ")})` : x.curve.kind;
-        }
-        if (x && curve.kind === "spring") {
-          row.stiffnessError = x.curve.kind === "spring" ? Math.abs(x.curve.stiffness - curve.stiffness) / curve.stiffness : null;
-          row.dampingError = x.curve.kind === "spring" ? Math.abs(x.curve.damping - curve.damping) / curve.damping : null;
-          row.fitted = x.curve.kind === "spring" ? `stiffness ${x.curve.stiffness}, damping ${x.curve.damping}` : x.curve.kind;
-        }
-        row.rmse = x?.rmse ?? null;
+        const row = trackRow({ fps, condition: condition.name, curve: curve.name }, result, curve, truth, fps, "x");
         trackRows.push(row);
         console.error(`track ${fps} fps, ${condition.name}, ${curve.name}: ${row.fitted ?? row.kind}`);
       }
+    }
+  }
+
+  for (const condition of VARIETY_CONDITIONS) {
+    for (const v of VARIETY) {
+      const fps = 30;
+      const file = join(work, `v-${condition.busy ? "busy" : "plain"}-${v.name.replace(/\W+/g, "_")}.mp4`);
+      const truth = await trackClip(file, fps, v.curve, condition, v);
+      const result = await call(server, id++, "track", { source: file, start: 0, end: truth.seconds, ...(v.box && { element: v.box }) });
+      const row = trackRow({ fps, condition: condition.name, curve: v.name }, result, v.curve, truth, fps, v.property);
+      varietyRows.push(row);
+      console.error(`variety ${condition.name}, ${v.name}: ${row.fitted ?? row.kind} (${row.quality})`);
     }
   }
 } finally {
@@ -191,7 +260,7 @@ const trackSummary = TRACK_CONDITIONS.map((c) => {
   const spr = all.filter((r) => r.expected === "spring" && r.kind === "spring");
   const timed = all.filter((r) => r.startError !== null);
   const durations = all.filter((r) => r.durationError !== undefined && r.durationError !== null).map((r) => Math.abs(r.durationError));
-  return `| ${c.name} | ${all.filter((r) => r.kind === r.expected).length} of ${all.length} | ${f3(mean(bez.map((r) => r.controlError)))} / ${f3(max(bez.map((r) => r.controlError)))} | ${f2(mean(durations))} / ${f2(max(durations))} | ${f2(mean(timed.map((r) => Math.abs(r.startError))))} / ${f2(max(timed.map((r) => Math.abs(r.startError))))} | ${pct(mean(spr.map((r) => r.stiffnessError)))} / ${pct(mean(spr.map((r) => r.dampingError)))} |`;
+  return `| ${c.name} | ${all.filter((r) => r.kind === r.expected).length} of ${all.length} | ${pct(mean(all.filter((r) => r.shapeError !== undefined).map((r) => r.shapeError)))} / ${pct(max(all.filter((r) => r.shapeError !== undefined).map((r) => r.shapeError)))} | ${f3(mean(bez.map((r) => r.controlError)))} / ${f3(max(bez.map((r) => r.controlError)))} | ${f2(mean(durations))} / ${f2(max(durations))} | ${f2(mean(timed.map((r) => Math.abs(r.startError))))} / ${f2(max(timed.map((r) => Math.abs(r.startError))))} | ${pct(mean(spr.map((r) => r.stiffnessError)))} / ${pct(mean(spr.map((r) => r.dampingError)))} |`;
 });
 
 const md = `# Accuracy
@@ -231,13 +300,33 @@ damped springs (stiffness/damping 170/12 and 100/10, mass 1), at 24, 30 and 60 f
 antialiasing and encoded as H.264: clean, with pixel noise, and over a busy textured background with noise. \`track\`
 finds the square on its own (\`element: auto\`) and fits its x curve. ${trackRows.length} clips.
 
-| Condition | Model chosen right | Bezier control points, mean / max error | Duration error, mean / max (frames) | Start error, mean / max (frames) | Spring stiffness / damping, mean error |
-|---|---|---|---|---|---|
+| Condition | Model chosen right | Shape error, mean / max | Bezier control points, mean / max error | Duration error, mean / max (frames) | Start error, mean / max (frames) | Spring stiffness / damping, mean error |
+|---|---|---|---|---|---|---|
 ${trackSummary.join("\n")}
 
-Durations and control points are compared for the beziers; a spring is defined by its stiffness and damping, so those
-are compared instead (its length on the timeline is the time it takes to settle within 0.5 % of the travel). Targets
-for clean renders: duration within one frame, control points within 0.05.
+The shape error is the largest gap between the fitted and the true motion over time, as a share of the travel: it
+covers shape and timing together, and it is the number that matters, since different control points can draw nearly
+the same curve (CSS \`ease-out\` and a fitted \`cubic-bezier(0.31, 0.51, 0.73, 1)\` differ by about 1 %). Durations and
+control points are also compared for the beziers; a spring is defined by its stiffness and damping, so those are
+compared instead (its length on the timeline is the time it takes to settle within 0.5 % of the travel). Targets for
+clean renders: duration within one frame, control points within 0.05.
+
+### Other motion (30 fps)
+
+Other directions, the y axis, a diagonal spring, scale, a fade-in, a fade-out and a window that is mostly rest after
+the move; clean and over the busy background with noise. The element is found automatically except for the fade-out,
+which ends invisible (a box is given). ${varietyRows.length} clips.
+
+| Condition | Motion | Property | Chosen | Quality | Shape error | Duration error (frames) | Start error (frames) | Spring k / c error |
+|---|---|---|---|---|---|---|---|---|
+${varietyRows.map((r) => `| ${r.condition} | ${r.curve} | ${VARIETY.find((v) => v.name === r.curve)?.property} | ${r.kind} | ${r.quality} | ${pct(r.shapeError ?? NaN)} | ${f2(r.durationError ?? NaN)} | ${f2(r.startError ?? NaN)} | ${r.stiffnessError !== undefined ? `${pct(r.stiffnessError ?? NaN)} / ${pct(r.dampingError ?? NaN)}` : "—"} |`).join("\n")}
+
+Scale is measured to about 1–2 % of its value and opacity from the element's brightness against its surroundings, so
+their curves are less exact than position (here the duration of a scale or opacity move is off by up to about 2.6
+frames, while position stays within a frame): read the shape error above, and the fit error \`track\` reports.
+Springs with a damping ratio of about 0.85 or more barely overshoot (under 1 % of the travel): they are reported as
+the cubic-bezier that matches them within the stated error, not as a spring. Moves of 5 frames or fewer are marked
+unreliable: too short to tell curves apart.
 
 Limits: these renders are a sharp-edged square without motion blur, moving in a straight line over a static
 background. Real footage adds motion blur, rotation, occlusion, a moving camera and elements that change shape; the
@@ -246,12 +335,13 @@ measure of how well the curve explains that footage.
 
 <details><summary>Every tracked clip</summary>
 
-| fps | condition | curve | chosen | fitted | control error | duration error (frames) | start error (frames) | fit error |
-|---|---|---|---|---|---|---|---|---|
-${trackRows.map((r) => `| ${r.fps} | ${r.condition} | ${r.curve} | ${r.kind} | ${r.fitted ?? "—"} | ${f3(r.controlError ?? NaN)} | ${f2(r.durationError ?? NaN)} | ${f2(r.startError ?? NaN)} | ${pct(r.rmse ?? NaN)} |`).join("\n")}
+| fps | condition | curve | chosen | fitted | shape error | control error | duration error (frames) | start error (frames) | fit error |
+|---|---|---|---|---|---|---|---|---|---|
+${[...trackRows, ...varietyRows].map((r) => `| ${r.fps} | ${r.condition} | ${r.curve} | ${r.kind} | ${r.fitted ?? "—"} | ${pct(r.shapeError ?? NaN)} | ${f3(r.controlError ?? NaN)} | ${f2(r.durationError ?? NaN)} | ${f2(r.startError ?? NaN)} | ${pct(r.rmse ?? NaN)} |`).join("\n")}
 
 </details>
 `;
 if (!TRACK_ONLY) writeFileSync(join(repo, "docs", "ACCURACY.md"), md);
 console.log(md.split("<details>")[0]);
-console.log(["| Condition | Model | Control mean / max | Duration mean / max | Start mean / max | Spring k / c |", "|---|---|---|---|---|---|", ...trackSummary].join("\n"));
+console.log(["| Condition | Model | Shape mean / max | Control mean / max | Duration mean / max | Start mean / max | Spring k / c |", "|---|---|---|---|---|---|---|", ...trackSummary].join("\n"));
+console.log(varietyRows.map((r) => `${r.condition} | ${r.curve} | ${r.kind} | ${r.quality} | shape ${pct(r.shapeError ?? NaN)} | dur ${f2(r.durationError ?? NaN)} | ${r.fitted}`).join("\n"));

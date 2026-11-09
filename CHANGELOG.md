@@ -11,8 +11,11 @@
 - `export` uses a tracked curve wherever one exists: CSS `cubic-bezier()` / `linear()` for springs / `steps()`,
   Remotion `Easing.bezier` or `spring({config})`, exact GSAP eases in HyperFrames, After Effects keyframe speed and
   influence (a key per frame for springs, held keys for steps), and Lottie handles.
-- The accuracy benchmark adds rendered moves with known beziers and springs: see
-  [docs/ACCURACY.md](docs/ACCURACY.md).
+- Each fitted curve carries its error and a quality grade (`exact` ≤ 1 %, `approximate` ≤ 3 %, else `unreliable`);
+  a move cut by the window widens the window (or is reported as cut), and moves of 5 frames or fewer are marked
+  unreliable. Only exact and approximate curves reach `export`.
+- The accuracy benchmark adds rendered moves with known beziers and springs in several directions, scale, opacity,
+  on a busy background and with the element found automatically: see [docs/ACCURACY.md](docs/ACCURACY.md).
 
 ## 2.0.0 — 2026-11-09
 

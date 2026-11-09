@@ -35,8 +35,10 @@ deferred, load them with ToolSearch query `framelens` first.
    For the moves that matter, run `track` after `style` (`move: n`, or `start`/`end`; `element: "auto"`, or a box
    when several things move): it follows the element frame by frame and fits its exact curve per property (x, y,
    scale, opacity) as a `cubic-bezier`, a spring (stiffness, damping, mass) or steps, with the fit error, duration
-   and delay, in `TRACK.md`. Positions and times are measured; the curve is derived, so quote its error. `export`
-   then uses the tracked curve instead of the easing family.
+   and delay, in `TRACK.md`. Positions and times are measured; the curve is derived, so quote its error and quality
+   (`exact`, `approximate`, `unreliable`). `export` then uses exact and approximate curves instead of the easing
+   family; unreliable ones (above 3 % error, cut by the window, 5 frames or shorter) are reported only. When `auto`
+   picks the wrong thing or reports few matched frames, pass a box around the element.
 7. **Rebuild** in the user's tool: `export` with `hyperframes`, `remotion`, `css`, `after-effects`, `lottie` or
    `hypit`. It carries structure, timing, colours and eases; put the user's own content in place of the placeholders.
    Never copy the reference's footage, logos or people. After rendering, `compare` the render with the reference and
