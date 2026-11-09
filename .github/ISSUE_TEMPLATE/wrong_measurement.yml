@@ -1,0 +1,67 @@
+name: Wrong measurement
+description: A cut, timing, easing curve, colour, beat or word time that does not match the source.
+labels: ["measurement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Measurements are only as good as the cases they are checked against, so these reports are very welcome.
+        The source and the value you expected are what make one fixable. The known error margins are in
+        [docs/ACCURACY.md](https://github.com/Makkov-design/framelens/blob/main/docs/ACCURACY.md).
+  - type: input
+    id: source
+    attributes:
+      label: Source
+      description: A public link (with a timestamp if you can), or attach the file further down. For a website, the page URL; for Lottie, Rive or Figma, the file or the link.
+      placeholder: https://www.youtube.com/watch?v=...&t=26
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What is wrong
+      options:
+        - A cut or shot boundary (missed, extra or on the wrong frame)
+        - Move timing (start or duration)
+        - Easing curve or spring (track or style)
+        - Colour or palette
+        - Beat, tempo or loudness (audio)
+        - Word or caption timing (transcript)
+        - An exact source read wrong (web, Lottie, Rive, Figma)
+        - The export does not match the measurement
+        - Something else
+    validations:
+      required: true
+  - type: input
+    id: tool
+    attributes:
+      label: Tool and arguments
+      placeholder: 'track { "source": "...", "start": 25.5, "end": 27.5, "element": "auto" }'
+    validations:
+      required: true
+  - type: textarea
+    id: got
+    attributes:
+      label: What Frame Lens reported
+      description: The value with its evidence label (measured, derived or inferred), and the fit error or quality grade if there is one.
+      placeholder: "ease-in, 23 frames, cubic-bezier(0.7, 0, 0.84, 0), start 26.04 s, quality exact"
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: The value you expected, and how you know it
+      description: The ground truth and where it comes from (your own render settings, the After Effects or CSS source, frame-stepping in a player, the cut frame number).
+      placeholder: "The CSS is cubic-bezier(0.16, 1, 0.3, 1) over 500 ms (from the site source). The cut is on frame 662 (stepped in a player)."
+    validations:
+      required: true
+  - type: textarea
+    id: files
+    attributes:
+      label: File or workspace output
+      description: Drag in the clip (a few seconds around the moment are enough), a screenshot of the frames, or motion-spec.json and TRACK.md from the workspace.
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of npx -y framelens doctor
+      render: text
