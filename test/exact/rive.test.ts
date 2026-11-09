@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Engine } from "../../src/engine.js";
@@ -136,6 +136,8 @@ describe("Rive binary reader", () => {
   it("rejects what is not a Rive file, other format versions and cut headers", () => {
     expect(() => readRive(Buffer.from("{\"v\":\"5.7\"}"))).toThrow(/not a Rive file/);
     expect(() => readRive(riv({ major: 6, objects: [] }))).toThrow(/version 6\.0 is not supported/);
+    // A short older file still reports its version, not a cut header: the version is checked before the rest.
+    expect(() => readRive(Uint8Array.from([...Buffer.from("RIVE"), 6, 1]))).toThrow(/version 6\.1 is not supported/);
     expect(() => readRive(Uint8Array.from([...Buffer.from("RIVE"), 7]))).toThrow(/cut short inside its header/);
     expect(() => readRive(Uint8Array.from([...Buffer.from("RIVE"), 7, 0, 1, 0x88, 0x27]))).toThrow(/cut short inside its header/);
     const big = new Uint8Array(MAX_RIVE_BYTES + 1);
@@ -231,7 +233,168 @@ describe("Rive file to moves, palette and state machines", () => {
     expect(first!.target).toBe("B/A"); // the parent cycle stops instead of looping
     expect(first!.bezier).toEqual([1, 0, 0, 1]); // x control points clamped to 0–1
     expect(second!.curve).toBe("linear"); // an interpolator id pointing at a node
+    expect(second!.evidence).toBe("inferred"); // a stand-in curve is not a measurement
+    expect(first!.evidence).toBe("measured");
     expect(h.analysis.unknowns.some((u) => /Node is not evaluated: treated as linear/.test(u))).toBe(true);
+  });
+});
+
+describe("Rive playback timing, text styles and ids", () => {
+  it("plays the work area at |speed|, backwards for negative speed, cutting curves exactly at the edges", () => {
+    const b: [number, number, number, number] = [0.25, 0.1, 0.25, 1];
+    const timed = (speed: number): Obj[] => [
+      [1, [[4, "string", "Main"]]],
+      [2, [[4, "string", "Ball"], [5, "uint", 0]]],
+      [28, [[63, "double", b[0]], [64, "double", b[1]], [65, "double", b[2]], [66, "double", b[3]]]],
+      [31, [[55, "string", "Run"], [56, "uint", 10], [57, "uint", 40], [58, "double", speed], [60, "uint", 10], [61, "uint", 30], [62, "bool", true]]],
+      [25, [[51, "uint", 1]]],
+      [26, [[53, "uint", 13]]],
+      [30, [[67, "uint", 0], [68, "uint", 1], [70, "double", 0]]],
+      [30, [[67, "uint", 20], [68, "uint", 2], [69, "uint", 2], [70, "double", 100]]],
+      [30, [[67, "uint", 40], [70, "double", 300]]],
+      [26, [[53, "uint", 41]]],
+      [84, [[67, "uint", 15], [181, "bool", true]]],
+      [84, [[67, "uint", 25], [181, "bool", false]]],
+    ];
+    const original = (f: number) => (f <= 20 ? f * 5 : 100 + bezierAt(b, (f - 20) / 20) * 200);
+    const valueAt = (m: { start: number; end: number; from: (number | string)[]; to: (number | string)[]; bezier?: [number, number, number, number] }, t: number) => {
+      const p = (t - m.start) / (m.end - m.start);
+      const y = m.bezier ? bezierAt(m.bezier, p) : p;
+      return Number(m.from[0]) + y * (Number(m.to[0]) - Number(m.from[0]));
+    };
+
+    // Forward at 2×: frames 10–30 of a 10 fps animation take (30 − 10) / 10 / 2 = 1 s; frame f plays at (f − 10) / 20 s.
+    const fwd = parseRive(riv({ objects: timed(2) }), { input: "t.riv" }).analysis;
+    expect(fwd.end).toBe(1);
+    const [a, c] = fwd.moves.filter((m) => m.property === "position.x");
+    expect(a).toMatchObject({ start: 0, end: 0.5, from: [50], to: [100], curve: "linear", evidence: "measured" });
+    expect(c).toMatchObject({ start: 0.5, end: 1, from: [100], evidence: "measured" });
+    for (const f of [22, 25, 28]) expect(Math.abs(valueAt(c!, (f - 10) / 20) - original(f))).toBeLessThan(0.5);
+    // A hold keeps its value from frame 15 and jumps at frame 25: 0.25–0.75 s.
+    expect(fwd.moves.find((m) => m.property === "visible")).toMatchObject({ start: 0.25, end: 0.75, hold: true, from: ["true"], to: ["false"] });
+
+    // Backwards at −2×: playback starts at frame 30 and frame f plays at (30 − f) / 20 s.
+    const back = parseRive(riv({ objects: timed(-2) }), { input: "t.riv" }).analysis;
+    expect(back.end).toBe(1);
+    const xs = back.moves.filter((m) => m.property === "position.x");
+    expect(xs.map((m) => [m.start, m.end, m.to[0]])).toEqual([[0, 0.5, 100], [0.5, 1, 50]]);
+    for (const f of [22, 25, 28]) expect(Math.abs(valueAt(xs[0]!, (30 - f) / 20) - original(f))).toBeLessThan(0.5);
+    // Played backwards, the hold at frame 25 changes the value back to true when playback reaches it.
+    expect(back.moves.find((m) => m.property === "visible")).toMatchObject({ start: 0.25, end: 0.25, hold: true, from: ["false"], to: ["true"] });
+  });
+
+  it("reads text sizes and fonts from TextStylePaint and resolves font ids into the file's assets", () => {
+    const r = parseRive(
+      riv({
+        objects: [
+          [141, [[203, "string", "Bodoni"], [204, "uint", 1]]],
+          [106, [[212, "bytes", new Uint8Array(10)]]],
+          [141, [[203, "string", "Emoji"], [204, "uint", 2]]],
+          [1, [[4, "string", "Main"]]],
+          [134, [[5, "uint", 0]]],
+          [137, [[5, "uint", 1], [274, "double", 48], [279, "uint", 0]]],
+          [135, [[5, "uint", 1], [268, "string", "hi"], [272, "uint", 2]]],
+          [31, [[55, "string", "Swap"], [56, "uint", 30], [57, "uint", 30]]],
+          [25, [[51, "uint", 2]]],
+          [26, [[53, "uint", 279]]],
+          [50, [[67, "uint", 0], [122, "uint", 0]]],
+          [50, [[67, "uint", 15], [122, "uint", 1]]],
+          [25, [[51, "uint", 0]]],
+          [26, [[53, "uint", 118]]],
+          [450, [[67, "uint", 0], [68, "uint", 1], [631, "uint", 0]]],
+          [450, [[67, "uint", 10], [631, "uint", 255]]],
+          [26, [[53, "uint", 125]]],
+          [450, [[67, "uint", 0], [68, "uint", 1], [631, "uint", 3]]],
+          [450, [[67, "uint", 10], [631, "uint", 6]]],
+        ],
+      }),
+      { input: "fonts.riv", title: "fonts" },
+    );
+    const a = r.analysis;
+    expect(a.title).toBe("fonts");
+    expect(a.texts).toEqual([{ text: "hi", family: "Bodoni", size: 48, where: "Text" }]);
+    expect(a.fonts).toEqual(["Bodoni", "Emoji"]);
+    expect(a.unknowns.some((u) => /TextStylePaint/.test(u))).toBe(false);
+    expect(a.moves.find((m) => m.property === "font")).toMatchObject({ target: "Text/TextStylePaint", from: ["Bodoni"], to: ["Emoji"], hold: true });
+    // Colour channels interpolate (CoreRegistry::isInterpolatableUint); other uints step.
+    expect(a.moves.find((m) => m.property === "colour red")).toMatchObject({ from: [0], to: [255], hold: false, curve: "linear" });
+    expect(a.moves.find((m) => m.property === "points")).toMatchObject({ from: [3], to: [6], hold: true });
+    expect(riveMarkdown(r)).toContain("- FontAsset `Bodoni` (embedded, 10 bytes)");
+  });
+
+  it("places unknown objects where the runtime's importers do, so state and input ids still line up", () => {
+    const r = parseRive(
+      riv({
+        objects: [
+          [1, [[4, "string", "Main"]]],
+          [2, [[4, "string", "Ball"], [5, "uint", 0]]],
+          [31, [[55, "string", "A"]]],
+          [25, [[51, "uint", 1]]],
+          [26, [[53, "uint", 13]]],
+          [9000], // swallowed by the keyed property importer: takes no artboard slot
+          [30, [[67, "uint", 0], [68, "uint", 1], [70, "double", 0]]],
+          [30, [[67, "uint", 30], [70, "double", 10]]],
+          [31, [[55, "string", "B"]]],
+          [53, [[55, "string", "SM"]]],
+          [59, [[138, "string", "hover"]]],
+          [9001], // after the state machine: a null input that still takes index 1
+          [56, [[138, "string", "level"]]],
+          [57, [[138, "string", "L"]]],
+          [63],
+          [65, [[151, "uint", 3]]],
+          [71, [[155, "uint", 1], [156, "uint", 0]]],
+          [70, [[155, "uint", 2], [156, "uint", 5], [157, "double", 1]]],
+          [9002], // inside a layer: an empty state that still takes index 1
+          [61, [[149, "uint", 0]]],
+          [61, [[149, "uint", 1]]],
+        ],
+      }),
+      { input: "sm.riv" },
+    );
+    const ab = r.model.artboards[0]!;
+    expect(ab.objects.map((o) => o?.type ?? null)).toEqual([1, 2]);
+    const m = ab.machines[0]!;
+    expect(m.inputs.map((i) => (i ? i.type : null))).toEqual([59, null, 56]);
+    expect(m.layers[0]!.states.map((s) => s.type)).toEqual([63, -1, 61, 61]);
+    const md = riveMarkdown(r);
+    expect(md).toContain("Inputs: `hover` (boolean, starts false), an input of a type this reader does not know, `level` (number, starts 0).");
+    expect(md).toContain("- Entry → animation `B`, blend 0 ms (linear), when input 1 (a type this reader does not know) is true and `level` > 1");
+  });
+
+  it("escapes names in STYLE.md and RIVE.md so they cannot add markup, links or table columns", async () => {
+    const evil = "Anim <b>bold</b> [c](https://evil.example) x|y *em*";
+    const bytes = riv({
+      objects: [
+        [1, [[4, "string", "Main"]]],
+        [2, [[4, "string", evil], [5, "uint", 0]]],
+        [31, [[55, "string", evil], [56, "uint", 10], [57, "uint", 10]]],
+        [25, [[51, "uint", 1]]],
+        [26, [[53, "uint", 13]]],
+        [30, [[67, "uint", 0], [68, "uint", 1], [70, "double", 0]]],
+        [30, [[67, "uint", 10], [70, "double", 5]]],
+        [25, [[51, "uint", 99]]],
+      ],
+    });
+    const dir = tempDir();
+    try {
+      const path = join(dir, "evil.riv");
+      writeFileSync(path, bytes);
+      const r = await runExact({ source: path, root: dir, version: "test" });
+      for (const file of [r.files.style!, r.files.rive!]) {
+        const md = readFileSync(file, "utf8");
+        // Outside code spans, nothing from the file may become HTML, a link, emphasis or a new table column.
+        const prose = md.replace(/`[^`\n]*`/g, "");
+        expect(prose).not.toMatch(/(^|[^\\])(<b>|\]\(|\*em)|https:\/\//);
+      }
+      const style = readFileSync(r.files.style!, "utf8");
+      // The move row keeps its 6 columns: the pipe in the name is escaped.
+      const row = style.split("\n").find((l) => l.startsWith("| 0.00–1.00 s"))!;
+      expect(row.split(/(?<!\\)\|/)).toHaveLength(8);
+      expect(style).toContain("Anim \\<b\\>bold\\</b\\> \\[c\\](https:\\/\\/evil.example) x\\|y \\*em\\*");
+      expect(readFileSync(r.files.rive!, "utf8")).toContain("- Anim \\<b\\>bold\\</b\\> \\[c\\](https:\\/\\/evil.example) x\\|y \\*em\\*: keys an object id 99");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -246,17 +409,26 @@ describe("real Rive files (rive-app/rive-runtime test assets, MIT)", () => {
     expect(anim.workArea).toEqual({ start: 5, end: 53 });
     expect(r.model.typeCounts.get(138)).toBe(3); // three CubicValueInterpolators, as cubic_value_test.cpp requires
     const moves = r.analysis.moves.filter((m) => m.target === "grey_rectangle" && m.property === "position.x");
-    expect(moves.map((m) => [m.startFrame, m.endFrame])).toEqual([[2, 10], [10, 24], [24, 37], [37, 53], [53, 56]]);
+    // The runtime plays only the work area, frames 5–53: keyframes at 2–10 are cut at 5, 53–56 never play.
+    // Spec frames are playback frames, so local frame f sits at f − 5.
+    expect(moves.map((m) => [m.startFrame, m.endFrame])).toEqual([[0, 5], [5, 19], [19, 32], [32, 48]]);
+    expect(r.analysis.end).toBe(0.8);
+    expect(r.analysis.unknowns).toContain("Timeline 1: 1 keyframe segment(s) outside the work area, which the runtime never plays: left out");
     expect(moves[1]).toMatchObject({ from: [435.974], to: [333.981], curve: "cubic-bezier(0.174, 2.446, 0.58, 1)", evidence: "measured" });
-    // cubic_value_test.cpp: x is 290.71 at frame 15 and 363.01 at frame 11.
     const at = (frame: number) => {
       const m = moves.find((x) => x.startFrame <= frame && frame <= x.endFrame)!;
       const p = (frame - m.startFrame) / (m.endFrame - m.startFrame);
       return Number(m.from[0]) + bezierAt(m.bezier!, p) * (Number(m.to[0]) - Number(m.from[0]));
     };
-    expect(Math.abs(at(15) - 290.71)).toBeLessThan(0.3);
-    expect(Math.abs(at(11) - 363.01)).toBeLessThan(0.3);
-    expect(riveMarkdown(r)).toContain("| `New Artboard` | `Timeline 1` | 60 | 60 frames (1 s) | 0.08–0.88 s | one shot | 1× | 1 | 5 | 0 | 0–1 s |");
+    // cubic_value_test.cpp: x is 290.71 at frame 15 and 363.01 at frame 11.
+    expect(Math.abs(at(15 - 5) - 290.71)).toBeLessThan(0.3);
+    expect(Math.abs(at(11 - 5) - 363.01)).toBeLessThan(0.3);
+    // The cut segment is the same curve: its start value and its shape match the uncut keyframes 2–10.
+    const original = (f: number) => 179.387 + bezierAt([0.42, 0, 0.58, 1], (f - 2) / 8) * (435.974 - 179.387);
+    expect(Math.abs(Number(moves[0]!.from[0]) - original(5))).toBeLessThan(0.01);
+    expect(moves[0]!.to).toEqual([435.974]);
+    for (const f of [5.5, 7, 9]) expect(Math.abs(at(f - 5) - original(f))).toBeLessThan(0.3);
+    expect(riveMarkdown(r)).toContain("| `New Artboard` | `Timeline 1` | 60 | 60 frames (1 s) | 0.08–0.88 s | one shot | 1× | 1 | 4 | 0 | 0–0.8 s |");
   });
 
   it("light_switch.riv: the state machine, its boolean input and the poses it blends between", () => {
@@ -286,9 +458,10 @@ describe("exact on a .riv, then export", () => {
     const r = await runExact({ source: path, root: dir, version: "test", exportTarget: "css" });
     expect(r.ws.id).toMatch(/^rive-/);
     expect(r.spec.source.kind).toBe("rive");
-    expect(r.spec.events).toHaveLength(5);
+    expect(r.spec.events).toHaveLength(4);
     expect(r.spec.events[1]).toMatchObject({ suggestion: "cubic-bezier(0.174, 2.446, 0.58, 1)", evidence: "measured", property: "position.x" });
-    expect(r.spec.timebase).toMatchObject({ fps: 60, width: 500, height: 500, duration: 1 });
+    expect(r.spec.timebase).toMatchObject({ fps: 60, width: 500, height: 500, duration: 0.8 });
+    expect(r.spec.source.title).toBe("cubic_value_test"); // the file's name, not the default "New Artboard"
     expect(readFileSync(r.files.rive!, "utf8")).toContain("## State machines");
     expect(readFileSync(r.files.style!, "utf8")).toContain("cubic-bezier(0.174, 2.446, 0.58, 1)");
     expect(r.exported!.files.some((f) => f.endsWith(".css"))).toBe(true);
@@ -306,8 +479,9 @@ describe("exact on a .riv, then export", () => {
     expect(out.ws.id).toBe(r.ws.id);
     expect(out.files.some((f) => f.endsWith("timing.ts"))).toBe(true);
     const timing = readFileSync(out.files.find((f) => f.endsWith("timing.ts"))!, "utf8");
-    // The starter takes each scene's entrance from its first move: grey_rectangle's frames 2–10.
-    expect(timing).toMatch(/"enterAt": 2,\s+"enterFrames": 8/);
+    // The starter takes each scene's entrance from its first move: grey_rectangle's first 5 played frames.
+    expect(timing).toMatch(/"enterAt": 0,\s+"enterFrames": 5/);
+    expect(timing).toContain("DURATION_IN_FRAMES = 48;");
     expect(exportSpec(r.spec, "after-effects", join(dir, "ae"), { workspace: r.ws.dir }).length).toBeGreaterThan(0);
   });
 

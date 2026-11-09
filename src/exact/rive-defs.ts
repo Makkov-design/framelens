@@ -22,6 +22,19 @@ export const FIELD_RANGES: Record<RiveField, string> = {
 /** Object types that take a slot in their artboard's object list (components, interpolators, inputs); ids point into that list. */
 export const SLOT_TYPE_RANGES = "2-8,16-20,22,24,28,34-35,40-49,51-52,81-83,87-89,92,95-96,98,100,108-109,111-112,122-124,127-131,134-135,137-138,140,144,147-148,158-159,162-165,174,407,409,420,426,428,432-433,437,441-442,444,449,451-452,491,493-495,501,506-508,513,521-522,533,547-548,559,566,569,571-575,586-587,592,599,603,606,611-613,616,618-619,621,625-627,631,637,640,644-645,648,653,663-664,668,670,972,974,1035,1039,1044,1057-1058,1066,1068-1069";
 
+/** Concrete subtypes (by the defs' extends chain) of the classes the reader groups by. */
+export const STATE_TYPE_RANGES = "61-64,73,76,528";
+export const INPUT_TYPE_RANGES = "56,58-59";
+export const TEXT_STYLE_TYPE_RANGES = "137,573";
+export const FILE_ASSET_TYPE_RANGES = "105,119-120,132-133,141,406,529,558,642,649,651,970,1042,1071";
+export const INTERPOLATOR_TYPE_RANGES = "28,138,174,972";
+
+/** Id properties that point into the file's asset list (FileAssetReferencer) or its artboard list (artboard referencers). */
+export const ASSET_ID_KEYS = "206,279,408,848,892,912,930-931,1015";
+export const ARTBOARD_ID_KEYS = "197,858,876,934";
+/** Uint properties whose keyframes interpolate (CoreRegistry::isInterpolatableUint: ColorChannels red, green, blue, alpha). */
+export const INTERPOLATABLE_UINT_KEYS = "118,136,210,218";
+
 /** Names of the concrete object types, for summaries of what a file holds. */
 export const TYPE_NAMES: Record<number, string> = {
   1: "Artboard",

@@ -25,7 +25,7 @@ export interface ExactMove {
   /** For Figma: what starts it (ON_CLICK, AFTER_TIMEOUT, …). */
   trigger?: string;
   /** "measured" = read from the source data; "derived" = a named preset mapped to its usual curve. */
-  evidence: "measured" | "derived";
+  evidence: "measured" | "derived" | "inferred";
 }
 
 export interface ExactShot {
