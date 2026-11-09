@@ -47,7 +47,7 @@ export interface Scene {
    * neighbouring shot (the incoming scene starts with the transition, the outgoing one stays until it ends).
    */
   show: { start: number; end: number };
-  /** The scene appears over the previous one with a measured dissolve (its opacity) or wipe (an edge reveals it). */
+  /** The scene appears over the previous one with a derived dissolve (its opacity) or wipe (an edge reveals it). */
   reveal?: SceneReveal;
   /** A fade in from black or white (a veil of that colour clears) and fade out to it (the veil covers), derived. */
   fadeIn?: SceneFade;
