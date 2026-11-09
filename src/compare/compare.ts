@@ -30,7 +30,7 @@ export interface Comparison {
 export function parseSsim(text: string, rate: number): SimilaritySample[] {
   const samples: SimilaritySample[] = [];
   for (const line of text.split("\n")) {
-    const m = /n:(\d+).*All:([\d.]+)/.exec(line);
+    const m = /n:(\d+).*All:([\d.]+(?:[eE][-+]?\d+)?)/.exec(line);
     if (m) samples.push({ t: Math.round(((Number(m[1]) - 1) / rate) * 1000) / 1000, ssim: Number(m[2]) });
   }
   return samples;

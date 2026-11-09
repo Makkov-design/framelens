@@ -174,7 +174,8 @@ describe("exporters with tracked curves", () => {
   it("lottie: bezier handles for t1, a keyframe per frame for the spring, held keys for steps", () => {
     const doc = lottieDocument(tracked());
     type Key = { t: number; s: number[]; o?: { x: number[]; y: number[] }; i?: { x: number[]; y: number[] }; h?: number };
-    const shapes = (doc.layers as unknown as { ty: number; ks: { p: { k: Key[] } } }[]).filter((l) => l.ty === 4);
+    // Layers are top-first (later shots above earlier ones): put them back in shot order.
+    const shapes = (doc.layers as unknown as { ty: number; ip: number; ks: { p: { k: Key[] } } }[]).filter((l) => l.ty === 4).sort((a, b) => a.ip - b.ip);
     const first = shapes[0]!.ks.p.k[0]!;
     expect([first.o!.x[0], first.o!.y[0], first.i!.x[0], first.i!.y[0]]).toEqual([0.7, 0.1, 0.2, 0.95]);
     expect(shapes[1]!.ks.p.k.length).toBeGreaterThan(10);

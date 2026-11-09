@@ -18,12 +18,14 @@ import { inboxContents, inboxNote, newestInboxItem, newestInboxReading } from ".
 import { matchCuts, paletteDistance, similarity, verdict, type Comparison } from "./compare/compare.js";
 import { exportSpec, type ExportTarget } from "./export/exporters.js";
 import { onBeatRatio } from "./audio/dsp.js";
-import { classifyChanges, energySpikeCuts, motionEnergy, motionEvents } from "./style/motion.js";
+import { classifyChanges, energySpikeCuts, frameAt, motionEvents, motionProfile } from "./style/motion.js";
 import { mergePalettes, palette } from "./style/palette.js";
+import { detectTransitions, visibleMoves } from "./style/transitions.js";
 import {
   ANALYSIS_SKELETON,
   buildSpec,
   framePixels,
+  paletteTimes,
   shotsFromCuts,
   styleMarkdown,
   timelineMarkdown,
@@ -292,28 +294,52 @@ export class Engine {
     const { transcript } = await this.transcript(source);
     const { boundaries } = await this.boundaries(input, { start, end, rate: 10, threshold: 0.3 });
     const fps = probe.fps ?? probe.nominalFps ?? 30;
-    const energy = await motionEnergy(record.mediaPath, this.options.tools, range);
+    const { energy, frames, skipped } = await motionProfile(record.mediaPath, this.options.tools, range, {
+      hdr: probe.hdr,
+      expectedFrames: Math.ceil((end - start) * fps * 1.05) + 30,
+    });
+    if (skipped) notes.push("This range is too long to keep every frame in memory: transitions were not looked for and shot colours come from a few frames each; analyze it in parts (start/end) for those.");
     ws.writeJson(`energy-${start.toFixed(2)}-${end.toFixed(2)}.json`, energy);
-    const classified = classifyChanges(boundaries.candidates, energy, fps, 1 / boundaries.rate);
+    // The frames tell a flash (the picture comes back) from a 2–3 frame shot between two cuts.
+    const classified = classifyChanges(boundaries.candidates, energy, fps, 1 / boundaries.rate, frames);
     // Isolated per-frame spikes catch the cuts the sampled score missed (similar-looking shots).
-    const extra = energySpikeCuts(energy)
-      .filter((s) => !classified.some((c) => Math.abs(c.t - s.t) <= 2 / fps))
+    // A classified change sits on its peak frame: only a spike on that same frame is the same change (a 2-frame shot
+    // puts two real cuts two frames apart).
+    const extra = energySpikeCuts(energy, 6, frames)
+      .filter((s) => !classified.some((c) => Math.abs(c.t - s.t) < 0.5 / fps))
       .map((s) => ({ ...s, kind: "cut" as const }));
     const changes = [...classified, ...extra].sort((a, b) => a.t - b.t);
     const cutTimes = changes.filter((c) => c.kind === "cut").map((c) => c.t);
 
+    // Dissolves, fades and wipes change the whole picture over several frames: transitions, not moves. Moves are
+    // found again without their frames, and the shots split at them.
+    const transitions = detectTransitions(frames, fps, { cuts: cutTimes, windows: motionEvents(energy, cutTimes, fps) });
+    const events = visibleMoves(motionEvents(energy, cutTimes, fps, { exclude: transitions }), frames);
+    // A fade in from the first frame or out to the last one belongs to its shot: it starts no new one.
+    const firstFrame = frames.times[0] ?? start;
+    const lastFrame = frames.times.at(-1) ?? end;
+    const edges = [...cutTimes, ...transitions.map((x) => x.at).filter((t) => t > firstFrame + 0.5 / fps && t < lastFrame - 0.5 / fps)].sort((a, b) => a - b);
+
     const tmp = ws.ensure("frames", "palette");
     const shots: Shot[] = [];
-    for (const [i, s] of shotsFromCuts(cutTimes, range, fps).entries()) {
-      let pixels = await framePixels(record.mediaPath, (s.start + s.end) / 2, probe, this.options.tools, tmp);
+    for (const [i, s] of shotsFromCuts(edges, range, fps).entries()) {
+      // Colours over the shot's own frames, not one frame from its middle (which may be halfway through a dissolve):
+      // the decoded frames (tone-mapped for HDR in the same pass), or a few seeks when the range was too long to keep them.
+      const parts: Uint8Array[] = [];
+      if (frames.times.length) for (const t of paletteTimes(s, transitions, fps, 24)) parts.push(frameAt(frames, t));
+      else {
+        for (const t of paletteTimes(s, transitions, fps)) {
+          const pixels = await framePixels(record.mediaPath, t, probe, this.options.tools, tmp);
+          if (pixels.length) parts.push(pixels);
+        }
+      }
       // A one-frame shot has no frame at or after its middle; its only frame is at the start.
-      if (!pixels.length) pixels = await framePixels(record.mediaPath, s.start, probe, this.options.tools, tmp);
-      shots.push({ id: `s${i + 1}`, start: s.start, end: s.end, frames: Math.round((s.end - s.start) * fps), palette: palette(pixels, 5) });
+      if (!parts.some((p) => p.length)) parts.push(await framePixels(record.mediaPath, s.start, probe, this.options.tools, tmp));
+      shots.push({ id: `s${i + 1}`, start: s.start, end: s.end, frames: Math.round((s.end - s.start) * fps), palette: palette(Buffer.concat(parts), 5) });
     }
     const overall = mergePalettes(shots.map((s) => ({ swatches: s.palette, weight: s.end - s.start })));
-    const events = motionEvents(energy, cutTimes, fps);
 
-    const spec = buildSpec({ record, probe, range, changes, shots, overall, events, version: options.version, ...(transcript && { transcript }) });
+    const spec = buildSpec({ record, probe, range, changes, shots, overall, events, transitions, version: options.version, ...(transcript && { transcript }) });
     // Tracked moves outlive a new style pass: they are measured on their own windows.
     const tracks = ws.readJson<TrackedMove[]>("tracks.json");
     if (tracks?.length) linkTracks(spec, tracks);
@@ -324,7 +350,7 @@ export class Engine {
     };
     const analysis = ws.path("ANALYSIS.md");
     files.analysis = existsSync(analysis) ? analysis : ws.writeText("ANALYSIS.md", ANALYSIS_SKELETON(record.title ?? record.input));
-    this.progress(ws, `style: ${shots.length} shots, ${events.length} moves, ${overall.length} palette colours (${start.toFixed(2)}–${end.toFixed(2)} s)${notes.length ? `; ${notes.join(" ")}` : ""}`);
+    this.progress(ws, `style: ${shots.length} shots, ${transitions.length} gradual transitions, ${spec.events.length} moves, ${overall.length} palette colours (${start.toFixed(2)}–${end.toFixed(2)} s)${notes.length ? `; ${notes.join(" ")}` : ""}`);
     return { source, spec, files };
   }
 

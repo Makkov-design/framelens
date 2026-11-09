@@ -70,22 +70,83 @@ export function sheetTokens(cells: number, columns = 4, cellWidth = 320, cellHei
   return Math.ceil((cols * cellWidth) / 28) * Math.ceil((rows * cellHeight) / 28);
 }
 
-/** Windows of the video where the picture changes most, to look at closely. */
+const r2 = (n: number) => Math.round(n * 100) / 100;
+
+/**
+ * Windows of the video where the picture changes most (by the summed strength of its changes), to look at closely.
+ * They never overlap, and windows that touch are joined into one.
+ */
 export function busiestWindows(boundaries: Boundaries | undefined, duration: number, width = 8, count = 3): { start: number; end: number }[] {
-  if (!boundaries?.candidates.length) return [{ start: 0, end: Math.min(duration, width) }];
+  if (!boundaries?.candidates.length) return [{ start: 0, end: r2(Math.min(duration, width)) }];
   const windows = boundaries.candidates.map((c) => {
     const start = Math.max(0, Math.min(c.t - 1, duration - width));
     const end = Math.min(duration, start + width);
-    return { start, end, score: boundaries.candidates.filter((d) => d.t >= start && d.t < end).length };
+    return { start, end, score: boundaries.candidates.filter((d) => d.t >= start && d.t < end).reduce((s, d) => s + d.score, 0) };
   });
   windows.sort((a, b) => b.score - a.score || a.start - b.start);
   const chosen: { start: number; end: number }[] = [];
   for (const w of windows) {
     if (chosen.length >= count) break;
     if (chosen.some((c) => w.start < c.end && w.end > c.start)) continue;
-    chosen.push({ start: Math.round(w.start * 100) / 100, end: Math.round(w.end * 100) / 100 });
+    chosen.push({ start: r2(w.start), end: r2(w.end) });
   }
-  return chosen.sort((a, b) => a.start - b.start);
+  return joinWindows(chosen, 0);
+}
+
+/** Joins windows that overlap or lie within `gap` seconds of each other. */
+export function joinWindows<T extends { start: number; end: number }>(windows: T[], gap: number, merge?: (a: T, b: T) => T): T[] {
+  const out: T[] = [];
+  for (const w of [...windows].sort((a, b) => a.start - b.start)) {
+    const last = out.at(-1);
+    if (last && w.start <= last.end + gap + 1e-9) {
+      const joined = merge ? merge(last, w) : last;
+      out[out.length - 1] = { ...joined, start: last.start, end: Math.max(last.end, w.end) };
+    } else out.push({ ...w });
+  }
+  return out;
+}
+
+/** How many ×10 passages and every-frame windows a video of this length gets, and how long a passage is. */
+export function loupeBudget(duration: number): { passages: number; passageSeconds: number; dense: number } {
+  return {
+    // One to three ×10 passages, each about 12 % of the video (2–8 s): 24 % of a 33 s piece, 20 % of a 2 min one.
+    passages: duration <= 20 ? 1 : duration <= 90 ? 2 : 3,
+    passageSeconds: Math.min(8, Math.max(2, Math.round(duration * 0.12))),
+    // One every-frame window per 8 s, at least 2, at most 8.
+    dense: Math.min(8, Math.max(2, Math.round(duration / 8))),
+  };
+}
+
+/** Longest every-frame window: a longer stretch of change is split into windows of this length. */
+export const MAX_DENSE_SECONDS = 2;
+
+/**
+ * Every-frame windows around the strongest changes: one second around each, windows that overlap or touch joined,
+ * longer stretches split into windows of at most `MAX_DENSE_SECONDS`, the `count` strongest kept in time order.
+ */
+export function denseWindows(list: { t: number; score: number }[], duration: number, count: number): { start: number; end: number; peak: number; changes: number }[] {
+  const around = list.map((c) => ({ start: Math.max(0, c.t - 0.5), end: Math.min(duration, c.t + 0.5), peak: c.t, score: c.score, changes: 1 }));
+  const joined = joinWindows(around, 0.1, (a, b) => ({ ...a, peak: b.score > a.score ? b.peak : a.peak, score: Math.max(a.score, b.score), changes: a.changes + b.changes }));
+  // A long burst of changes is split into windows of at most `MAX_DENSE_SECONDS`, each scored by its own strongest
+  // change, so a busy stretch can use several windows of the budget instead of one.
+  const pieces = joined.flatMap((w) => {
+    const n = Math.ceil((w.end - w.start) / MAX_DENSE_SECONDS - 1e-9);
+    if (n <= 1) return [w];
+    const length = (w.end - w.start) / n;
+    return Array.from({ length: n }, (_, i) => {
+      const start = w.start + i * length;
+      const end = i === n - 1 ? w.end : start + length;
+      const inside = list.filter((c) => c.t >= start && c.t < end + (i === n - 1 ? 1e-9 : 0));
+      const best = inside.reduce<{ t: number; score: number } | undefined>((b, c) => (!b || c.score > b.score ? c : b), undefined);
+      return { ...w, start, end, peak: best?.t ?? (start + end) / 2, score: best?.score ?? 0 };
+    });
+  });
+  return pieces
+    .sort((a, b) => b.score - a.score || a.start - b.start)
+    .slice(0, count)
+    .sort((a, b) => a.start - b.start)
+    // How many changes the (possibly shortened) window still holds.
+    .map((w) => ({ start: r2(w.start), end: r2(w.end), peak: w.peak, changes: list.filter((c) => c.t >= w.start && c.t <= w.end).length }));
 }
 
 /** Most `track` steps a plan lists; the rest are named in a note. */
@@ -101,7 +162,16 @@ function addTrackSteps(steps: PlanStep[], notes: string[], moves: { start: numbe
     notes.push("style found no moves to track; pass start and end to `track` around a move you can see.");
     return;
   }
-  const open = moves.map((m, i) => ({ ...m, number: i + 1 })).filter((m) => !m.tracked);
+  // A spec from an older run may list the same move twice: track it once.
+  const seen = new Set<string>();
+  const open = moves
+    .map((m, i) => ({ ...m, number: i + 1 }))
+    .filter((m) => {
+      const key = `${Math.round(m.start * 1000)}|${Math.round(m.end * 1000)}|${m.frames}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return !m.tracked;
+    });
   const chosen = [...open].sort((a, b) => b.frames - a.frames || a.start - b.start).slice(0, MAX_TRACK_STEPS).sort((a, b) => a.start - b.start);
   for (const m of chosen) {
     steps.push({ tool: "track", args: { move: m.number, element: "auto" }, why: `exact curve of the move at ${m.start.toFixed(2)}–${m.end.toFixed(2)} s (${m.frames} frames); pass a box when several things move` });
@@ -135,10 +205,16 @@ export function buildPlan(input: {
   let frames = 0;
   let sheets = 0;
   let imageTokens = 0;
-  const addSheets = (n: number) => {
+  // Cells as `frames` draws them: 320 px wide (240 from six columns), the picture's own shape, a 56 px label strip.
+  const aspect = probe.width && probe.height ? probe.height / probe.width : 9 / 16;
+  const addSheets = (n: number, columns = 4, rows = 4) => {
+    if (n <= 0) return;
+    const per = columns * rows;
+    const width = columns >= 6 ? 240 : 320;
+    const height = Math.round(width * aspect) + 56;
     frames += n;
-    sheets += Math.ceil(n / 16);
-    imageTokens += Math.floor(n / 16) * sheetTokens(16) + (n % 16 ? sheetTokens(n % 16) : 0);
+    sheets += Math.ceil(n / per);
+    imageTokens += Math.floor(n / per) * sheetTokens(per, columns, width, height) + (n % per ? sheetTokens(n % per, columns, width, height) : 0);
   };
   const overviewEvery = Math.max(1, Math.round((d / 24) * 10) / 10);
 
@@ -150,7 +226,7 @@ export function buildPlan(input: {
     case "listen":
       if (!probe.hasVideo) break;
       steps.push({ tool: "frames", args: { every: overviewEvery, columns: 4, rows: 6 }, why: "one overview sheet: who is speaking, slides, setting" });
-      addSheets(Math.min(24, Math.ceil(d / overviewEvery)));
+      addSheets(Math.min(24, Math.ceil(d / overviewEvery)), 4, 6);
       notes.push("The transcript carries the content; frames are only context.");
       break;
     case "learn":
@@ -161,7 +237,7 @@ export function buildPlan(input: {
       break;
     case "find":
       steps.push({ tool: "frames", args: { around: input.phrase ?? "<phrase>", fps: 2, columns: 4, rows: 3 }, why: "frames around the place the phrase is spoken" });
-      addSheets(12);
+      addSheets(12, 4, 3);
       break;
     case "style": {
       if (still) {
@@ -172,21 +248,28 @@ export function buildPlan(input: {
         break;
       }
       steps.push({ tool: "boundaries", args: { rate: 10, threshold: 0.3 }, why: "every cut and abrupt change, to a tenth of a second" });
-      const overview = Math.min(120, Math.ceil(d / 0.5));
-      steps.push({ tool: "frames", args: { every: Math.max(0.5, Math.round((d / 120) * 10) / 10), columns: 4, rows: 4 }, why: "loupe ×1: the whole piece, its systems and rhythm" });
-      addSheets(overview);
-      for (const w of busiestWindows(boundaries, d)) {
-        steps.push({ tool: "frames", args: { start: w.start, end: w.end, fps: 10, columns: 4, rows: 4 }, why: "loupe ×10: the busiest passage" });
+      const every = Math.max(0.5, Math.round((d / 120) * 10) / 10);
+      steps.push({ tool: "frames", args: { every, columns: 4, rows: 4 }, why: "loupe ×1: the whole piece, its systems and rhythm" });
+      addSheets(Math.min(120, Math.ceil(d / every)));
+      // The loupe is bounded by the video's length: about an eighth of it at ×10, a handful of every-frame windows
+      // around the strongest changes, none of them overlapping.
+      const budget = loupeBudget(d);
+      for (const w of busiestWindows(boundaries, d, Math.min(d, budget.passageSeconds), budget.passages)) {
+        steps.push({ tool: "frames", args: { start: w.start, end: w.end, fps: 10, columns: 4, rows: 4 }, why: "loupe ×10: one of the busiest passages" });
         addSheets(Math.ceil((w.end - w.start) * 10));
       }
-      const events = (boundaries?.candidates ?? []).slice(0, 12);
-      for (const e of events) {
-        steps.push({ tool: "frames", args: { start: Math.max(0, e.t - 0.5), end: Math.min(d, e.t + 0.5), every_frame: true, columns: 6, rows: 4 }, why: `loupe ×60: every frame around the change at ${e.t} s` });
-        addSheets(Math.ceil(probe.fps ?? 30));
+      const candidates = boundaries?.candidates ?? [];
+      const dense = denseWindows(candidates, d, budget.dense);
+      const fps = probe.fps ?? probe.nominalFps ?? 30;
+      for (const w of dense) {
+        const around = w.changes > 1 ? `${w.changes} changes around ${w.peak} s` : `the change at ${w.peak} s`;
+        steps.push({ tool: "frames", args: { start: w.start, end: w.end, every_frame: true, columns: 6, rows: 4 }, why: `loupe ×60: every frame of ${around}` });
+        addSheets(Math.ceil((w.end - w.start) * fps), 6, 4);
       }
-      steps.push({ tool: "style", args: {}, why: "palette, shots, systems, STYLE.md and motion-spec.json (2.1)" });
+      steps.push({ tool: "style", args: {}, why: "palette, shots, transitions, moves, STYLE.md and motion-spec.json" });
       addTrackSteps(steps, notes, input.moves);
-      if ((boundaries?.candidates.length ?? 0) > events.length) notes.push(`${boundaries!.candidates.length - events.length} more changes: inspect them the same way if they matter.`);
+      const covered = candidates.filter((c) => dense.some((w) => c.t >= w.start && c.t <= w.end)).length;
+      if (candidates.length > covered) notes.push(`${candidates.length - covered} more changes: inspect them the same way (every_frame around them) if they matter.`);
       break;
     }
     case "sound":

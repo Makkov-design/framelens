@@ -57,6 +57,43 @@
   Lottie spec. Hard limits on file size, object count and string length; names are treated as untrusted text.
 - `STYLE.md` from `exact` (Lottie and Figma too) escapes names and text from the file as Markdown, so they cannot add
   links, HTML or table columns.
+- `style` reports transitions: cuts (`measured`) and dissolves, fades in and out, dips through black or white and wipes
+  (`derived`), each with start, end, duration in frames, the shot boundary, the colour or direction and the blend's
+  easing, in `transitions` of `motion-spec.json`, `STYLE.md` and `TIMELINE.md`. Shots split at a dissolve's halfway
+  frame and a fade's black or white frame; a fade from the first frame or to the last splits nothing, nor does a flash
+  after which the picture comes back; cuts stay exact. Dissolves are frames that blend two different pictures (not one
+  picture relit, recoloured, white-balanced or panning); fades are also found by the picture approaching flat black or
+  white, so they are caught on footage that keeps moving; wipes are looked for in every run of changing frames, and a
+  flat panel sliding in stays a move. On the Big Buck Bunny trailer the title cards are shots of their own again
+  (dissolves at 3.48–4.44 s and 6.24–7.12 s, five dips to black at 18.88–22.88 s, a flash to white at 26.72 s), and
+  the opening title's fade from white and the end card's fade to white are found. A push is not recognised (reported
+  as a move). The benchmark adds 60 rendered transitions: see [docs/ACCURACY.md](docs/ACCURACY.md).
+- `style` no longer lists the same move twice (two bursts of motion that grew over the same slow frames), and moves
+  leave out transition frames and still frames whose change is only grain. Exporters and `plan` drop duplicates from
+  older specs.
+- Shot palettes and backgrounds come from the shot's own frames over its whole length (outside its transitions), not
+  from one frame at its middle: a title card that dissolves into the film is white, not the blend. The frames come
+  from the same decoding pass as the per-frame change, through a pipe (tone-mapped for HDR, so HDR shots need no
+  extra seeks); a range too long to keep them gets the per-frame change only, with a note to analyze it in parts.
+- `plan` for the style goal stays proportionate: one to three ×10 passages of about 12 % of the video each (2–8 s;
+  24 % of the 33 s trailer in all), every-frame windows around the strongest changes (one per 8 s of video, 2–8 of
+  them) joined when they overlap or touch and split into windows of at most 2 s, and the estimate counts frames and
+  tokens per sheet layout. On the 33 s trailer: 272 frames and 22,417 image tokens, down from 606 frames and 63,043.
+- ffmpeg numbers in scientific notation are read whole: signalstats prints tiny averages as `6.94444e-05`, which
+  2.0 read as 6.94, so a still frame with a few changed pixels became a false cut (six on Frame Lens's own demo) and
+  moves on flat graphics looked stronger. Fixed in every ffmpeg log Frame Lens parses (energy, scene scores, frame
+  times, SSIM, loudness, silences).
+- A 2–3 frame shot between two cuts is no longer taken for a flash: a flash returns to the picture it left, a short
+  shot does not, and `style` now compares those frames. Montage cuts are found (the benchmark adds a montage of 2- and
+  3-frame shots with flashes in it). A cut inside part of the frame only is still judged on the whole frame (a limit,
+  in ACCURACY.md).
+- `export` animates only what Frame Lens read from the reference: titles move where `style` found a move (easing
+  family derived) or `track` fitted a curve, dissolves are cross-fades and fades and dips go through black or white,
+  each with its own colour and easing (CSS keyframes, HyperFrames tweens, Remotion opacity, After Effects and Lottie
+  opacity keys; a wipe is a clip-path edge where the target has one; in After Effects each title sits above its own
+  shot, so a dissolve covers the outgoing title too). Shots without a move hold still instead of getting an invented
+  0.2 s entrance; REFERENCE.md says what is derived and lists what is a default. A spec whose `transitions` is not a
+  list, or lies outside the range, is cleaned instead of crashing the export.
 
 ## 2.0.0 — 2026-11-09
 

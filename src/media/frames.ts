@@ -61,7 +61,7 @@ export function parseShowinfo(stderr: string): number[] {
   const times: number[] = [];
   for (const line of stderr.split("\n")) {
     if (!line.includes("Parsed_showinfo")) continue;
-    const match = /pts_time:\s*(-?[\d.]+)/.exec(line);
+    const match = /pts_time:\s*(-?[\d.]+(?:[eE][-+]?\d+)?)/.exec(line);
     if (match) times.push(Number(match[1]));
   }
   return times;

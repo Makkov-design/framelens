@@ -10,6 +10,7 @@ import { EXPORT_TARGETS } from "./export/exporters.js";
 import { GOALS } from "./router/plan.js";
 import { collectSetupNotes, setupNotesOf } from "./tools/setup.js";
 import { curveLabel } from "./track/curve.js";
+import { transitionName } from "./style/spec.js";
 
 /** Seconds with decimals (12.48), or M:SS(.mmm) / H:MM:SS(.mmm). */
 export function parseTime(value: string | number): number {
@@ -251,8 +252,9 @@ export function registerLocalTools(server: McpServer, engine: Engine, logger: Lo
     {
       title: "Measure the motion style",
       description:
-        "For replicating a look: finds cuts and shots, measures each shot's palette (OKLab, weighted by screen time), reads how much " +
-        "the picture changes on every frame, and lists the moves with their duration in frames and easing family. Writes " +
+        "For replicating a look: finds cuts and gradual transitions (dissolves, fades and dips through black or white, wipes) and " +
+        "the shots between them, measures each shot's palette over its own frames (OKLab, weighted by screen time), reads how " +
+        "much the picture changes on every frame, and lists the moves with their duration in frames and easing family. Writes " +
         "motion-spec.json (machine-readable, with word and cut anchors), STYLE.md, TIMELINE.md and ANALYSIS.md to the workspace. " +
         "Then look at the moves with `frames` every_frame, and complete the typography, systems and 'why it works' sections in those " +
         "files; re-running `style` only refreshes their measured blocks.",
@@ -273,12 +275,14 @@ export function registerLocalTools(server: McpServer, engine: Engine, logger: Lo
         const ws = source.ws;
         const families = new Map<string, number>();
         for (const e of spec.events) families.set(e.easing, (families.get(e.easing) ?? 0) + 1);
+        const gradual = (spec.transitions ?? []).filter((x) => x.kind !== "cut");
         const text = [
           sourceLine(source),
           "",
-          `Range ${spec.range.start.toFixed(2)}–${spec.range.end.toFixed(2)} s: ${spec.rhythm.cuts} cuts (${spec.rhythm.cutsPerMinute}/min), ${spec.shots.length} shots, median shot ${spec.rhythm.medianShotSeconds} s, ${spec.events.length} moves.`,
+          `Range ${spec.range.start.toFixed(2)}–${spec.range.end.toFixed(2)} s: ${spec.rhythm.cuts} cuts (${spec.rhythm.cutsPerMinute}/min), ${gradual.length} gradual transitions, ${spec.shots.length} shots, median shot ${spec.rhythm.medianShotSeconds} s, ${spec.events.length} moves.`,
           `Palette: ${spec.palette.map((p) => `${p.hex} ${(p.share * 100).toFixed(0)}%`).join(", ")}.`,
           `Easing families (derived): ${[...families.entries()].map(([k, v]) => `${v} ${k}`).join(", ") || "no moves found"}.`,
+          ...gradual.slice(0, 12).map((x) => `- ${transitionName(x)} ${x.start.toFixed(3)}–${x.end.toFixed(3)} s, ${x.frames} frames, shot boundary at ${x.at.toFixed(3)} s (derived)`),
           ...spec.events.slice(0, 12).map((e) => `- move ${e.start.toFixed(3)}–${e.end.toFixed(3)} s, ${e.frames} frames, ${e.easing}${e.suggestion ? ` (start from ${e.suggestion})` : ""}`),
           "",
           `Files: ${Object.values(files).map((f) => ws.display(f)).join(", ")}.`,
@@ -286,7 +290,7 @@ export function registerLocalTools(server: McpServer, engine: Engine, logger: Lo
         ].join("\n");
         return {
           content: [{ type: "text", text }],
-          structuredContent: { workspace: ws.dir, files, rhythm: spec.rhythm, palette: spec.palette, events: spec.events },
+          structuredContent: { workspace: ws.dir, files, rhythm: spec.rhythm, palette: spec.palette, transitions: spec.transitions ?? [], events: spec.events },
         };
       }),
   );
