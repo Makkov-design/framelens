@@ -33,7 +33,15 @@ export function frameFileName(t: number): string {
 }
 
 /** Works out the range and how many frames a request will produce, without running ffmpeg. */
+/** The one error for a request that names no way to sample, or more than one. */
+export const ONE_MODE =
+  "Choose exactly one of `at`, `every`, `fps` or `every_frame`. `around` (a phrase from the transcript) picks the range itself and takes " +
+  "`every`, `fps` or `every_frame` with it (4 frames a second when none is given), but not `at`.";
+
 export function planFrames(request: FrameRequest, probe: ProbeInfo): { start: number; end: number; count: number } {
+  const modes = [Boolean(request.at?.length), request.every !== undefined, request.fps !== undefined, Boolean(request.everyFrame)].filter(Boolean).length;
+  // `at` with `every` used to take the moments and drop `every` without a word.
+  if (modes !== 1) throw new InvalidInputError(ONE_MODE);
   if (request.at?.length) {
     const bad = request.at.find((t) => !(t >= 0) || t > probe.duration);
     if (bad !== undefined) throw new InvalidInputError(`Time ${bad} s is outside the video (0–${probe.duration.toFixed(2)} s).`);
@@ -42,8 +50,6 @@ export function planFrames(request: FrameRequest, probe: ProbeInfo): { start: nu
   const start = Math.max(0, request.start ?? 0);
   const end = Math.min(probe.duration, request.end ?? probe.duration);
   if (!(end > start)) throw new InvalidInputError(`Empty range: start ${start} s must be before end ${end} s.`);
-  const modes = [request.every !== undefined, request.fps !== undefined, Boolean(request.everyFrame)].filter(Boolean).length;
-  if (modes !== 1) throw new InvalidInputError("Choose exactly one of `at`, `every`, `fps` or `every_frame`.");
   const perSecond = request.everyFrame ? (probe.fps ?? probe.nominalFps ?? 30) : request.fps ?? 1 / request.every!;
   if (!(perSecond > 0) || perSecond > 240) throw new InvalidInputError("The sampling rate must be above 0 and at most 240 frames per second.");
   const count = Math.max(1, Math.ceil((end - start) * perSecond));

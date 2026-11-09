@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
-import { basename, extname, join, resolve } from "node:path";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { basename, extname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { InvalidInputError } from "../errors.js";
 import { parseVideoRef } from "../youtube.js";
@@ -58,7 +58,19 @@ export function classifyInput(rawInput: string, env: Env = process.env): Classif
     const ref = parseVideoRef(input);
     return { kind: "youtube", id: `yt-${ref.videoId}`, url: ref.url };
   }
-  throw new SourceError("file_missing", `Not a link and no such file: "${input.slice(0, 300)}". Check the path, or pass a YouTube link or ID.`);
+  throw new SourceError("file_missing", `Not a link and no such file: "${input.slice(0, 300)}". Check the path, or pass a YouTube link or ID.${relativeHint(input)}`);
+}
+
+/**
+ * A relative path is taken from the server's working folder, which is rarely the user's project: Claude Desktop starts
+ * servers in C:\Windows\System32 on Windows and in / on macOS.
+ */
+function relativeHint(input: string): string {
+  if (isAbsolute(input)) return "";
+  return (
+    ` A relative path is taken from the server's working folder, ${process.cwd()}, not from your project ` +
+    "(Claude Desktop starts servers in C:\\Windows\\System32 on Windows and in / on macOS): pass the file's absolute path."
+  );
 }
 
 function ytId(input: string): string {
@@ -92,28 +104,46 @@ function writeRecord(dir: string, record: SourceRecord): void {
  */
 export async function resolveSource(input: string, options: ResolveOptions): Promise<SourceRecord> {
   const env = options.env ?? process.env;
-  const log = options.log ?? (() => {});
   const target = classifyInput(input, env);
   const dir = join(resolve(options.workspaceRoot), target.id);
+  const existed = existsSync(dir);
   mkdirSync(dir, { recursive: true });
   const fetchedAt = new Date().toISOString();
-
-  if (target.kind === "file") {
-    const record: SourceRecord = {
-      id: target.id,
-      kind: "file",
-      input,
-      title: basename(target.path, extname(target.path)),
-      mediaPath: target.path,
-      fetchedAt,
-      tools: {},
-    };
-    writeRecord(dir, record);
-    // `inbox` took the newest video; say so when a page reading is there too.
-    const note = input.trim().replace(/^["']|["']$/g, "").toLowerCase() === "inbox" ? inboxNote(env, "media") : undefined;
-    return note ? { ...record, inboxNote: note } : record;
+  if (target.kind === "file") return recordFile(dir, target, input, fetchedAt, env);
+  try {
+    return await fetchLink(dir, target, input, fetchedAt, env, options);
+  } catch (error) {
+    // A link that could not be fetched leaves no empty workspace behind (only the one this call made).
+    if (!existed) rmSync(dir, { recursive: true, force: true });
+    throw error;
   }
+}
 
+function recordFile(dir: string, target: Extract<Classified, { kind: "file" }>, input: string, fetchedAt: string, env: Env): SourceRecord {
+  const record: SourceRecord = {
+    id: target.id,
+    kind: "file",
+    input,
+    title: basename(target.path, extname(target.path)),
+    mediaPath: target.path,
+    fetchedAt,
+    tools: {},
+  };
+  writeRecord(dir, record);
+  // `inbox` took the newest video; say so when a page reading is there too.
+  const note = input.trim().replace(/^["']|["']$/g, "").toLowerCase() === "inbox" ? inboxNote(env, "media") : undefined;
+  return note ? { ...record, inboxNote: note } : record;
+}
+
+async function fetchLink(
+  dir: string,
+  target: Exclude<Classified, { kind: "file" }>,
+  input: string,
+  fetchedAt: string,
+  env: Env,
+  options: ResolveOptions,
+): Promise<SourceRecord> {
+  const log = options.log ?? (() => {});
   const previous = readRecord(dir);
   if (previous && previous.id === target.id && previous.kind === target.kind && existsSync(previous.mediaPath)) {
     log(`Reusing ${previous.mediaPath}`);
