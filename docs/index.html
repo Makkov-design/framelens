@@ -72,31 +72,36 @@
       </div>
       <dl class="readout" data-readout aria-live="polite">
         <div><dt>Time</dt><dd class="num" data-r="time">26.50 s, frame 663</dd></div>
-        <div><dt>Shot</dt><dd class="num" data-r="shot">10 of 12, 3.96 s</dd></div>
-        <div><dt>Move</dt><dd class="num" data-r="move">ease-in, 23 frames, cubic-bezier(0.7, 0, 0.84, 0)</dd></div>
-        <div><dt>Palette</dt><dd class="num" data-r="palette">#FCFDFD, #2CA2CF</dd></div>
+        <div><dt>Shot</dt><dd class="num" data-r="shot">17 of 20, 0.72 s</dd></div>
+        <div><dt>Change</dt><dd class="num" data-r="move">move, ease-in, 15 frames, cubic-bezier(0.7, 0, 0.84, 0)</dd></div>
+        <div><dt>Palette</dt><dd class="num" data-r="palette">#F9E2D6</dd></div>
       </dl>
-      <figcaption id="loupe-cap">The Big Buck Bunny trailer, read by Frame Lens. Every mark on this ruler is its measurement.</figcaption>
+      <figcaption id="loupe-cap">The Big Buck Bunny trailer, read by Frame Lens: red cuts, pale fades and dissolves, green moves.</figcaption>
     </figure>
   </div>
 </section>
 
 <section class="versus" aria-labelledby="versus-h">
   <div class="container">
-    <h2 id="versus-h">A description says “quick”. Frame Lens says 23 frames.</h2>
+    <h2 id="versus-h">Frame Lens read our curve back within 0.18 px</h2>
     <div class="versus__grid">
       <div class="versus__said">
-        <p class="versus__label">Described in words</p>
-        <p class="versus__quote">A quick, smooth move.</p>
+        <p class="versus__label">What we animated in HyperFrames</p>
+        <p class="versus__truth num">cubic-bezier(0.22, 1, 0.36, 1)</p>
+        <p class="versus__label">640 px in 18 frames at 30 fps</p>
       </div>
       <dl class="versus__measured">
-        <div><dt>Starts</dt><dd class="num">26.04 s</dd></div>
-        <div><dt>Ends</dt><dd class="num">26.96 s</dd></div>
-        <div><dt>Length</dt><dd class="num">23 frames at 25 fps</dd></div>
-        <div><dt>Curve</dt><dd class="num">cubic-bezier(0.7, 0, 0.84, 0)</dd></div>
+        <div><dt>Measured curve</dt><dd class="num">cubic-bezier(0.231, 0.951, 0.384, 0.996)</dd></div>
+        <div><dt>Start</dt><dd class="num">10.600 s, 0 frames off</dd></div>
+        <div><dt>Largest gap on any frame</dt><dd class="num">0.18 px</dd></div>
+        <div><dt>Grade</dt><dd class="num">exact</dd></div>
       </dl>
     </div>
-    <p class="versus__note">Every number says how it was obtained: measured, derived or inferred.</p>
+    <video class="demo" controls preload="none" poster="assets/demo-poster.png" width="1920" height="1080" aria-label="Frame Lens demo, 28 seconds">
+      <source src="assets/demo.webm" type="video/webm">
+      <source src="assets/demo.mp4" type="video/mp4">
+    </video>
+    <p class="versus__note">The demo above was rendered, then measured by Frame Lens. A spring of stiffness 170 read back as 170.01.</p>
   </div>
 </section>
 
@@ -199,9 +204,9 @@
     <table class="readings">
       <thead><tr><th scope="col">Source</th><th scope="col">How</th><th scope="col">What Frame Lens read</th></tr></thead>
       <tbody>
-        <tr><th scope="row">The trailer above, a video file</th><td>From pixels</td><td class="num">12 shots, 11 cuts, 25 fps</td></tr>
+        <tr><th scope="row">The trailer above, a video file</th><td>From pixels</td><td class="num">20 shots, 11 cuts, 8 fades and dissolves</td></tr>
         <tr><th scope="row">A live website, makkov-harness</th><td>From the browser</td><td class="num">328 animations, mostly 500 ms on cubic-bezier(0.16, 1, 0.3, 1)</td></tr>
-        <tr><th scope="row">A Lottie file, our export read back</th><td>From keyframes</td><td class="num">y 600 to 540 in 23 frames, cubic-bezier(0.7, 0, 0.84, 0)</td></tr>
+        <tr><th scope="row">A Lottie file, our export read back</th><td>From keyframes</td><td>Its keyframes and curves, back exactly</td></tr>
         <tr><th scope="row">Rive files and Figma prototypes</th><td>From the file</td><td>Keyframes and transitions</td></tr>
         <tr><th scope="row">YouTube and most video sites</th><td>From pixels</td><td>Through a pinned yt-dlp</td></tr>
       </tbody>
@@ -211,13 +216,13 @@
 
 <section class="export" id="export" aria-labelledby="export-h">
   <div class="container">
-    <h2 id="export-h">The same 0.92-second move in five renderers</h2>
+    <h2 id="export-h">The measured move in five renderers</h2>
     <div class="export__grid">
     <div class="export__text">
-      <p>The move at 26.04 s, written for five renderers. Render yours, then <code>compare</code> names what drifted.</p>
+      <p>Frame Lens writes the curve it measured into each tool. Render yours, then <code>compare</code> names what drifted.</p>
       <figure class="curve">
-        <svg viewBox="0 0 400 280" role="img" aria-labelledby="curve-t"><title id="curve-t">Measured curve cubic-bezier(0.7, 0, 0.84, 0) over 23 frames</title><path class="axis" d="M20.0 260.0 H380.0 M20.0 260.0 V20.0"/><path class="handle" d="M20.0 260.0 L272.0 260.0 M380.0 20.0 L322.4 260.0"/><path class="path" d="M20.0 260.0 C272.0 260.0 322.4 260.0 380.0 20.0"/><circle class="dot" cx="20.0" cy="260.0" r="3.5"/><circle class="dot" cx="35.7" cy="260.0" r="3.5"/><circle class="dot" cx="51.3" cy="260.0" r="3.5"/><circle class="dot" cx="67.0" cy="259.9" r="3.5"/><circle class="dot" cx="82.6" cy="259.8" r="3.5"/><circle class="dot" cx="98.3" cy="259.6" r="3.5"/><circle class="dot" cx="113.9" cy="259.4" r="3.5"/><circle class="dot" cx="129.6" cy="258.9" r="3.5"/><circle class="dot" cx="145.2" cy="258.3" r="3.5"/><circle class="dot" cx="160.9" cy="257.3" r="3.5"/><circle class="dot" cx="176.5" cy="256.1" r="3.5"/><circle class="dot" cx="192.2" cy="254.3" r="3.5"/><circle class="dot" cx="207.8" cy="252.0" r="3.5"/><circle class="dot" cx="223.5" cy="248.8" r="3.5"/><circle class="dot" cx="239.1" cy="244.6" r="3.5"/><circle class="dot" cx="254.8" cy="239.0" r="3.5"/><circle class="dot" cx="270.4" cy="231.4" r="3.5"/><circle class="dot" cx="286.1" cy="221.2" r="3.5"/><circle class="dot" cx="301.7" cy="207.4" r="3.5"/><circle class="dot" cx="317.4" cy="188.4" r="3.5"/><circle class="dot" cx="333.0" cy="162.4" r="3.5"/><circle class="dot" cx="348.7" cy="126.8" r="3.5"/><circle class="dot" cx="364.3" cy="79.6" r="3.5"/><circle class="dot" cx="380.0" cy="20.0" r="3.5"/><circle class="knob" cx="272.0" cy="260.0" r="5"/><circle class="knob" cx="322.4" cy="260.0" r="5"/></svg>
-        <figcaption>Frames 651 to 674, placed on the fitted curve.</figcaption>
+        <svg viewBox="0 0 400 280" role="img" aria-labelledby="curve-t"><title id="curve-t">Measured positions of the square on each frame, on the fitted curve cubic-bezier(0.231, 0.951, 0.384, 0.996)</title><path class="axis" d="M20.0 260.0 H380.0 M20.0 260.0 V20.0"/><path class="handle" d="M20.0 260.0 L103.2 31.7 M380.0 20.0 L158.3 20.9"/><path class="path" d="M20.0 260.0 C103.2 31.7 158.3 20.9 380.0 20.0"/><circle class="dot" cx="20.0" cy="260.0" r="4"/><circle class="dot" cx="42.1" cy="203.1" r="4"/><circle class="dot" cx="64.3" cy="154.9" r="4"/><circle class="dot" cx="86.4" cy="116.6" r="4"/><circle class="dot" cx="108.5" cy="87.8" r="4"/><circle class="dot" cx="130.7" cy="66.9" r="4"/><circle class="dot" cx="152.8" cy="52.0" r="4"/><circle class="dot" cx="174.9" cy="41.5" r="4"/><circle class="dot" cx="197.0" cy="34.3" r="4"/><circle class="dot" cx="219.1" cy="29.3" r="4"/><circle class="dot" cx="241.2" cy="25.8" r="4"/><circle class="dot" cx="263.4" cy="23.5" r="4"/><circle class="dot" cx="285.5" cy="22.0" r="4"/><circle class="dot" cx="307.6" cy="21.1" r="4"/><circle class="dot" cx="329.8" cy="20.5" r="4"/><circle class="dot" cx="351.9" cy="20.2" r="4"/><circle class="dot" cx="374.0" cy="20.0" r="4"/><circle class="knob" cx="103.2" cy="31.7" r="5"/><circle class="knob" cx="158.3" cy="20.9" r="5"/></svg>
+        <figcaption>Dots: where the square was on each frame. Line: the fitted curve.</figcaption>
       </figure>
     </div>
     <div class="switch code-switch" data-switch>
@@ -229,34 +234,31 @@
         <button role="tab" type="button" id="x-lot" aria-controls="c-lot" aria-selected="false" tabindex="-1">Lottie</button>
       </div>
       <pre class="panel code" role="tabpanel" id="c-css" aria-labelledby="x-css" tabindex="0"><code><span class="c">/* motion.css */</span>
-#shot-10 { background: #FCFDFD;
-  animation: fl-show 3.96s linear 26s; }
-#shot-10 h1 { color: #2CA2CF;
-  animation: fl-enter 0.92s
-    cubic-bezier(0.7, 0, 0.84, 0) 26.04s both; }</code></pre>
+#shot-15 h1 { animation: fl-enter 0.542s
+  cubic-bezier(0.2312, 0.9511, 0.3843, 0.9964)
+  10.6s both; }</code></pre>
       <pre class="panel code" role="tabpanel" id="c-rem" aria-labelledby="x-rem" tabindex="0" hidden><code><span class="c">// src/timing.ts</span>
-{ id: "shot-10", from: 650,
-  durationInFrames: 99,
-  background: "#FCFDFD", accent: "#2CA2CF",
-  enterAt: 1, enterFrames: 23,
-  bezier: [0.7, 0, 0.84, 0] }</code></pre>
-      <pre class="panel code" role="tabpanel" id="c-hf" aria-labelledby="x-hf" tabindex="0" hidden><code><span class="c">&lt;!-- compositions/shot-10.html --&gt;</span>
-tl.fromTo("#shot-10-title",
+{ id: "shot-15", from: 317,
+  enterAt: 1, enterFrames: 16,
+  bezier: [0.2312, 0.9511, 0.3843, 0.9964] }</code></pre>
+      <pre class="panel code" role="tabpanel" id="c-hf" aria-labelledby="x-hf" tabindex="0" hidden><code><span class="c">&lt;!-- compositions/shot-15.html --&gt;</span>
+tl.fromTo("#shot-15-title",
   { opacity: 0, y: 60 },
-  { opacity: 1, y: 0, duration: 0.92,
-    ease: "power3.in" }, 0.04);</code></pre>
+  { opacity: 1, y: 0, duration: 0.542,
+    ease: flBezier(0.2312, 0.9511, 0.3843, 0.9964) },
+  0.033); // tracked t1</code></pre>
       <pre class="panel code" role="tabpanel" id="c-ae" aria-labelledby="x-ae" tabindex="0" hidden><code><span class="c">// framelens-reference.jsx</span>
-"keyStart": 26.04, "keyEnd": 26.96,
-"bezier": [0.7, 0, 0.84, 0],
-"positionEase": { "outSpeed": 0,
-  "outInfluence": 70,
-  "inSpeed": 407.6087, "inInfluence": 16 }</code></pre>
-      <pre class="panel code" role="tabpanel" id="c-lot" aria-labelledby="x-lot" tabindex="0" hidden><code><span class="c">// reference.json, frame 651 to 674</span>
-"o": { "a": 1, "k": [
-  { "t": 651, "s": [0],
-    "o": { "x": [0.7], "y": [0] },
-    "i": { "x": [0.84], "y": [0] } },
-  { "t": 674, "s": [100] } ] }</code></pre>
+"keyStart": 10.6, "keyEnd": 11.142,
+"bezier": [0.2312, 0.9511, 0.3843, 0.9964],
+"positionEase": { "outSpeed": 455.3972,
+  "outInfluence": 23.12,
+  "inSpeed": 0.6473, "inInfluence": 61.57 }</code></pre>
+      <pre class="panel code" role="tabpanel" id="c-lot" aria-labelledby="x-lot" tabindex="0" hidden><code><span class="c">// reference.json, frame 318 to 334</span>
+"p": { "a": 1, "k": [
+  { "t": 318, "s": [960, 600, 0],
+    "o": { "x": [0.2312], "y": [0.9511] },
+    "i": { "x": [0.3843], "y": [0.9964] } },
+  { "t": 334, "s": [960, 540, 0] } ] }</code></pre>
     </div>
     </div>
   </div>
