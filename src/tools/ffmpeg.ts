@@ -32,11 +32,11 @@ export interface FfmpegAsset {
 const RIEDL = "https://ffmpeg.martin-riedl.de/download";
 
 /**
- * The ffmpeg and ffprobe builds Frame Lens downloads when neither is installed: FFmpeg 9.0.2 (released 2026-09-20)
- * from the static builders linked on ffmpeg.org's download page, Gyan Doshi's essentials build for Windows (from his
- * GitHub release) and Martin Riedl's build server for macOS and Linux. Each archive was fetched once and hashed; the
- * hashes match the ones the builders publish (GitHub's asset digest, the server's .sha256 files). The binaries'
- * own hashes are checked again after unpacking.
+ * The ffmpeg and ffprobe builds Frame Lens downloads when they are not installed: FFmpeg 9.0.2 (released 2026-09-20).
+ * Windows: Gyan Doshi's essentials build, the one ffmpeg.org's download page links, from his GitHub release. macOS and
+ * Linux: Martin Riedl's build server, which keeps every release build (since 2022) with its SHA-256. Each archive was
+ * fetched once and hashed; the hashes match the ones the builders publish (GitHub's asset digest, the server's
+ * .sha256 files). The binaries' own hashes are checked again after unpacking.
  */
 export const FFMPEG_PIN: { version: string; assets: Record<string, FfmpegAsset> } = {
   version: "9.0.2",
@@ -109,7 +109,12 @@ export const FFMPEG_PIN: { version: string; assets: Record<string, FfmpegAsset> 
   },
 };
 
+/**
+ * The pinned build for a platform. The Linux one is linked against glibc (and libstdc++), so on Alpine and other musl
+ * systems there is none: ffmpeg comes from their own packages there.
+ */
 export function ffmpegAsset(platform: NodeJS.Platform = process.platform, arch: string = process.arch, pin = FFMPEG_PIN): FfmpegAsset | undefined {
+  if (platform === "linux" && process.platform === "linux" && !existsSync("/lib64/ld-linux-x86-64.so.2")) return undefined;
   return pin.assets[`${platform}-${arch}`];
 }
 

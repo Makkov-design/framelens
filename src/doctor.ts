@@ -2,6 +2,7 @@ import { hasLoginProfile } from "./browser/capture.js";
 import { findBrowser } from "./browser/cdp.js";
 import {
   autoInstallEnabled,
+  ffmpegAsset,
   FFMPEG_PIN,
   findTool,
   missingToolMessage,
@@ -80,7 +81,8 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<number> {
       const location = findTool(name, { env });
       if (!location) {
         out(`  [missing] ${name}: unlocks ${UNLOCKS[name]}`);
-        out(`            ${missingToolMessage(name)}`);
+        const pinned = name === "yt-dlp" ? Boolean(YTDLP_PIN.assets[`${process.platform}-${process.arch}` as keyof typeof YTDLP_PIN.assets]) : Boolean(ffmpegAsset());
+        out(`            ${autoInstallEnabled(env) && pinned ? "Downloaded automatically (pinned, verified) the first time a tool needs it; or: " : ""}${missingToolMessage(name)}`);
         continue;
       }
       const version = await readToolVersion(location, options.signal);

@@ -15,14 +15,17 @@ research and reasoning lives in the plan page; this file is what the code must f
    sequences; later Lottie, live web pages and Figma, whose exact animation data is read instead of measured.
 4. **Local and free first.** The npm core has no runtime dependencies (one esbuild bundle). ffmpeg/ffprobe,
    yt-dlp, whisper and the HyperFrames CLI are optional external tools found and checked by `framelens doctor`.
-   Gemini stays as an optional engine for cloud sessions and semantic descriptions.
+   A missing ffmpeg or yt-dlp is fetched automatically (pinned version, SHA-256 in the code, the agent is told;
+   `FRAMELENS_AUTO_INSTALL=0` turns it off). Gemini stays as an optional engine for cloud sessions and semantic
+   descriptions.
 5. **Results live on disk.** Each source gets a workspace folder; tools return a short summary plus paths, so a
    tool result stays far below the 25K-token MCP limit. The agent opens the sheets it needs.
 6. **The loupe.** Overview first (storyboard-like sampling), then 10 fps on chosen ranges, then every native frame
    ±0.5 s around events. Never dense sampling of a whole long video.
 7. **Honest access.** Only content the user can see, fetched the way the user can: file, public link, the user's
-   own cookies (opt-in), or later the user's own browser profile. Never bot-check or CAPTCHA evasion, client
-   impersonation of our own, online downloader sites, paid scrapers or account pools.
+   own cookies (opt-in), the user's own browser profile, the browser extension in the user's own browser (they
+   record what they watch), or the user's own self-hosted cobalt instance (opt-in). Never bot-check or CAPTCHA
+   evasion, client impersonation of our own, public online downloader sites, paid scrapers or account pools.
 8. **Understanding, not production.** We do not generate footage, voices or variants. We export specs and starter
    projects to renderers (HyperFrames, Remotion, CSS/Motion, later Lottie, After Effects, Hypit).
 
@@ -50,7 +53,9 @@ tree on abort). stdout is reserved for MCP: logs go to stderr through `logger.ts
 
 ## Workspace
 
-`<cwd>/.framelens/<id>/` unless `FRAMELENS_WORKSPACE` is set. `<id>`: `yt-<videoId>`, `file-<sha1 of path+size+mtime, 10 hex>`,
+`<cwd>/.framelens/<id>/` unless `FRAMELENS_WORKSPACE` is set; `~/.framelens/<id>/` when the working folder is a
+system folder (Windows folder, Program Files, a drive root, `/`, `/usr`, `/System`, …) or cannot be written to.
+Tool output always shows absolute paths. `<id>`: `yt-<videoId>`, `file-<sha1 of path+size+mtime, 10 hex>`,
 `url-<sha1 of url, 10 hex>`.
 
 ```
@@ -118,8 +123,10 @@ Roles use production vocabulary: A-roll, B-roll, Caption, Typography, MG, UI, SF
 
 Tiers, tried in order with a clear message when one fails: 0 file or inbox folder (`FRAMELENS_INBOX`, newest
 file) · 1 public link via pinned yt-dlp (gallery-dl optional fallback) · 2 opt-in cookies (Firefox profile or a
-cookies.txt path; Chrome/Edge on Windows cannot work) · 3 a dedicated Frame Lens browser profile (2.4) · 3+ a
-browser extension (2.5). One video per request, with pauses between requests.
+cookies.txt path; Chrome/Edge on Windows cannot work) · 3 a dedicated Frame Lens browser profile (2.4) · 3+ the
+browser extension (`extension/`, 2.1): the user records the tab or reads the page in their own browser, files go to
+`Downloads/FrameLens` and the `inbox` finds them. Links yt-dlp cannot fetch may go to the user's own cobalt instance
+(`FRAMELENS_COBALT_URL`), never after a bot check. One video per request, with pauses between requests.
 
 ## Engineering rules
 

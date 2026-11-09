@@ -79,14 +79,14 @@ export class ToolSetup {
         const result = await (this.options.prepareFfmpeg ?? prepareFfmpeg)(common);
         this.notes.push(
           `Automatic setup: ffmpeg and ffprobe were not installed, so Frame Lens downloaded FFmpeg ${result.version} ` +
-            `(${result.source}, SHA-256 verified) into ${result.ffmpeg.replace(/[\\/][^\\/]+$/, "")} and continued. ` +
+            `from ${result.source}, SHA-256 verified, into ${result.ffmpeg.replace(/[\\/][^\\/]+$/, "")} and continued. ` +
             "FRAMELENS_AUTO_INSTALL=0 turns this off.",
         );
       } else {
         const result = await (this.options.prepareYtDlp ?? prepareYtDlp)(common);
         this.notes.push(
           `Automatic setup: yt-dlp was not installed, so Frame Lens downloaded yt-dlp ${result.version} ` +
-            `(github.com/yt-dlp/yt-dlp, SHA-256 verified) to ${result.path} and continued. FRAMELENS_AUTO_INSTALL=0 turns this off.`,
+            `from github.com/yt-dlp/yt-dlp, SHA-256 verified, to ${result.path} and continued. FRAMELENS_AUTO_INSTALL=0 turns this off.`,
         );
       }
     } catch (error) {

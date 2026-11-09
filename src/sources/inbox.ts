@@ -1,4 +1,5 @@
-import { readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import { extname, join, resolve } from "node:path";
 import { readEnv, type Env } from "../tools/env.js";
 import { SourceError } from "./errors.js";
@@ -9,34 +10,76 @@ export const MEDIA_EXTENSIONS = new Set([
   ".gif", ".apng", ".webp",
 ]);
 
-/** The newest video or GIF in the folder named by FRAMELENS_INBOX. */
-export function newestInboxFile(env: Env): string {
-  const dir = readEnv(env, "FRAMELENS_INBOX");
-  if (!dir) {
-    throw new SourceError(
-      "inbox_empty",
-      "FRAMELENS_INBOX is not set. Set it to a folder where you drop downloaded videos (for example the folder your browser saves to), then use source \"inbox\".",
-    );
-  }
-  let names: string[];
-  try {
-    names = readdirSync(dir);
-  } catch {
-    throw new SourceError("inbox_empty", `FRAMELENS_INBOX points to "${dir}", which cannot be read.`);
-  }
-  let best: { path: string; mtime: number } | undefined;
-  for (const name of names) {
-    if (!MEDIA_EXTENSIONS.has(extname(name).toLowerCase())) continue;
-    const path = join(dir, name);
+/** What the Frame Lens browser extension names a page reading it saves. */
+export const READING_SUFFIX = ".framelens.json";
+
+/** The folder the browser extension saves into, inside the Downloads folder (FRAMELENS_DOWNLOADS overrides ~/Downloads). */
+export function extensionFolder(env: Env): string {
+  return join(readEnv(env, "FRAMELENS_DOWNLOADS") ?? join(homedir(), "Downloads"), "FrameLens");
+}
+
+/**
+ * Where the inbox looks: FRAMELENS_INBOX and its FrameLens subfolder, and Downloads/FrameLens, where the browser
+ * extension saves page readings and tab recordings. Only folders that exist.
+ */
+export function inboxFolders(env: Env): string[] {
+  const configured = readEnv(env, "FRAMELENS_INBOX");
+  const folders = [...(configured ? [configured, join(configured, "FrameLens")] : []), extensionFolder(env)].map((f) => resolve(f));
+  return [...new Set(folders)].filter((f) => {
     try {
-      const stat = statSync(path);
-      if (stat.isFile() && (!best || stat.mtimeMs > best.mtime)) best = { path, mtime: stat.mtimeMs };
+      return statSync(f).isDirectory();
     } catch {
-      // vanished while listing
+      return false;
+    }
+  });
+}
+
+function newest(folders: string[], wanted: (name: string) => boolean): string | undefined {
+  let best: { path: string; mtime: number } | undefined;
+  for (const dir of folders) {
+    let names: string[];
+    try {
+      names = readdirSync(dir);
+    } catch {
+      continue;
+    }
+    for (const name of names) {
+      if (!wanted(name)) continue;
+      const path = join(dir, name);
+      try {
+        const stat = statSync(path);
+        if (stat.isFile() && (!best || stat.mtimeMs > best.mtime)) best = { path, mtime: stat.mtimeMs };
+      } catch {
+        // vanished while listing
+      }
     }
   }
-  if (!best) {
-    throw new SourceError("inbox_empty", `No video or GIF found in the inbox folder "${dir}". Save the file there and try again.`);
+  return best && resolve(best.path);
+}
+
+function nothingThere(env: Env, what: string): SourceError {
+  const configured = readEnv(env, "FRAMELENS_INBOX");
+  if (configured && !existsSync(configured)) return new SourceError("inbox_empty", `FRAMELENS_INBOX points to "${configured}", which cannot be read.`);
+  if (!configured && !existsSync(extensionFolder(env))) {
+    return new SourceError(
+      "inbox_empty",
+      "FRAMELENS_INBOX is not set and there is no Downloads/FrameLens folder yet. Save the file with the Frame Lens browser " +
+        `extension (it saves to Downloads/FrameLens), or set FRAMELENS_INBOX to the folder where you put ${what}, then use source "inbox".`,
+    );
   }
-  return resolve(best.path);
+  return new SourceError("inbox_empty", `No ${what} found in the inbox (${inboxFolders(env).join(", ") || extensionFolder(env)}). Save it there and try again.`);
+}
+
+/** The newest video or GIF in the inbox folders. */
+export function newestInboxFile(env: Env): string {
+  const found = newest(inboxFolders(env), (name) => MEDIA_EXTENSIONS.has(extname(name).toLowerCase()));
+  if (!found) throw nothingThere(env, "video or GIF");
+  return found;
+}
+
+/** The newest page reading the browser extension saved (`*.framelens.json`). */
+export function newestInboxReading(env: Env): string {
+  const found = newest(inboxFolders(env), (name) => name.toLowerCase().endsWith(READING_SUFFIX));
+  if (!found) throw nothingThere(env, "page reading (*.framelens.json from the browser extension)");
+  return found;
 }

@@ -15,3 +15,6 @@ Thumbs.db
 
 # Frame Lens workspaces (analysis results)
 .framelens/
+
+# The extension zip is built by npm run build:extension; extension/dist is committed for Load unpacked.
+extension/*.zip

@@ -31,7 +31,8 @@ the goal from the request and lists the steps with an estimate of how many image
 
 ## Tools
 
-**Local, measured** (needs ffmpeg; links need yt-dlp, which `framelens doctor --prepare` installs):
+**Local, measured** (needs ffmpeg, and yt-dlp for links; when either is missing, Frame Lens downloads a pinned,
+checksum-verified build on first use and says so):
 
 | Tool | What it does |
 |---|---|
@@ -44,7 +45,7 @@ the goal from the request and lists the steps with an estimate of how many image
 | `audio` | Loudness (LUFS), silences, onsets, tempo and beats, cuts on the beat, spectrogram |
 | `export` | Starter project from the motion spec for `hyperframes`, `remotion`, `css`, `after-effects` (ExtendScript), `lottie`, or a `hypit` handoff: structure, timing, colours and eases carried over, content left to you |
 | `compare` | Your render against the reference: duration, cuts matched within 3 frames, palette distance, picture similarity, worst moments side by side |
-| `web` | A live page's animations read exactly from the browser (CSS, Web Animations, Motion, GSAP): target, delay, duration, curve, keyframes, scroll-triggered ones too, plus real fonts and colours (needs Chrome or Edge and Node 22+) |
+| `web` | A live page's animations read exactly from the browser (CSS, Web Animations, Motion, GSAP): target, delay, duration, curve, keyframes, scroll-triggered ones too, plus real fonts and colours (needs Chrome or Edge and Node 22+). Also takes a reading the [browser extension](#browser-extension) saved: `inbox` or its path |
 | `exact` | Lottie / dotLottie keyframes and curves, and Figma prototype transitions (`FIGMA_TOKEN`, or the Figma MCP's motion context), read from the source's own data |
 
 **Gemini** (YouTube links, needs `GEMINI_API_KEY`, works in cloud sessions without ffmpeg):
@@ -52,7 +53,10 @@ the goal from the request and lists the steps with an estimate of how many image
 `list_supported_models`.
 
 Everything a local tool produces is written to a workspace folder (`.framelens/<id>/` in the current directory), so
-results stay small, can be reopened by path, and a later session can continue from `PROGRESS.md`.
+results stay small, can be reopened by path, and a later session can continue from `PROGRESS.md`. When the server is
+started in a system folder (Claude Desktop on Windows starts it in `C:\WINDOWS\system32`, on macOS in `/`) or in a
+folder it cannot write to, the workspace moves to `~/.framelens/`; `FRAMELENS_WORKSPACE` overrides both. Every path
+in a tool result is absolute, and `framelens doctor` says which folder is in use and why.
 
 ## How it looks at a video: the loupe
 
@@ -79,14 +83,39 @@ yourself. Web pages, Lottie and Figma need no estimate: their curves are read fr
 
 ## Install
 
-You need **Node.js 20+** and, for the local tools, **ffmpeg** (on Windows: `winget install Gyan.FFmpeg`; macOS:
-`brew install ffmpeg`; Linux: your package manager). Check what you have:
+You need **Node.js 20+**. The local tools use **ffmpeg**, and links use **yt-dlp**: an ffmpeg you installed yourself
+(Windows: `winget install Gyan.FFmpeg`; macOS: `brew install ffmpeg`; Linux: your package manager) is used first, and
+when one of them is missing Frame Lens sets it up by itself (see [Automatic setup](#automatic-setup)). Check what you
+have:
 
 ```bash
 npx -y framelens@2.0.0 doctor
 ```
 
-`doctor --prepare` downloads a pinned, checksum-verified yt-dlp for links.
+`doctor --prepare` downloads the pinned, checksum-verified yt-dlp, and ffmpeg when it is missing, right away.
+
+### Automatic setup
+
+When a local tool needs ffmpeg/ffprobe or yt-dlp and cannot find it, Frame Lens downloads a pinned build into
+`~/.framelens/tools/`, checks its SHA-256 against the hash recorded in the code, continues, and adds a line to the
+tool result saying what it did. Nothing that fails the check is kept. `FRAMELENS_AUTO_INSTALL=0` turns this off.
+
+| Tool | Version | Windows x64 | macOS arm64 and x64, Linux x64 (glibc) |
+|---|---|---|---|
+| ffmpeg, ffprobe | FFmpeg 9.0.2 | [gyan.dev](https://www.gyan.dev/ffmpeg/builds/) essentials build ([GitHub release](https://github.com/GyanD/codexffmpeg/releases/tag/9.0.2)) | [Martin Riedl's build server](https://ffmpeg.martin-riedl.de/) |
+| yt-dlp | 2026.10.21 | [github.com/yt-dlp/yt-dlp](https://github.com/yt-dlp/yt-dlp/releases/tag/2026.10.21) | same, also checked against the release's SHA2-256SUMS |
+
+Gyan Doshi's Windows builds are the ones ffmpeg.org's download page links; Martin Riedl's build server has published
+release builds with a SHA-256 for each file since 2022 and keeps the old ones, so a pinned address keeps working.
+Other platforms (Alpine and other musl systems, Linux on ARM, Windows on ARM) install ffmpeg from their own packages.
+
+### Browser extension
+
+For pages and posts behind your own login, the Frame Lens extension for Chrome and Edge works in your browser:
+**Read this page's motion** saves what the `web` tool would read (animations, curves, fonts, colours, a scroll pass),
+and **Record this tab** saves a WebM of what you watch. Both land in `Downloads/FrameLens`, where the `inbox` source
+finds them: `web` with `inbox` for a reading, any video tool with `inbox` for a recording. It needs no network access
+and no host permissions. Install it with Load unpacked: [extension/README.md](extension/README.md).
 
 ### Claude Code, every project on your computer
 
@@ -138,6 +167,8 @@ Pin the version so a new release never runs without you choosing it. Without npm
 | Local files: mp4, mov (ProRes), webm, mkv, GIF, APNG | A path |
 | Your phone or a platform's own download button | Put the file in the inbox folder (`FRAMELENS_INBOX`) and use the source `inbox` |
 | Sites that ask you to log in (Instagram, Facebook, X, Threads, Vimeo) | Your own access only, in this order: save the video with the platform's own download button or a screen recording and give the file; opt in to your browser's cookies with `FRAMELENS_COOKIES_FROM_BROWSER=firefox` or `FRAMELENS_COOKIES_FILE=<cookies.txt>` (Chrome and Edge on Windows encrypt cookies so they cannot be used); or run `npx framelens login instagram` once: a browser window with a separate Frame Lens profile opens, you log in yourself (a second account is wiser), and links that need the login are then played there and saved. `framelens logout` deletes that profile |
+| A video or a page you see while logged in | The [browser extension](#browser-extension): record the tab, or read the page's motion, then `inbox` |
+| Links yt-dlp cannot fetch, with your own [cobalt](https://github.com/imputnet/cobalt) server | Opt in with `FRAMELENS_COBALT_URL` (below) |
 | A live website | `web` with its address |
 | Lottie, dotLottie, Figma | `exact` with the file, link or Figma URL |
 
@@ -145,12 +176,22 @@ Frame Lens never bypasses logins, CAPTCHAs or bot checks, never uses online down
 and downloads one video at a time at your request. Platforms' terms may forbid automated downloading, and a platform
 can restrict an account it sees doing it: analyze videos you are allowed to watch and use, for reference.
 
+**Self-hosted cobalt (opt-in).** If you run your own [cobalt](https://github.com/imputnet/cobalt) instance, set
+`FRAMELENS_COBALT_URL` to its API address (and `FRAMELENS_COBALT_KEY` to an API key if it asks for one): links that
+yt-dlp cannot fetch are then tried through it, and the media comes through your instance only. Nothing changes when
+it is unset. Public instances are not supported (the main one is protected against bots and is not for other
+projects). cobalt never gets around a login, and a link that failed on a bot check, or a private, removed or
+geo-blocked video, is never sent to it.
+
 ## Configuration
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `FRAMELENS_WORKSPACE` | `./.framelens` | Where workspaces go |
-| `FRAMELENS_INBOX` | — | Folder whose newest video is the source `inbox` |
+| `FRAMELENS_WORKSPACE` | `./.framelens`, or `~/.framelens` from a system or read-only folder | Where workspaces go |
+| `FRAMELENS_INBOX` | — | Folder whose newest video is the source `inbox` (Downloads/FrameLens is always looked in too) |
+| `FRAMELENS_DOWNLOADS` | `~/Downloads` | The browser's download folder, where the extension saves into `FrameLens/` |
+| `FRAMELENS_AUTO_INSTALL` | on | `0` stops Frame Lens from downloading a missing ffmpeg or yt-dlp |
+| `FRAMELENS_COBALT_URL`, `FRAMELENS_COBALT_KEY` | — | Your own cobalt instance for links yt-dlp cannot fetch, and its API key |
 | `FRAMELENS_FFMPEG`, `FRAMELENS_FFPROBE`, `FRAMELENS_YTDLP` | found automatically | Paths to the tools |
 | `FRAMELENS_MAX_DOWNLOAD_MB` | `2048` | Largest download |
 | `FRAMELENS_COOKIES_FROM_BROWSER`, `FRAMELENS_COOKIES_FILE` | — | Opt-in cookies for sites that need your login |
@@ -173,7 +214,7 @@ Google One / AI Pro subscription does not raise API limits; enabling billing on 
 ## Security
 
 - External programs run without a shell, with timeouts, and are killed with their process tree on abort.
-- The pinned yt-dlp is verified against its SHA-256 before it is used.
+- The pinned yt-dlp and ffmpeg are verified against their SHA-256 before they are used.
 - Cookies are opt-in and never logged; the Gemini key is removed from every error and log line.
 - Video content is untrusted: every result is labelled as third-party content so the agent treats it as information,
   never as commands.

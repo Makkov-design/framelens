@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { appendFileSync, existsSync, readdirSync, statSync } from "node:fs";
+import { appendFileSync, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { InvalidInputError } from "./errors.js";
 import { oneLine } from "./text.js";
@@ -13,7 +13,8 @@ import { buildPlan, type Goal, type Plan } from "./router/plan.js";
 import { findPhrase, readCaptions, toMarkdown, wordsAt, type Transcript } from "./speech/transcript.js";
 import { analyzeAudio, spectrogram, type AudioAnalysis } from "./audio/analyze.js";
 import { readPage, type PageResult } from "./browser/read.js";
-import { specFromPage } from "./browser/web.js";
+import { cleanReading, specFromPage, type PageReading } from "./browser/web.js";
+import { newestInboxReading } from "./sources/inbox.js";
 import { matchCuts, paletteDistance, similarity, verdict, type Comparison } from "./compare/compare.js";
 import { exportSpec, type ExportTarget } from "./export/exporters.js";
 import { onBeatRatio } from "./audio/dsp.js";
@@ -84,6 +85,27 @@ export const localFileResolver: SourceResolver = async (input, { workspaceRoot }
 };
 
 const r3 = (n: number) => Math.round(n * 1000) / 1000;
+
+/** A page reading is a few hundred KB; anything far larger is not one. */
+const MAX_READING_BYTES = 20 * 1024 * 1024;
+
+/**
+ * A page reading saved by the browser extension (or a web.json): checked to be one, then cleaned like a live
+ * reading, because the page it came from wrote every string in it.
+ */
+export function readSavedReading(file: string): PageReading {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(file, "utf8").replace(/^﻿/, ""));
+  } catch {
+    throw new InvalidInputError(`${file} is not JSON. Pass a .framelens.json file the Frame Lens browser extension saved.`);
+  }
+  const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const marked = typeof r.framelens === "string" && r.framelens.startsWith("framelens.page-reading/");
+  const shaped = Array.isArray(r.animations) && typeof r.url === "string" && r.viewport !== null && typeof r.viewport === "object";
+  if (!marked && !shaped) throw new InvalidInputError(`${file} is not a page reading. Pass a .framelens.json file the Frame Lens browser extension saved, or a web.json.`);
+  return cleanReading(raw);
+}
 
 export class Engine {
   constructor(
@@ -419,20 +441,49 @@ export class Engine {
    * A live web page: reads its animations exactly (durations, delays, curves, keyframes) from the browser, plus fonts
    * and colours, films the opening motion frame by frame, and writes the same motion-spec.json as a video.
    */
-  async web(url: string, version: string): Promise<{ ws: Workspace; spec: MotionSpec; result: PageResult; files: Record<string, string> }> {
-    const id = `web-${createHash("sha1").update(url).digest("hex").slice(0, 10)}`;
-    const ws = new Workspace(this.options.root, id);
-    const result = await readPage(url, ws.ensure("frames", "web"), this.options.tools);
+  async web(input: string, version: string, env: Record<string, string | undefined> = process.env): Promise<{ ws: Workspace; spec: MotionSpec; result: PageResult; files: Record<string, string>; savedReading?: string }> {
+    const url = input.trim();
+    let id: string;
+    let result: PageResult;
+    let savedReading: string | undefined;
+    let ws: Workspace;
+    if (/^https?:\/\//i.test(url)) {
+      id = `web-${createHash("sha1").update(url).digest("hex").slice(0, 10)}`;
+      ws = new Workspace(this.options.root, id);
+      result = await readPage(url, ws.ensure("frames", "web"), this.options.tools);
+    } else {
+      // A reading the browser extension saved in the user's own browser (pages behind their login), or a web.json.
+      savedReading = url.toLowerCase() === "inbox" ? newestInboxReading(env) : resolve(url.replace(/^["']|["']$/g, ""));
+      const stat = existsSync(savedReading) ? statSync(savedReading) : undefined;
+      if (!stat?.isFile()) throw new InvalidInputError(`"${oneLine(input, 300)}" is neither a web page address nor a page reading file. Pass an http(s) address, the path of a .framelens.json the browser extension saved, or "inbox".`);
+      if (stat.size > MAX_READING_BYTES) throw new InvalidInputError(`${savedReading} is larger than a page reading can be (${MAX_READING_BYTES / 1024 / 1024} MB).`);
+      result = { reading: readSavedReading(savedReading), views: [] };
+      id = `web-${createHash("sha1").update(`${savedReading}|${stat.size}|${stat.mtimeMs}`).digest("hex").slice(0, 10)}`;
+      ws = new Workspace(this.options.root, id);
+    }
     const spec = specFromPage(result.reading, version);
-    ws.writeJson("source.json", { id, kind: "url", input: url, url, title: result.reading.title, mediaPath: "", fetchedAt: new Date().toISOString() });
+    ws.writeJson("source.json", {
+      id,
+      kind: "url",
+      input: savedReading ?? url,
+      url: result.reading.url,
+      title: result.reading.title,
+      mediaPath: "",
+      fetchedAt: new Date().toISOString(),
+      ...(savedReading && { readFrom: savedReading }),
+    });
     const { measured, skeleton } = styleMarkdown(spec);
     const files: Record<string, string> = {
       reading: ws.writeJson("web.json", result.reading),
       spec: ws.writeJson("motion-spec.json", spec),
       style: writeWithMeasuredBlock(ws, "STYLE.md", measured, skeleton),
     };
-    this.progress(ws, `web: ${result.reading.animations.length} animations${result.reading.gsap ? " (GSAP found)" : ""}, ${result.reading.fonts.length} text styles, ${result.views.length} views`);
-    return { ws, spec, result, files };
+    this.progress(
+      ws,
+      `web: ${result.reading.animations.length} animations${result.reading.gsap ? " (GSAP found)" : ""}, ${result.reading.fonts.length} text styles, ` +
+        (savedReading ? `read from ${savedReading}` : `${result.views.length} views`),
+    );
+    return { ws, spec, result, files, ...(savedReading && { savedReading }) };
   }
 
   /** Appends a line to PROGRESS.md so a later session can see what was already done. */

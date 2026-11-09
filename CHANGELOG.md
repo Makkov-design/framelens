@@ -1,5 +1,24 @@
 # Changelog
 
+## [Unreleased]
+
+- **Browser extension** for Chrome and Edge (`extension/`, Manifest V3, Load unpacked): "Read this page's motion"
+  runs the `web` tool's own page reader in the user's browser, so pages behind their login can be read, and "Record
+  this tab" saves a WebM of what they watch (with its duration written in; frame times stay the real, variable
+  ones). Files go to `Downloads/FrameLens`; `web` takes `inbox` or the saved `.framelens.json` and writes the same
+  `motion-spec.json` and `STYLE.md` as for a live page, and video tools take `inbox` for a recording. No network
+  access, no host permissions. `npm run build:extension` builds `extension/dist` and a zip.
+- **Automatic setup**: a missing ffmpeg/ffprobe or yt-dlp is downloaded on first use (FFmpeg 9.0.2 from gyan.dev for
+  Windows x64 and from ffmpeg.martin-riedl.de for macOS and Linux x64; yt-dlp 2026.10.21), checked against SHA-256
+  hashes in the code, and the tool result says so. `FRAMELENS_AUTO_INSTALL=0` turns it off; `doctor --prepare`
+  does the same on demand.
+- **Self-hosted cobalt, opt-in**: with `FRAMELENS_COBALT_URL` (and `FRAMELENS_COBALT_KEY`), links yt-dlp cannot
+  fetch are tried through the user's own cobalt instance. Public instances are refused; bot checks, private,
+  removed and geo-blocked videos are never sent to it.
+- **Workspace fallback**: when the server starts in a system folder (Claude Desktop on Windows uses
+  `C:\WINDOWS\system32`) or a folder it cannot write to, workspaces go to `~/.framelens/`; `FRAMELENS_WORKSPACE`
+  overrides both. Tool results show absolute paths, and `doctor` says which folder is used and why.
+
 ## 2.0.0 — 2026-11-09
 
 **ytlens is now Frame Lens** (`framelens`): eyes and ears for AI agents for any video or animation. It measures
