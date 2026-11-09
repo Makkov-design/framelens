@@ -1,0 +1,75 @@
+name: Bug report
+description: Something fails, crashes or behaves differently from the docs.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. A number that looks wrong has its own form, "Wrong measurement".
+        Do not paste API keys, cookies or private links. Security problems go to the Security tab.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: The tool you called, what you expected and what you got. Paste the tool result or the error text.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The source (a public link, or how to get the file), the tool and its arguments, and what you asked the agent.
+      placeholder: |
+        1. Source: https://...
+        2. Tool: frames with { "source": "...", "start": 10, "end": 14 }
+        3. Result: ...
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of npx -y framelens doctor
+      description: Shows the Frame Lens version, Node, ffmpeg, yt-dlp and the workspace folder.
+      render: text
+    validations:
+      required: true
+  - type: dropdown
+    id: client
+    attributes:
+      label: Client
+      options:
+        - Claude Code
+        - Claude Desktop
+        - Codex
+        - Cursor
+        - Other MCP client
+        - Command line only
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How it is installed
+      options:
+        - npx -y framelens (npm)
+        - Claude Code plugin (framelens@framelens)
+        - framelens init (project .mcp.json)
+        - Docker
+        - From a source checkout
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - macOS
+        - Linux
+    validations:
+      required: true
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else
+      description: Workspace files (TIMELINE.md, motion-spec.json), screenshots, logs.

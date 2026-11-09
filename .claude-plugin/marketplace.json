@@ -1,6 +1,6 @@
 {
   "name": "framelens",
-  "description": "framelens: let Claude watch YouTube videos through Google Gemini.",
+  "description": "Frame Lens: eyes and ears for any video or animation, for Claude Code.",
   "owner": {
     "name": "Makkov",
     "url": "https://github.com/Makkov-design"
@@ -9,7 +9,10 @@
     {
       "name": "framelens",
       "source": "./",
-      "description": "Let Claude watch YouTube videos (frames + audio) through Google Gemini."
+      "description": "Measured analysis of any video or animation (cuts, easing curves, palette, beats, transcripts), exact reading of websites, Lottie, Rive and Figma, and starter projects for HyperFrames, Remotion, CSS, After Effects and Lottie.",
+      "category": "media",
+      "homepage": "https://makkov-design.github.io/framelens/",
+      "keywords": ["video", "motion-design", "animation", "easing", "transcript", "mcp"]
     }
   ]
 }
