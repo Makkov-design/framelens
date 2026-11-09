@@ -1,0 +1,28 @@
+# Frame Lens
+
+> Frame Lens is a free, local MCP server that gives AI agents eyes and ears for any video or animation. It measures cuts, shots, easing curves, palettes, beats and word-timed speech, reads animations exactly from websites, Lottie, Rive and Figma, and writes starter projects for HyperFrames, Remotion, CSS, After Effects and Lottie. MIT licence. npm package `framelens`.
+
+## Install
+
+- One project (adds `.mcp.json` and the agent skill): `npx -y framelens init`
+- Claude Code, all projects: `claude mcp add framelens --scope user -- npx -y framelens` (Windows: `cmd /c npx -y framelens`)
+- Any MCP client: `{"mcpServers": {"framelens": {"command": "npx", "args": ["-y", "framelens"]}}}`
+- Check the machine and fetch a pinned yt-dlp: `npx -y framelens doctor --prepare`. Needs Node 20+ and ffmpeg. The Gemini tools need `GEMINI_API_KEY` (optional).
+
+## How an agent should use it
+
+1. A video (link or file): call `plan` with the user's request in their words; run the steps it returns in order.
+2. A website's motion: `web`. A Lottie, dotLottie, Rive file or Figma prototype link: `exact`.
+3. Motion reference: `style`, then `track` for the moves that matter, then `frames` with `every_frame` around them, then `export` to the user's renderer and `compare` the render with the reference.
+4. Speech: `transcript` (captions first). Sound design: `audio`.
+5. Results go to `.framelens/<id>/` in the working folder: `motion-spec.json`, `STYLE.md`, `TIMELINE.md`, `ANALYSIS.md`, contact sheets. Open them by path.
+6. Every number has an evidence label: `measured`, `derived` or `inferred`. Report it with the number.
+7. Never work around logins or bot checks. For a login-walled post, ask the user for the file, the inbox folder, opt-in cookies, or `framelens login <site>`.
+
+## Docs
+
+- [README](https://github.com/Makkov-design/framelens/blob/main/README.md): tools, install, examples
+- [Agent skill](https://github.com/Makkov-design/framelens/blob/main/skills/framelens/SKILL.md): the workflow agents follow
+- [Design](https://github.com/Makkov-design/framelens/blob/main/docs/DESIGN.md): how each measurement works
+- [Accuracy](https://github.com/Makkov-design/framelens/blob/main/docs/ACCURACY.md): benchmark on ground-truth videos
+- [Changelog](https://github.com/Makkov-design/framelens/blob/main/CHANGELOG.md)
