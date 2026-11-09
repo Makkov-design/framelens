@@ -21,6 +21,21 @@ describe("regressions", () => {
     expect(plugin.version).toBe(pkg.version);
   });
 
+  it("keeps the MCP Registry entry in step with package.json", () => {
+    const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { name: string; version: string; mcpName: string };
+    const server = JSON.parse(readFileSync(join(root, "server.json"), "utf8")) as {
+      name: string;
+      version: string;
+      description: string;
+      packages: unknown[];
+    };
+    // The registry checks that the published npm package's mcpName equals server.json's name.
+    expect(server.name).toBe(pkg.mcpName);
+    expect(server.version).toBe(pkg.version);
+    expect(server.packages).toEqual([expect.objectContaining({ registryType: "npm", identifier: pkg.name, version: pkg.version })]);
+    expect(server.description.length).toBeLessThanOrEqual(100);
+  });
+
   it("only ever talks to Google through the SDK (no hand-built URLs with the key)", () => {
     for (const file of sourceFiles) {
       expect(readFileSync(join(root, "src", file), "utf8"), file).not.toMatch(/[?&]key=\$\{|fetch\(/);

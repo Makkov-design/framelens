@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- Listed for the official MCP Registry as `io.github.Makkov-design/framelens` (`server.json`, `mcpName` in
+  `package.json`, and a manual "Publish to MCP Registry" workflow); `glama.json`; a PNG icon for the Claude Code
+  plugin. Contributing guide, code of conduct, issue forms (including "Wrong measurement") and a pull request
+  template.
 - **Browser extension** for Chrome and Edge (`extension/`, Manifest V3, Load unpacked): "Read this page's motion"
   runs the `web` tool's own page reader in the user's browser, so pages behind their login can be read, and "Record
   this tab" saves a WebM of what they watch (with its duration written in; frame times stay the real, variable
