@@ -91,7 +91,10 @@ code { font-size: 0.92em; }
 .versus__measured div { border-top: 2px solid var(--color-ink); padding-top: var(--space-sm); min-width: 0; }
 .versus__measured dt { font-size: var(--text-sm); color: var(--color-ink-2); }
 .versus__measured dd { margin: var(--space-2xs) 0 0; font-size: var(--text-xl); font-weight: 600; overflow-wrap: anywhere; }
-.versus__note { margin-top: var(--space-xl); color: var(--color-ink-2); }
+.versus__truth { margin-top: var(--space-sm); font-size: var(--text-xl); font-weight: 600; overflow-wrap: anywhere; }
+.versus__said .versus__label + .versus__truth + .versus__label { margin-top: var(--space-xs); }
+.demo { display: block; width: 100%; height: auto; margin-top: var(--space-2xl); border-radius: var(--radius-card); background: var(--color-band); }
+.versus__note { margin-top: var(--space-md); color: var(--color-ink-2); }
 
 /* Switchers */
 .goals { padding-block: var(--section-gap-s); }
