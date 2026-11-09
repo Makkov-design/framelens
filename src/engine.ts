@@ -364,7 +364,7 @@ export class Engine {
     return { ws, title: spec!.source.title ?? input, dir, files };
   }
 
-  /** The workspace of a page read with `web`, or a Lottie or Figma source read with `exact`, if any. */
+  /** The workspace of a page read with `web`, or a Lottie, Figma or Rive source read with `exact`, if any. */
   private webWorkspace(input: string): Workspace | undefined {
     const wanted = input.trim();
     if (/^https?:\/\//i.test(wanted)) {
@@ -373,7 +373,7 @@ export class Engine {
     }
     if (!existsSync(this.options.root)) return undefined;
     for (const name of readdirSync(this.options.root)) {
-      if (!/^(web|lottie|figma)-/.test(name)) continue;
+      if (!/^(web|lottie|figma|rive)-/.test(name)) continue;
       const ws = new Workspace(this.options.root, name);
       const record = ws.readJson<{ input?: string; url?: string; mediaPath?: string }>("source.json");
       const same = record && [record.input, record.url, record.mediaPath].some((v) => v && (v === wanted || resolve(v) === resolve(wanted)));

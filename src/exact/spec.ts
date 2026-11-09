@@ -1,5 +1,6 @@
 import { rgbToOklab } from "../style/palette.js";
 import { styleMarkdown, writeWithMeasuredBlock, type MotionSpec } from "../style/spec.js";
+import { mdText } from "../text.js";
 import type { Workspace } from "../workspace/workspace.js";
 import { bezierPeak } from "./easing.js";
 import type { ExactAnalysis, ExactMove } from "./types.js";
@@ -96,7 +97,7 @@ const fmtVal = (v: (number | string)[]) => (v.length > 3 ? `${v.slice(0, 3).join
 
 export function exactMarkdown(a: ExactAnalysis, spec: ExactSpec): string {
   const moves = a.moves.slice(0, 60).map(
-    (m) => `| ${m.start.toFixed(2)}–${m.end.toFixed(2)} s | ${m.target} | ${m.property} | ${fmtVal(m.from)} → ${fmtVal(m.to)} | \`${m.curve}\` (${m.hold ? "hold" : m.easing}) | ${m.evidence} |`,
+    (m) => `| ${m.start.toFixed(2)}–${m.end.toFixed(2)} s | ${mdText(m.target, 240)} | ${mdText(m.property, 60)} | ${mdText(fmtVal(m.from), 120)} → ${mdText(fmtVal(m.to), 120)} | \`${m.curve.replace(/\|/g, "\\|")}\` (${m.hold ? "hold" : m.easing}) | ${m.evidence} |`,
   );
   return [
     "## Measured from the source data",
@@ -111,14 +112,14 @@ export function exactMarkdown(a: ExactAnalysis, spec: ExactSpec): string {
     "",
     "**Typography:**",
     "",
-    ...(a.texts.length ? a.texts.slice(0, 20).map((t) => `- “${t.text.replace(/\s+/g, " ").slice(0, 60)}” — ${[t.family, t.weight, t.size && `${t.size}px`, t.color].filter(Boolean).join(", ") || "style not specified"} (${t.where})`) : ["- none"]),
-    ...(a.fonts.length ? ["", `Fonts in the file: ${a.fonts.join(", ")}.`] : []),
+    ...(a.texts.length ? a.texts.slice(0, 20).map((t) => `- “${mdText(t.text, 60)}” — ${mdText([t.family, t.weight, t.size && `${t.size}px`, t.color].filter(Boolean).join(", "), 200) || "style not specified"} (${mdText(t.where, 240)})`) : ["- none"]),
+    ...(a.fonts.length ? ["", `Fonts in the file: ${a.fonts.map((f) => mdText(f, 120)).join(", ")}.`] : []),
     "",
     "**Moves** (curves are the source's own control points):",
     "",
     ...(moves.length ? ["| When | Target | Property | Change | Curve | Evidence |", "|---|---|---|---|---|---|", ...moves, ...(a.moves.length > 60 ? [`| … | ${a.moves.length - 60} more in motion-spec.json | | | | |`] : [])] : ["None found."]),
     "",
-    ...(a.unknowns.length ? ["**Unknowns** (seen in the file, not evaluated):", "", ...a.unknowns.slice(0, 40).map((u) => `- ${u}`)] : []),
+    ...(a.unknowns.length ? ["**Unknowns** (seen in the file, not evaluated):", "", ...a.unknowns.slice(0, 40).map((u) => `- ${mdText(u, 300)}`)] : []),
   ].join("\n");
 }
 

@@ -46,7 +46,7 @@ checksum-verified build on first use and says so):
 | `export` | Starter project from the motion spec for `hyperframes`, `remotion`, `css`, `after-effects` (ExtendScript), `lottie`, or a `hypit` handoff: structure, timing, colours and eases carried over, content left to you |
 | `compare` | Your render against the reference: duration, cuts matched within 3 frames, palette distance, picture similarity, worst moments side by side |
 | `web` | A live page's animations read exactly from the browser (CSS, Web Animations, Motion, GSAP): target, delay, duration, curve, keyframes, scroll-triggered ones too, plus real fonts and colours (needs Chrome or Edge and Node 22+). Also takes a reading the [browser extension](#browser-extension) saved: `inbox` or its path |
-| `exact` | Lottie / dotLottie keyframes and curves, and Figma prototype transitions (`FIGMA_TOKEN`, or the Figma MCP's motion context), read from the source's own data |
+| `exact` | Lottie / dotLottie and Rive (`.riv`: artboards, timelines, curves, state machines in `RIVE.md`) keyframes and curves, and Figma prototype transitions (`FIGMA_TOKEN`, or the Figma MCP's motion context), read from the source's own data |
 
 **Gemini** (YouTube links, needs `GEMINI_API_KEY`, works in cloud sessions without ffmpeg):
 `summarize_youtube_video`, `ask_about_youtube_video`, `extract_key_moments`, `get_video_transcript`,
@@ -170,7 +170,7 @@ Pin the version so a new release never runs without you choosing it. Without npm
 | A video or a page you see while logged in | The [browser extension](#browser-extension): record the tab, or read the page's motion, then `inbox` |
 | Links yt-dlp cannot fetch, with your own [cobalt](https://github.com/imputnet/cobalt) server | Opt in with `FRAMELENS_COBALT_URL` (below) |
 | A live website | `web` with its address |
-| Lottie, dotLottie, Figma | `exact` with the file, link or Figma URL |
+| Lottie, dotLottie, Rive `.riv`, Figma | `exact` with the file, link or Figma URL (a direct `.riv` link; rive.app pages are not read) |
 
 Frame Lens never bypasses logins, CAPTCHAs or bot checks, never uses online downloader sites or scraping services,
 and downloads one video at a time at your request. Platforms' terms may forbid automated downloading, and a platform

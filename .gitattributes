@@ -1,2 +1,3 @@
 * text=auto eol=lf
 dist/framelens.mjs linguist-generated=true -diff
+*.riv binary
