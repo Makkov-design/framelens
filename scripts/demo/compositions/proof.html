@@ -1,0 +1,131 @@
+<template>
+  <style>
+    @font-face { font-family: "Panchang"; src: url("assets/fonts/panchang-700.woff2") format("woff2"); font-weight: 700; }
+    @font-face { font-family: "General Sans"; src: url("assets/fonts/general-sans-400.woff2") format("woff2"); font-weight: 400; }
+    @font-face { font-family: "General Sans"; src: url("assets/fonts/general-sans-600.woff2") format("woff2"); font-weight: 600; }
+    #root { position: absolute; inset: 0; background: oklch(82% 0.2 142); color: oklch(21% 0.035 155); }
+    #pf-title { position: absolute; left: 96px; top: 80px; font: 700 56px/1 "Panchang", sans-serif; letter-spacing: -0.01em; }
+    .pf-lane-label { position: absolute; left: 128px; font: 600 32px/1 "General Sans", sans-serif; }
+    .pf-rail { position: absolute; left: 128px; width: 736px; height: 2px; background: oklch(21% 0.035 155); }
+    /* The tracked elements: solid squares on the plain field, nothing else moves near them. */
+    .pf-block { position: absolute; left: 128px; width: 96px; height: 96px; background: oklch(58% 0.22 27); }
+    .pf-panel { position: absolute; left: 1104px; width: 720px; }
+    .pf-chart { display: block; width: 684px; height: 150px; overflow: visible; }
+    .pf-chart .axis { fill: none; stroke: oklch(21% 0.035 155); stroke-width: 2; }
+    .pf-chart .truth { fill: none; stroke: oklch(21% 0.035 155); stroke-width: 5; stroke-linecap: round; }
+    .pf-chart .measured { fill: none; stroke: oklch(58% 0.22 27); stroke-width: 3; stroke-dasharray: 10 8; }
+    .pf-row { display: grid; grid-template-columns: 150px 1fr; align-items: baseline; padding: 14px 0 12px; border-top: 2px solid oklch(21% 0.035 155); }
+    .pf-row dt { font: 600 28px/1 "General Sans", sans-serif; }
+    .pf-row dd { font: 400 28px/1.35 "JetBrains Mono", monospace; }
+    .pf-row dd small { display: block; font-size: 28px; color: oklch(30% 0.04 152); }
+    .pf-row.pf-meas dd { color: oklch(48% 0.2 27); }
+    .pf-row.pf-meas dd small { color: oklch(30% 0.04 152); }
+  </style>
+  <div id="root" data-composition-id="proof" data-width="1920" data-height="1080">
+    <h2 id="pf-title" class="clip" data-start="0" data-duration="7.2">We animate it. Frame Lens measures it.</h2>
+
+    <p id="pf-a-label" class="pf-lane-label clip" style="top: 232px" data-start="0" data-duration="7.2">Ease-out, 640 px</p>
+    <div id="pf-a-rail" class="pf-rail" style="top: 400px"></div>
+    <div id="pf-a-block" class="pf-block" style="top: 288px"></div>
+
+    <p id="pf-b-label" class="pf-lane-label clip" style="top: 632px" data-start="0" data-duration="7.2">Spring, 640 px</p>
+    <div id="pf-b-rail" class="pf-rail" style="top: 800px"></div>
+    <div id="pf-b-block" class="pf-block" style="top: 688px"></div>
+
+    <div id="pf-a-panel" class="pf-panel" style="top: 200px">
+      <svg id="pf-a-chart" class="pf-chart" viewBox="0 0 684 150" aria-hidden="true"><path class="axis" d="M0 140 H684 M0 140 V0" /><path id="pf-a-truth" class="truth" /><path id="pf-a-meas" class="measured" /></svg>
+      <dl>
+        <div class="pf-row" id="pf-a-anim"><dt>Animated</dt><dd id="pf-a-anim-v"></dd></div>
+        <div class="pf-row pf-meas" id="pf-a-got"><dt>Measured</dt><dd id="pf-a-got-v"></dd></div>
+      </dl>
+    </div>
+    <div id="pf-b-panel" class="pf-panel" style="top: 600px">
+      <svg id="pf-b-chart" class="pf-chart" viewBox="0 0 684 150" aria-hidden="true"><path class="axis" d="M0 140 H684 M0 140 V0" /><path id="pf-b-truth" class="truth" /><path id="pf-b-meas" class="measured" /></svg>
+      <dl>
+        <div class="pf-row" id="pf-b-anim"><dt>Animated</dt><dd id="pf-b-anim-v"></dd></div>
+        <div class="pf-row pf-meas" id="pf-b-got"><dt>Measured</dt><dd id="pf-b-got-v"></dd></div>
+      </dl>
+    </div>
+  </div>
+  <script>
+    // ---- The one data object: what we animate, and what Frame Lens measured back (scripts/demo/CHECK.md). ----
+    // Times are local to this scene, which starts at 9.8 s in the film. Replace `measured` after re-measuring.
+    const CURVES = {
+      a: {
+        travel: 640, at: 0.8, frames: 18, fps: 30,
+        animated: { kind: "bezier", p: [0.22, 1, 0.36, 1] },
+        // Frame Lens track t1 on the v1 render: x 176 -> 816 px, 10.600-11.158 s, error 0.01 % of the travel.
+        measured: { curve: { kind: "bezier", p: [0.2279, 0.9639, 0.3775, 0.9983] }, frames: 16.73, start: 10.6, quality: "exact" },
+      },
+      b: {
+        travel: 640, at: 3.0, frames: 36, fps: 30,
+        animated: { kind: "spring", stiffness: 170, damping: 12, mass: 1 },
+        // Frame Lens track t2 on the v1 render: x 176 -> 816 px, from 12.800 s, settles in 26.75 frames, error 0.01 %.
+        measured: { curve: { kind: "spring", stiffness: 170.03, damping: 12, mass: 1 }, frames: 26.75, start: 12.8, quality: "exact" },
+      },
+    };
+
+    function bezier(x1, y1, x2, y2) {
+      const cx = 3 * x1, bx = 3 * (x2 - x1) - cx, ax = 1 - cx - bx;
+      const cy = 3 * y1, by = 3 * (y2 - y1) - cy, ay = 1 - cy - by;
+      const X = (t) => ((ax * t + bx) * t + cx) * t, Y = (t) => ((ay * t + by) * t + cy) * t;
+      return (x) => { if (x <= 0) return 0; if (x >= 1) return 1; let lo = 0, hi = 1; for (let i = 0; i < 48; i++) { const m = (lo + hi) / 2; if (X(m) < x) lo = m; else hi = m; } return Y((lo + hi) / 2); };
+    }
+    // A damped spring from rest, closed form: progress after t seconds (mass m, stiffness k, damping c).
+    function spring(k, c, m) {
+      const w0 = Math.sqrt(k / m), z = c / (2 * Math.sqrt(k * m));
+      if (z < 1) { const wd = w0 * Math.sqrt(1 - z * z); return (t) => 1 - Math.exp(-z * w0 * t) * (Math.cos(wd * t) + (z * w0 / wd) * Math.sin(wd * t)); }
+      return (t) => 1 - Math.exp(-w0 * t) * (1 + w0 * t);
+    }
+    // Progress after t seconds of a move that lasts `seconds` (a spring ignores the length).
+    function progressAt(curve, seconds) {
+      if (curve.kind === "bezier") { const b = bezier(...curve.p); return (t) => b(t / seconds); }
+      return spring(curve.stiffness, curve.damping, curve.mass);
+    }
+    // Progress as a function of the tween's 0..1 time.
+    function easeOf(curve, seconds) {
+      if (!curve) return null;
+      if (curve.kind === "bezier") return bezier(...curve.p);
+      const s = spring(curve.stiffness, curve.damping, curve.mass);
+      return (p) => (p >= 1 ? 1 : s(p * seconds));
+    }
+    const fmt = (n) => String(Math.round(n * 100) / 100);
+    function describe(curve) {
+      if (!curve) return "";
+      return curve.kind === "bezier"
+        ? `cubic-bezier(${curve.p.map(fmt).join(", ")})`
+        : `spring ${fmt(curve.stiffness)} / ${fmt(curve.damping)} / ${fmt(curve.mass)}`;
+    }
+    function chartPath(at, seconds, lo, hi) {
+      const pts = [];
+      for (let i = 0; i <= 120; i++) { const p = i / 120, v = at(p * seconds); pts.push((p * 684).toFixed(1) + " " + (140 - ((v - lo) / (hi - lo)) * 140).toFixed(1)); }
+      return "M" + pts.join(" L");
+    }
+
+    const tl = gsap.timeline({ paused: true });
+    tl.fromTo("#pf-title", { opacity: 0, filter: "blur(8px)" }, { opacity: 1, filter: "blur(0px)", duration: 0.18, ease: "power2.out" }, 0.04);
+    tl.fromTo([".pf-lane-label", ".pf-rail"], { opacity: 0 }, { opacity: 1, duration: 0.16, ease: "power2.out" }, 0.1);
+
+    for (const id of ["a", "b"]) {
+      const c = CURVES[id];
+      const seconds = c.frames / c.fps;
+      const lo = c.animated.kind === "spring" ? -0.05 : 0, hi = c.animated.kind === "spring" ? 1.3 : 1;
+      document.querySelector("#pf-" + id + "-truth").setAttribute("d", chartPath(progressAt(c.animated, seconds), seconds, lo, hi));
+      document.querySelector("#pf-" + id + "-anim-v").innerHTML = describe(c.animated) + (c.animated.kind === "spring" ? "<small>stiffness / damping / mass</small>" : "<small>" + c.frames + " frames at " + c.fps + " fps</small>");
+      if (c.measured) {
+        const m = c.measured;
+        document.querySelector("#pf-" + id + "-meas").setAttribute("d", chartPath(progressAt(m.curve, m.frames / c.fps), seconds, lo, hi));
+        document.querySelector("#pf-" + id + "-got-v").innerHTML = `${describe(m.curve)}<small>${m.curve.kind === "spring" ? "" : m.frames + " frames, "}${m.quality} fit</small>`;
+      }
+      // Held still, the move, held still again: the block is the only thing moving in its lane.
+      tl.fromTo("#pf-" + id + "-block", { x: 0 }, { x: c.travel, duration: seconds, ease: easeOf(c.animated, seconds) }, c.at);
+      const after = c.at + seconds + 0.2;
+      tl.fromTo("#pf-" + id + "-chart .axis", { opacity: 0 }, { opacity: 1, duration: 0.14 }, after);
+      tl.fromTo("#pf-" + id + "-truth", { clipPath: "inset(0 100% 0 0)" }, { clipPath: "inset(0 0% 0 0)", duration: 0.4, ease: "power2.out" }, after);
+      tl.fromTo("#pf-" + id + "-anim", { opacity: 0 }, { opacity: 1, duration: 0.16, ease: "power2.out" }, after + 0.1);
+      tl.fromTo("#pf-" + id + "-meas", { clipPath: "inset(0 100% 0 0)" }, { clipPath: "inset(0 0% 0 0)", duration: 0.4, ease: "power2.out" }, after + 0.6);
+      tl.fromTo("#pf-" + id + "-got", { opacity: 0 }, { opacity: c.measured ? 1 : 0, duration: 0.16, ease: "power2.out" }, after + 0.7);
+    }
+    window.__timelines["proof"] = tl;
+  </script>
+</template>

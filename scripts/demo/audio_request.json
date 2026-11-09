@@ -1,0 +1,5 @@
+{"lines": [
+  {"id": "cut", "sfx": ["clock tick", "pen click"]},
+  {"id": "type", "sfx": ["mechanical keyboard tap"]},
+  {"id": "swatch", "sfx": ["wooden block tap"]}
+]}
