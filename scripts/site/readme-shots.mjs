@@ -25,14 +25,13 @@ if (!browser) throw new Error("No Chrome or Edge found; set FRAMELENS_BROWSER.")
 
 const shots = [
   { page: "scripts/site/banner.html", selector: ".banner", name: "banner", scale: 1, pad: 0, format: "png" },
+  // `setup` runs in the page before the capture (here: scrub the loupe into the opening dissolve);
+  // `hide` hides elements for that capture only (the demo video, which the README shows as a GIF).
+  { page: "docs/index.html", selector: ".loupe", name: "loupe", scale: 1.5, pad: 24, format: "webp", setup: "const r = document.querySelector('[data-loupe-range]'); r.value = '4'; r.dispatchEvent(new Event('input'));" },
+  { page: "docs/index.html", selector: ".versus .container", name: "proof", scale: 1.5, pad: 32, format: "webp", hide: ".versus video.demo, .versus .versus__note" },
   { page: "docs/index.html", selector: ".goals .sheet", name: "contact-sheet", scale: 2, pad: 16, format: "webp" },
-  // `hide`: the Lottie row reads back the 26.04 s "move", which is a fade plus a scale-in that Frame Lens 2.0 read as
-  // one move. Drop the hide (and restore the shots below) once the site's readings are regenerated.
-  { page: "docs/index.html", selector: ".sources .container", name: "readings", scale: 1.5, pad: 32, format: "webp", hide: ".readings tbody tr:nth-child(3)" },
-  // Waiting for the corrected example on the site:
-  // { page: "docs/index.html", selector: ".loupe", name: "loupe", scale: 1.5, pad: 24, format: "webp" },
-  // { page: "docs/index.html", selector: ".versus .container", name: "measured", scale: 1.5, pad: 32, format: "webp" },
-  // { page: "docs/index.html", selector: ".export .container", name: "export", scale: 1.5, pad: 32, format: "webp" },
+  { page: "docs/index.html", selector: ".sources .container", name: "readings", scale: 1.5, pad: 32, format: "webp" },
+  { page: "docs/index.html", selector: ".export .container", name: "export", scale: 1.5, pad: 32, format: "webp" },
 ];
 
 const profile = mkdtempSync(join(tmpdir(), "framelens-shots-"));
@@ -81,6 +80,7 @@ try {
       current = shot.page;
     }
     await evaluate(`document.querySelectorAll("[data-shot-hidden]").forEach((e) => { e.hidden = false; e.removeAttribute("data-shot-hidden"); }); true`);
+    if (shot.setup) { await evaluate(`(() => { ${shot.setup} })(); true`); await sleep(400); }
     if (shot.hide) await evaluate(`document.querySelectorAll(${JSON.stringify(shot.hide)}).forEach((e) => { e.hidden = true; e.setAttribute("data-shot-hidden", ""); }); true`);
     const box = await evaluate(`(() => { const r = document.querySelector(${JSON.stringify(shot.selector)}).getBoundingClientRect(); const p = ${shot.pad}; const x = Math.max(0, r.left + scrollX - p); return { x, y: Math.max(0, r.top + scrollY - p), width: Math.min(r.width + 2 * p, document.documentElement.clientWidth - x), height: r.height + 2 * p }; })()`);
     const { data } = await send("Page.captureScreenshot", { format: "png", captureBeyondViewport: true, clip: { ...box, scale: shot.scale } });

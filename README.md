@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="https://makkov-design.github.io/framelens/"><img src="docs/assets/readme/banner.png" width="100%" alt="Frame Lens: video your agent can measure. A strip of Big Buck Bunny trailer frames with red cut marks and the reading: cut at 9.08 s, frame 227; 12 shots, 11 cuts, 25 fps."></a>
+  <a href="https://makkov-design.github.io/framelens/"><img src="docs/assets/readme/banner.png" width="100%" alt="Frame Lens: video your agent can measure. A strip of Big Buck Bunny trailer frames with red cut marks and the reading: cut at 9.08 s, frame 227; 11 cuts, 8 fades and dissolves, 20 shots at 25 fps."></a>
 </p>
 
 <h1 align="center">Frame Lens</h1>
@@ -31,27 +31,27 @@ VS Code, Windsurf and any other MCP client. It runs on your computer, needs no A
 runtime dependencies. It reads YouTube and hundreds of other sites, local files, live websites, Lottie, Rive and
 Figma, and turns what it finds into starter projects for HyperFrames, Remotion, CSS, After Effects and Lottie.
 
-<!--
-  DEMO GIF PLACEHOLDER: when docs/assets/demo.gif (and docs/assets/demo.mp4) exist, replace this comment with:
-  <p align="center"><a href="docs/assets/demo.mp4"><img src="docs/assets/demo.gif" width="100%" alt="Frame Lens in Claude Code: a reference video measured and rebuilt"></a></p>
--->
+<p align="center">
+  <a href="docs/assets/demo.mp4"><img src="docs/assets/demo.gif" width="100%" alt="The Frame Lens demo: the loupe reading the Big Buck Bunny trailer, a curve measured back from a render, a palette, and the export code"></a>
+  <br><sub>28 seconds, made in HyperFrames and then measured by Frame Lens itself. <a href="docs/assets/demo.mp4">Watch with sound</a>.</sub>
+</p>
 
 ## Why Frame Lens
 
 An agent that "watches" a video usually gets a handful of stills or the captions, and describes what it guesses:
 *"a quick, smooth move"*. That is not something you can build from.
 
-Frame Lens measures. On the 33-second Big Buck Bunny trailer it finds **11 cuts to the frame (9.08 s, 11.20 s,
-13.20 s, 13.88 s, 15.00 s, 16.00 s, 16.60 s, 24.92 s, 26.00 s, 29.96 s, 31.04 s)**, 12 shots at 25 fps and a palette
-for each. For the moves that matter, `track` fits the exact curve (a `cubic-bezier` or a spring, with its fit error),
-`export` writes it into CSS, Remotion, HyperFrames, After Effects or Lottie, and `compare` checks your render against
-the reference.
+Frame Lens measures. We animated a square in HyperFrames with **`cubic-bezier(0.22, 1, 0.36, 1)`, 640 px in 18
+frames at 30 fps**, rendered it, and gave the video to Frame Lens. `track` measured
+**`cubic-bezier(0.231, 0.951, 0.384, 0.996)`**, starting at **10.600 s (0 frames off)**, never more than **0.18 px**
+from where the square really was on any frame, grade `exact`. A spring of stiffness 170 and damping 12 read back as
+**stiffness 170.01**. `export` then writes that curve into CSS, Remotion, HyperFrames, After Effects or Lottie, and
+`compare` checks your render against the reference. How the demo was measured:
+[scripts/demo/CHECK.md](scripts/demo/CHECK.md).
 
-<!--
-  EXAMPLE PLACEHOLDER: a real tracked move from the trailer (start time, length in frames, exact curve and fit error)
-  goes here once the site's readings are regenerated with the transition fix. Do not use the "26.04 s, 23 frames,
-  cubic-bezier(0.7, 0, 0.84, 0)" move: it is a fade to white plus a scale-in that Frame Lens 2.0 read as one move.
--->
+On the 33-second Big Buck Bunny trailer it finds **11 cuts to the frame** (9.08 s, 11.20 s, 13.20 s, 13.88 s,
+15.00 s, 16.00 s, 16.60 s, 24.92 s, 26.00 s, 29.96 s, 31.04 s), **8 fades and dissolves** with their length (the
+opening dissolve runs 24 frames, 3.48–4.44 s), and 20 shots at 25 fps with a palette each.
 
 - **Measured, not described.** Cuts on their exact frame, every move with its duration and curve, an OKLab palette per
   shot, loudness, tempo and beats, transcripts with the time of every word.
@@ -63,23 +63,27 @@ the reference.
 
 ## See it work
 
-These are real Frame Lens readings of the [Big Buck Bunny](https://peach.blender.org) trailer, from the
-[website](https://makkov-design.github.io/framelens/).
+Real Frame Lens readings from the [website](https://makkov-design.github.io/framelens/): the
+[Big Buck Bunny](https://peach.blender.org) trailer and the demo film's own render.
 
-<img src="docs/assets/readme/contact-sheet.webp" alt="A contact sheet of 32 trailer frames, one a second, with red marks where a cut falls">
+<table>
+  <tr>
+    <td width="44%" valign="top">
+      <img src="docs/assets/readme/loupe.webp" alt="The loupe at 4.00 s, frame 100 of the trailer: shot 2 of 20, its palette, and the change: dissolve, 24 frames, 3.48 to 4.44 s; the ruler shows red cuts, pale fades and dissolves, green moves">
+      <p><b>The loupe.</b> Every mark on the ruler is a measurement: red cuts, pale fades and dissolves, green moves, a palette per shot.</p>
+    </td>
+    <td width="56%" valign="top">
+      <img src="docs/assets/readme/contact-sheet.webp" alt="A contact sheet of 32 trailer frames, one a second, with red marks where a cut falls">
+      <p><b>The first pass.</b> One frame a second for the style goal, red where a cut falls. Dense frames come only after this, around the moments that matter.</p>
+    </td>
+  </tr>
+</table>
 
-**The first pass.** One frame a second for the style goal, red where a cut falls. Dense frames come only after this,
-around the moments that matter.
+<img src="docs/assets/readme/proof.webp" alt="Frame Lens read our curve back within 0.18 px: animated cubic-bezier(0.22, 1, 0.36, 1), 640 px in 18 frames at 30 fps; measured cubic-bezier(0.231, 0.951, 0.384, 0.996), start 10.600 s, 0 frames off, largest gap on any frame 0.18 px, grade exact">
 
-<img src="docs/assets/readme/readings.webp" alt="Table: the trailer read from pixels, 12 shots, 11 cuts, 25 fps; a live website read from the browser, 328 animations, mostly 500 ms on cubic-bezier(0.16, 1, 0.3, 1); Rive files and Figma prototypes read from the file; YouTube and most video sites through a pinned yt-dlp">
+<img src="docs/assets/readme/export.webp" alt="The measured move in five renderers: dots where the square was on each frame on the fitted curve, next to the CSS export with cubic-bezier(0.2312, 0.9511, 0.3843, 0.9964)">
 
-**Measured or read exactly.** Video is measured from pixels; websites, Lottie, Rive and Figma are read from their own
-data.
-
-<!--
-  SCREENSHOT PLACEHOLDER: the site's loupe (.loupe), "described vs measured" (.versus) and export/curve (.export)
-  sections go here once they show the corrected tracked move. Re-enable them in scripts/site/readme-shots.mjs.
--->
+<img src="docs/assets/readme/readings.webp" alt="Table: the trailer read from pixels, 20 shots, 11 cuts, 8 fades and dissolves; a live website read from the browser, 328 animations, mostly 500 ms on cubic-bezier(0.16, 1, 0.3, 1); a Lottie file, our export read back from keyframes exactly; Rive files and Figma prototypes read from the file; YouTube and most video sites through a pinned yt-dlp">
 
 ## Quick start
 
@@ -215,6 +219,8 @@ limits: [docs/ACCURACY.md](docs/ACCURACY.md).
 | Duration, worst error | 0.46 frame |
 | Spring stiffness and damping, mean error | 0.2 % or less |
 
+On a real render, the demo film, `track` read a `cubic-bezier(0.22, 1, 0.36, 1)` move back within 0.18 px on every
+frame with its start 0 frames off, and a spring's stiffness of 170 as 170.01 ([scripts/demo/CHECK.md](scripts/demo/CHECK.md)).
 These clips are clean synthetic renders; real footage adds motion blur, rotation, occlusion and camera moves, and
 `track` reports its fit error and a quality grade (`exact`, `approximate`, `unreliable`) for every curve so you can
 judge it. Websites, Lottie, Rive and Figma need no estimate: their curves are read from the source.
@@ -227,7 +233,8 @@ agent skill [`skills/framelens/SKILL.md`](skills/framelens/SKILL.md); repository
 
 ### Install in your client
 
-`npx -y framelens` starts the server on stdio. Pin a version (`framelens@2.1.0`) when you want to choose when to
+`npx -y framelens` starts the server on stdio. In the [MCP Registry](https://registry.modelcontextprotocol.io) its name
+is `io.github.Makkov-design/framelens` ([server.json](server.json)). Pin a version (`framelens@2.1.0`) when you want to choose when to
 upgrade. On **Windows**, clients that start the server themselves need `cmd /c` in front of `npx` (in JSON:
 `"command": "cmd", "args": ["/c", "npx", "-y", "framelens"]`). Add `GEMINI_API_KEY` only if you want the Gemini tools.
 
@@ -477,6 +484,7 @@ npm run bundle                  # writes dist/framelens.mjs; commit it with the 
 node scripts/benchmark.mjs      # the accuracy benchmark
 ```
 
+Start with [CONTRIBUTING.md](CONTRIBUTING.md); by taking part you agree to the [Code of Conduct](CODE_OF_CONDUCT.md).
 Read [AGENTS.md](AGENTS.md) for the repository's rules (evidence labels, honest access, tests) and
 [docs/DESIGN.md](docs/DESIGN.md) for the module layout. Inside this repository, `npx framelens` resolves to the
 checkout itself; point an MCP client at `dist/framelens.mjs` while developing.

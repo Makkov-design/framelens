@@ -9,6 +9,7 @@
 - Claude Code plugin (server and skill): `/plugin marketplace add Makkov-design/framelens`, then `/plugin install framelens@framelens`
 - Any MCP client (Cursor, Claude Desktop, Windsurf): `{"mcpServers": {"framelens": {"command": "npx", "args": ["-y", "framelens"]}}}`; on Windows `"command": "cmd", "args": ["/c", "npx", "-y", "framelens"]`
 - Codex, `~/.codex/config.toml`: `[mcp_servers.framelens]` with `command = "npx"`, `args = ["-y", "framelens"]`. VS Code, `.vscode/mcp.json`: `{"servers": {"framelens": {"type": "stdio", "command": "npx", "args": ["-y", "framelens"]}}}`
+- MCP Registry name: `io.github.Makkov-design/framelens`
 - Needs Node 20+ (Node 22+ and Chrome or Edge for `web`). A missing ffmpeg or yt-dlp is downloaded on first use (pinned, SHA-256-checked); `npx -y framelens doctor --prepare` checks and fetches ahead of time. The Gemini tools need the user's own `GEMINI_API_KEY` (optional).
 
 ## Tools
