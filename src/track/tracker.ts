@@ -1,0 +1,470 @@
+/** Grey frames of one window of a video, all the same size, in time order. */
+export interface GrayFrames {
+  width: number;
+  height: number;
+  frames: { t: number; data: Uint8Array }[];
+}
+
+/** A box in pixels: top-left corner and size. */
+export interface Box {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export interface TrackPoint {
+  t: number;
+  /** Centre of the element, in pixels of the frames. */
+  x: number;
+  y: number;
+  /** Size relative to the element at the reference frame. */
+  scale: number;
+  /** Normalised cross-correlation with the template at the match, −1..1. */
+  score: number;
+  /** Brightness of the element minus its surroundings, signed like the reference frame (opacity follows it). */
+  contrast: number;
+  /** The match was too weak to trust (element hidden, faded out or lost): the position is a prediction. */
+  lost: boolean;
+}
+
+type Pixels = Uint8Array | Float32Array;
+
+/**
+ * The frame smoothed by a 5-tap binomial filter (σ ≈ 1 px). Antialiased edges then shift like smooth profiles, which
+ * is what subpixel matching assumes; on sharp one-pixel edges an interpolated template is biased by up to 0.3 px.
+ */
+export function smooth(data: Pixels, w: number, h: number): Float32Array {
+  const k = [1, 4, 6, 4, 1];
+  const tmp = new Float32Array(w * h);
+  const out = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) {
+    const row = y * w;
+    for (let x = 0; x < w; x++) {
+      let sum = 0;
+      for (let i = -2; i <= 2; i++) sum += k[i + 2]! * data[row + Math.min(w - 1, Math.max(0, x + i))]!;
+      tmp[row + x] = sum / 16;
+    }
+  }
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let sum = 0;
+      for (let i = -2; i <= 2; i++) sum += k[i + 2]! * tmp[Math.min(h - 1, Math.max(0, y + i)) * w + x]!;
+      out[y * w + x] = sum / 16;
+    }
+  }
+  return out;
+}
+
+/** Bilinear sample with the edges extended. */
+function sample(data: Pixels, w: number, h: number, x: number, y: number): number {
+  const fx = Math.min(w - 1.000001, Math.max(0, x));
+  const fy = Math.min(h - 1.000001, Math.max(0, y));
+  const x0 = fx | 0;
+  const y0 = fy | 0;
+  const ax = fx - x0;
+  const ay = fy - y0;
+  const i = y0 * w + x0;
+  const top = data[i]! + (data[i + 1]! - data[i]!) * ax;
+  const bottom = data[i + w]! + (data[i + w + 1]! - data[i + w]!) * ax;
+  return top + (bottom - top) * ay;
+}
+
+/** Bilinear sample and its exact derivatives along x and y. */
+function sampleGrad(data: Pixels, w: number, h: number, x: number, y: number, out: Float64Array): void {
+  const fx = Math.min(w - 1.000001, Math.max(0, x));
+  const fy = Math.min(h - 1.000001, Math.max(0, y));
+  const x0 = fx | 0;
+  const y0 = fy | 0;
+  const ax = fx - x0;
+  const ay = fy - y0;
+  const i = y0 * w + x0;
+  const a = data[i]!;
+  const b = data[i + 1]!;
+  const c = data[i + w]!;
+  const d = data[i + w + 1]!;
+  const top = a + (b - a) * ax;
+  const bottom = c + (d - c) * ax;
+  out[0] = top + (bottom - top) * ay;
+  out[1] = (1 - ay) * (b - a) + ay * (d - c);
+  out[2] = bottom - top;
+}
+
+interface Template {
+  dx: Float64Array;
+  dy: Float64Array;
+  /** Raw sampled values (kept for blending), and the zero-mean values with their norm. */
+  raw: Float64Array;
+  zero: Float64Array;
+  norm: number;
+}
+
+function finishTemplate(dx: Float64Array, dy: Float64Array, raw: Float64Array): Template {
+  const n = raw.length;
+  let mean = 0;
+  for (let i = 0; i < n; i++) mean += raw[i]!;
+  mean /= n;
+  const zero = new Float64Array(n);
+  let norm = 0;
+  for (let i = 0; i < n; i++) {
+    zero[i] = raw[i]! - mean;
+    norm += zero[i]! ** 2;
+  }
+  return { dx, dy, raw, zero, norm: Math.sqrt(norm) };
+}
+
+/** Sample points over the box plus a thin margin (its edges against the background locate it), at most 32×32. */
+function makeTemplate(frame: Pixels, w: number, h: number, cx: number, cy: number, bw: number, bh: number, stride = 1): Template {
+  const mw = bw + 2 * Math.max(3, 0.08 * bw);
+  const mh = bh + 2 * Math.max(3, 0.08 * bh);
+  const nx = Math.max(4, Math.min(32, Math.round(mw)));
+  const ny = Math.max(4, Math.min(32, Math.round(mh)));
+  const dx: number[] = [];
+  const dy: number[] = [];
+  for (let j = 0; j < ny; j += stride) for (let i = 0; i < nx; i += stride) {
+    dx.push(-mw / 2 + ((i + 0.5) * mw) / nx);
+    dy.push(-mh / 2 + ((j + 0.5) * mh) / ny);
+  }
+  const fdx = Float64Array.from(dx);
+  const fdy = Float64Array.from(dy);
+  const raw = new Float64Array(fdx.length);
+  for (let k = 0; k < raw.length; k++) raw[k] = sample(frame, w, h, cx + fdx[k]!, cy + fdy[k]!);
+  return finishTemplate(fdx, fdy, raw);
+}
+
+function resample(t: Template, frame: Pixels, w: number, h: number, cx: number, cy: number, s: number): Float64Array {
+  const raw = new Float64Array(t.raw.length);
+  for (let k = 0; k < raw.length; k++) raw[k] = sample(frame, w, h, cx + s * t.dx[k]!, cy + s * t.dy[k]!);
+  return raw;
+}
+
+/** Normalised cross-correlation of the template with the frame at centre (cx, cy) and scale s. */
+function ncc(t: Template, frame: Pixels, w: number, h: number, cx: number, cy: number, s: number): number {
+  const n = t.zero.length;
+  let sum = 0;
+  let sum2 = 0;
+  let cross = 0;
+  for (let k = 0; k < n; k++) {
+    const v = sample(frame, w, h, cx + s * t.dx[k]!, cy + s * t.dy[k]!);
+    sum += v;
+    sum2 += v * v;
+    cross += v * t.zero[k]!;
+  }
+  const variance = sum2 - (sum * sum) / n;
+  if (variance <= 1e-9 || t.norm <= 1e-9) return 0;
+  return cross / (Math.sqrt(variance) * t.norm);
+}
+
+function gridSearch(t: Template, frame: Pixels, w: number, h: number, px: number, py: number, s: number, radius: number, step: number) {
+  let best = { x: px, y: py, score: -2 };
+  for (let oy = -radius; oy <= radius; oy += step) {
+    for (let ox = -radius; ox <= radius; ox += step) {
+      const x = px + ox;
+      const y = py + oy;
+      if (x < -w * 0.25 || x > w * 1.25 || y < -h * 0.25 || y > h * 1.25) continue;
+      const score = ncc(t, frame, w, h, x, y, s);
+      if (score > best.score) best = { x, y, score };
+    }
+  }
+  return best;
+}
+
+/** Solves the small linear system A·x = b (Gaussian elimination with partial pivoting); undefined when singular. */
+function solve(a: number[][], b: number[]): number[] | undefined {
+  const n = b.length;
+  const m = a.map((row, i) => [...row, b[i]!]);
+  for (let c = 0; c < n; c++) {
+    let pivot = c;
+    for (let r = c + 1; r < n; r++) if (Math.abs(m[r]![c]!) > Math.abs(m[pivot]![c]!)) pivot = r;
+    if (Math.abs(m[pivot]![c]!) < 1e-12) return undefined;
+    [m[c], m[pivot]] = [m[pivot]!, m[c]!];
+    for (let r = c + 1; r < n; r++) {
+      const f = m[r]![c]! / m[c]![c]!;
+      for (let k = c; k <= n; k++) m[r]![k]! -= f * m[c]![k]!;
+    }
+  }
+  const x = new Array<number>(n).fill(0);
+  for (let r = n - 1; r >= 0; r--) {
+    let sum = m[r]![n]!;
+    for (let k = r + 1; k < n; k++) sum -= m[r]![k]! * x[k]!;
+    x[r] = sum / m[r]![r]!;
+  }
+  return x;
+}
+
+/**
+ * Subpixel position and scale by Gauss–Newton (Lucas–Kanade) on the template, with a brightness gain and offset so
+ * fades do not pull the fit, and robust weights so background pixels that disagree count less. Parabolas through
+ * correlation scores lock onto whole pixels on sharp edges; this does not.
+ */
+function lkRefine(t: Template, frame: Pixels, w: number, h: number, x: number, y: number, s: number, scale: boolean) {
+  const n = t.raw.length;
+  const T = t.raw;
+  const I = new Float64Array(n);
+  const gx = new Float64Array(n);
+  const gy = new Float64Array(n);
+  const res = new Float64Array(n);
+  const g = new Float64Array(3);
+  const dim = scale ? 5 : 4;
+  let a = 1;
+  let b = 0;
+  for (let iter = 0; iter < 12; iter++) {
+    for (let k = 0; k < n; k++) {
+      sampleGrad(frame, w, h, x + s * t.dx[k]!, y + s * t.dy[k]!, g);
+      I[k] = g[0]!;
+      gx[k] = g[1]!;
+      gy[k] = g[2]!;
+    }
+    if (iter === 0) {
+      // Gain and offset from a straight-line fit of the frame's values on the template's.
+      let st = 0;
+      let si = 0;
+      for (let k = 0; k < n; k++) {
+        st += T[k]!;
+        si += I[k]!;
+      }
+      const mt = st / n;
+      const mi = si / n;
+      let cov = 0;
+      let vt = 0;
+      for (let k = 0; k < n; k++) {
+        cov += (T[k]! - mt) * (I[k]! - mi);
+        vt += (T[k]! - mt) ** 2;
+      }
+      a = vt > 1e-9 ? cov / vt : 1;
+      b = mi - a * mt;
+    }
+    for (let k = 0; k < n; k++) res[k] = I[k]! - (a * T[k]! + b);
+    const sorted = Array.from(res, Math.abs).sort((p, q) => p - q);
+    const c = Math.max(2, 2.5 * (sorted[Math.floor(n / 2)] ?? 0));
+    const A = Array.from({ length: dim }, () => new Array<number>(dim).fill(0));
+    const B = new Array<number>(dim).fill(0);
+    const J = new Array<number>(dim);
+    for (let k = 0; k < n; k++) {
+      const wk = 1 / (1 + (res[k]! / c) ** 2);
+      // Residual r = I(p) − (a·T + b); derivatives with respect to x, y, (s), a, b.
+      J[0] = gx[k]!;
+      J[1] = gy[k]!;
+      let j = 2;
+      if (scale) J[j++] = gx[k]! * t.dx[k]! + gy[k]! * t.dy[k]!;
+      J[j++] = -T[k]!;
+      J[j] = -1;
+      for (let p = 0; p < dim; p++) {
+        B[p]! -= wk * J[p]! * res[k]!;
+        for (let q = p; q < dim; q++) A[p]![q]! += wk * J[p]! * J[q]!;
+      }
+    }
+    for (let p = 0; p < dim; p++) for (let q = 0; q < p; q++) A[p]![q] = A[q]![p]!;
+    const step = solve(A, B);
+    if (!step) break;
+    const dx = Math.max(-1, Math.min(1, step[0]!));
+    const dy = Math.max(-1, Math.min(1, step[1]!));
+    const ds = scale ? Math.max(-0.05, Math.min(0.05, step[2]!)) : 0;
+    x += dx;
+    y += dy;
+    s = Math.min(8, Math.max(0.125, s + ds * s));
+    a += step[dim - 2]!;
+    b += step[dim - 1]!;
+    if (Math.abs(dx) < 1e-3 && Math.abs(dy) < 1e-3 && Math.abs(ds) < 1e-4) break;
+  }
+  return { x, y, s, score: ncc(t, frame, w, h, x, y, s) };
+}
+
+/** Mean brightness of the element (inner 60 % of the box) minus a ring just outside it. */
+function contrastAt(frame: Pixels, w: number, h: number, cx: number, cy: number, bw: number, bh: number): number {
+  let inner = 0;
+  let innerN = 0;
+  let ring = 0;
+  let ringN = 0;
+  const n = 12;
+  for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
+    const u = (i + 0.5) / n - 0.5;
+    const v = (j + 0.5) / n - 0.5;
+    inner += sample(frame, w, h, cx + u * bw * 0.6, cy + v * bh * 0.6);
+    innerN++;
+    // Ring: the band between 1.15 and 1.45 box sizes, on all four sides.
+    const m = Math.max(Math.abs(u), Math.abs(v));
+    if (m > 0.25) {
+      const k = 1.15 + (m - 0.25) * 1.2;
+      ring += sample(frame, w, h, cx + (u / m) * (k / 2) * bw, cy + (v / m) * (k / 2) * bh);
+      ringN++;
+    }
+  }
+  return inner / innerN - ring / Math.max(1, ringN);
+}
+
+export interface TrackOptions {
+  /** Measure the element's size as well as its position (default true). */
+  scale?: boolean;
+  /** Correlation under which a match is not trusted (default 0.5). */
+  minScore?: number;
+}
+
+/**
+ * Follows one element through the frames by template matching: normalised cross-correlation over a small search
+ * window around the predicted position (a wider one when the match is lost), then subpixel and scale refinement.
+ * The template is refreshed from good matches, and every match is re-checked against the original template, which
+ * wins whenever it still matches: refreshed templates follow changes in look, the original stops drift.
+ * Tracking runs forwards and backwards from `index`, the frame where `box` is drawn.
+ */
+export function trackElement(video: GrayFrames, box: Box, index: number, options: TrackOptions = {}): TrackPoint[] {
+  const minScore = options.minScore ?? 0.5;
+  const fixed = trackPass(video, box, index, minScore, false);
+  if (options.scale === false) return fixed;
+  // Size is measured in a second pass and kept only when it explains the frames better: on a busy background the
+  // pixels around the element otherwise pull the size a little on every frame until the match is lost.
+  const scaled = trackPass(video, box, index, minScore, true);
+  const quality = (points: TrackPoint[]) => {
+    const good = points.filter((p) => !p.lost);
+    return { lost: points.length - good.length, score: good.reduce((sum, p) => sum + p.score, 0) / Math.max(1, good.length) };
+  };
+  const a = quality(fixed);
+  const b = quality(scaled);
+  return b.lost <= a.lost && b.score > a.score + 0.001 ? scaled : fixed;
+}
+
+function trackPass(video: GrayFrames, box: Box, index: number, minScore: number, measureScale: boolean): TrackPoint[] {
+  const { width: w, height: h, frames } = video;
+  const raw = frames[index]!.data;
+  const ref = smooth(raw, w, h);
+  const cx0 = box.x + box.w / 2;
+  const cy0 = box.y + box.h / 2;
+  const original = makeTemplate(ref, w, h, cx0, cy0, box.w, box.h);
+  const originalCoarse = makeTemplate(ref, w, h, cx0, cy0, box.w, box.h, 2);
+  const refContrast = contrastAt(raw, w, h, cx0, cy0, box.w, box.h);
+  const sign = refContrast < 0 ? -1 : 1;
+  const out: TrackPoint[] = new Array(frames.length);
+  out[index] = { t: frames[index]!.t, x: cx0, y: cy0, scale: 1, score: 1, contrast: Math.abs(refContrast), lost: false };
+
+  for (const dir of [1, -1]) {
+    let x = cx0;
+    let y = cy0;
+    let s = 1;
+    let vx = 0;
+    let vy = 0;
+    let growth = 1;
+    let current = original;
+    let coarse = originalCoarse;
+    for (let i = index + dir; i >= 0 && i < frames.length; i += dir) {
+      const frame = smooth(frames[i]!.data, w, h);
+      const px = x + vx;
+      const py = y + vy;
+      // Scale is predicted like position: a zoom keeps its pace from one frame to the next.
+      const ps = measureScale ? Math.min(8, Math.max(0.125, s * growth)) : s;
+      const speed = Math.hypot(vx, vy);
+      const radius = Math.min(64, Math.ceil(3 + 0.75 * speed));
+      let best = gridSearch(coarse, frame, w, h, px, py, ps, radius, radius > 10 ? 2 : 1);
+      if (best.score < 0.6) {
+        // Lost or a sudden start: look much further, coarsely, with the refreshed and the original look.
+        const wide = Math.min(Math.max(w, h), Math.max(48, Math.ceil(3 * speed)));
+        const step = Math.max(2, Math.round(wide / 16));
+        for (const [t, scale] of [[coarse, ps], [originalCoarse, 1]] as const) {
+          const far = gridSearch(t, frame, w, h, px, py, scale, wide, step);
+          if (far.score > best.score) best = far;
+        }
+      }
+      const near = gridSearch(current, frame, w, h, best.x, best.y, ps, 2, 1);
+      // Prefer the original template when it still matches: no drift.
+      const anchored = ncc(original, frame, w, h, near.x, near.y, ps);
+      const template = anchored >= Math.max(minScore, near.score - 0.1) ? original : current;
+      const fine = lkRefine(template, frame, w, h, near.x, near.y, ps, measureScale);
+      const lost = fine.score < minScore;
+      if (lost) {
+        // Hidden or faded out: carry on from the prediction (slowing down), keep the last good look.
+        x = px;
+        y = py;
+        vx *= 0.5;
+        vy *= 0.5;
+        growth = 1;
+      } else {
+        vx = fine.x - x;
+        vy = fine.y - y;
+        x = fine.x;
+        y = fine.y;
+        growth = fine.s / s;
+        s = fine.s;
+        if (fine.score >= 0.8) {
+          const patch = resample(current, frame, w, h, x, y, s);
+          const raw = current.raw.map((v, k) => 0.7 * v + 0.3 * patch[k]!);
+          current = finishTemplate(current.dx, current.dy, raw);
+          const patchCoarse = resample(coarse, frame, w, h, x, y, s);
+          coarse = finishTemplate(coarse.dx, coarse.dy, coarse.raw.map((v, k) => 0.7 * v + 0.3 * patchCoarse[k]!));
+        }
+      }
+      out[i] = { t: frames[i]!.t, x, y, scale: s, score: fine.score, contrast: sign * contrastAt(frames[i]!.data, w, h, x, y, box.w * s, box.h * s), lost };
+    }
+  }
+  return out;
+}
+
+/**
+ * The biggest coherent moving region: the background is the per-pixel median of frames spread over the window, and
+ * the element is the largest connected region that differs from it. Returns the frame where that region is largest
+ * (fully on screen, fully visible) and its bounding box.
+ */
+export function autoBox(video: GrayFrames): { box: Box; index: number } | undefined {
+  const { width: w, height: h, frames } = video;
+  if (frames.length < 2) return undefined;
+  const stride = Math.max(1, Math.round(Math.max(w, h) / 320));
+  const gw = Math.floor(w / stride);
+  const gh = Math.floor(h / stride);
+  const count = Math.min(25, frames.length);
+  const picks = Array.from({ length: count }, (_, k) => Math.round((k * (frames.length - 1)) / Math.max(1, count - 1)));
+  const background = new Float32Array(gw * gh);
+  const column = new Float32Array(count);
+  for (let gy = 0; gy < gh; gy++) for (let gx = 0; gx < gw; gx++) {
+    const at = gy * stride * w + gx * stride;
+    for (let k = 0; k < count; k++) column[k] = frames[picks[k]!]!.data[at]!;
+    column.sort();
+    background[gy * gw + gx] = count % 2 ? column[(count - 1) / 2]! : (column[count / 2 - 1]! + column[count / 2]!) / 2;
+  }
+  // Threshold from how much ordinary pixels differ from the background (noise, compression).
+  const diffs: number[] = [];
+  const probe = frames[picks[0]!]!.data;
+  for (let k = 0; k < gw * gh; k += 7) diffs.push(Math.abs(probe[Math.floor(k / gw) * stride * w + (k % gw) * stride]! - background[k]!));
+  diffs.sort((a, b) => a - b);
+  const threshold = Math.max(18, 5 * 1.4826 * (diffs[Math.floor(diffs.length / 2)] ?? 0));
+
+  let best: { box: Box; index: number; area: number } | undefined;
+  const mask = new Uint8Array(gw * gh);
+  const queue = new Int32Array(gw * gh);
+  for (const index of picks) {
+    const data = frames[index]!.data;
+    for (let k = 0; k < gw * gh; k++) mask[k] = Math.abs(data[Math.floor(k / gw) * stride * w + (k % gw) * stride]! - background[k]!) > threshold ? 1 : 0;
+    for (let start = 0; start < gw * gh; start++) {
+      if (mask[start] !== 1) continue;
+      let head = 0;
+      let tail = 0;
+      queue[tail++] = start;
+      mask[start] = 2;
+      let x0 = gw;
+      let y0 = gh;
+      let x1 = 0;
+      let y1 = 0;
+      while (head < tail) {
+        const k = queue[head++]!;
+        const kx = k % gw;
+        const ky = (k - kx) / gw;
+        if (kx < x0) x0 = kx;
+        if (kx > x1) x1 = kx;
+        if (ky < y0) y0 = ky;
+        if (ky > y1) y1 = ky;
+        for (let oy = -1; oy <= 1; oy++) for (let ox = -1; ox <= 1; ox++) {
+          const nx = kx + ox;
+          const ny = ky + oy;
+          if (nx < 0 || ny < 0 || nx >= gw || ny >= gh) continue;
+          const nk = ny * gw + nx;
+          if (mask[nk] === 1) {
+            mask[nk] = 2;
+            queue[tail++] = nk;
+          }
+        }
+      }
+      const area = tail;
+      if (area >= 12 && (!best || area > best.area)) {
+        best = { index, area, box: { x: x0 * stride, y: y0 * stride, w: (x1 - x0 + 1) * stride, h: (y1 - y0 + 1) * stride } };
+      }
+    }
+  }
+  return best && { box: best.box, index: best.index };
+}

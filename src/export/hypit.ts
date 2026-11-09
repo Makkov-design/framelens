@@ -137,7 +137,7 @@ export function hypitTimeline(spec: MotionSpec, workspace?: string): string {
       `- Shot ${shot.id}: in ${s2(shot.start)} s, out ${s2(shot.end)} s, length ${s2(shot.end - shot.start)} s (${shot.frames} frames).`,
       `- Colours: ${shot.palette.map((p) => `\`${safeHex(p)}\``).join(" ") || "none measured"}.`,
       ...(cut ? [`- Entered by a cut at ${s2(cut.t)} s (score ${cut.score}, ${cut.evidence}).`] : []),
-      ...moves.map((m) => `- Move at ${s2(m.start)} s to ${s2(m.end)} s (${m.frames} frames, ${m.easing}${m.suggestion ? `, starting curve ${oneLine(m.suggestion, 120)}` : ""}, fastest at ${Math.round(m.peakAt * 100)}% of the move; ${m.evidence}).`),
+      ...moves.map((m) => `- Move at ${s2(m.start)} s to ${s2(m.end)} s (${m.frames} frames, ${m.easing}${m.curve ? `, tracked curve ${oneLine(m.curve, 400)}` : m.suggestion ? `, starting curve ${oneLine(m.suggestion, 120)}` : ""}, fastest at ${Math.round(m.peakAt * 100)}% of the move; ${m.evidence}).`),
       ...(words.length ? [`- Words: ${words.slice(0, 40).map((w) => `“${oneLine(w.text, 60)}” ${s2(w.t)}–${s2(w.end)}`).join(", ")}${words.length > 40 ? `, … ${words.length - 40} more` : ""}.`] : []),
       ...(beats.length ? [`- Beats at ${beats.map((b) => s2(b.t)).join(", ")} s.`] : []),
       ...(hits.length ? [`- Strong audio hits at ${hits.map((h) => `${s2(h.t)} s (${h.strength.toFixed(2)})`).join(", ")}.`] : []),

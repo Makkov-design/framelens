@@ -8,6 +8,7 @@ import { formatTimestamp } from "../youtube.js";
 import { oneLine } from "../text.js";
 import { mergePalettes, palette, type Swatch } from "./palette.js";
 import type { ClassifiedChange, MotionEvent } from "./motion.js";
+import type { TrackedMove } from "../track/run.js";
 
 export type Evidence = "measured" | "derived" | "inferred";
 
@@ -37,7 +38,16 @@ export interface MotionSpec {
   typography: { role: string; family_guess?: string; weight?: number; case?: string; evidence: Evidence }[];
   shots: (Omit<Shot, "palette"> & { palette: string[] })[];
   systems: { id: string; role: string; start: number; end: number; states: unknown[] }[];
-  events: (MotionEvent & { kind: "move"; anchor?: string; evidence: Evidence })[];
+  events: (MotionEvent & {
+    kind: "move";
+    anchor?: string;
+    evidence: Evidence;
+    /** The `track` that measured this move's exact curve, and that curve as CSS. */
+    track?: string;
+    curve?: string;
+  })[];
+  /** Elements followed frame by frame with `track`, with the curve fitted to each property. */
+  tracks?: TrackedMove[];
   rhythm: { cuts: number; cutsPerMinute: number; meanShotSeconds: number; medianShotSeconds: number; movesPerMinute: number };
   audio: {
     tempo_bpm?: number;
@@ -182,7 +192,7 @@ export function styleMarkdown(spec: MotionSpec): { measured: string; skeleton: s
   const swatches = spec.palette.map((p) => `| \`${p.hex}\` | ${(p.share * 100).toFixed(1)}% | ${p.lightness} | ${p.chroma < 0.03 ? "neutral" : p.chroma} |`);
   const easing = new Map<string, number>();
   for (const e of spec.events) easing.set(e.easing, (easing.get(e.easing) ?? 0) + 1);
-  const moveLines = spec.events.slice(0, 40).map((e) => `| ${fmt(e.start)} | ${e.frames} | ${e.easing} | ${oneLine(e.suggestion, 120) || "—"} | ${e.peakAt} |`);
+  const moveLines = spec.events.slice(0, 40).map((e) => `| ${fmt(e.start)} | ${e.frames} | ${e.easing}${e.track ? ` (tracked ${e.track})` : ""} | ${oneLine(e.curve ?? e.suggestion, 160) || "—"} | ${e.peakAt} |`);
   const measured = [
     "## Measured",
     "",
@@ -196,9 +206,9 @@ export function styleMarkdown(spec: MotionSpec): { measured: string; skeleton: s
     "|---|---|---|---|",
     ...swatches,
     "",
-    `**Moves:** ${spec.events.length} (${[...easing.entries()].map(([k, v]) => `${v} ${k}`).join(", ") || "none"}). Easing families are derived from how fast the whole picture changes, so check important moves with \`frames\` every_frame and refine the curve.`,
+    `**Moves:** ${spec.events.length} (${[...easing.entries()].map(([k, v]) => `${v} ${k}`).join(", ") || "none"}). Easing families are derived from how fast the whole picture changes; run \`track\` on the moves that matter for their exact curves (marked "tracked", details in TRACK.md).`,
     "",
-    ...(moveLines.length ? ["| Starts | Frames | Family | Starting curve | Peak at |", "|---|---|---|---|---|", ...moveLines] : []),
+    ...(moveLines.length ? ["| Starts | Frames | Family | Curve | Peak at |", "|---|---|---|---|---|", ...moveLines] : []),
   ].join("\n");
   const skeleton = `# Style: ${oneLine(spec.source.title ?? spec.source.input)}
 

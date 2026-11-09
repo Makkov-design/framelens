@@ -31,6 +31,10 @@ import {
   type Shot,
 } from "./style/spec.js";
 import { Workspace, type SourceRecord } from "./workspace/workspace.js";
+import { linkTracks } from "./track/link.js";
+import { trackMarkdown, trackSvg } from "./track/report.js";
+import { trackWindow, type TrackedMove } from "./track/run.js";
+import type { Box } from "./track/tracker.js";
 
 /** The style pass reads every frame; longer references are analyzed in parts. */
 export const MAX_STYLE_SECONDS = 180;
@@ -206,8 +210,11 @@ export class Engine {
     const source = await this.source(input);
     const { transcript } = await this.transcript(source);
     const { boundaries } = source.probe.hasVideo ? await this.boundaries(input, { rate: 2, threshold: 0.3 }) : { boundaries: undefined };
+    // Moves found by an earlier `style` run: the plan points `track` at them.
+    const moves = source.ws.readJson<MotionSpec>("motion-spec.json")?.events.map((e) => ({ start: e.start, end: e.end, frames: e.frames, tracked: Boolean(e.track) }));
     const plan = buildPlan({
       probe: source.probe,
+      ...(moves?.length && { moves }),
       hasSpeech: Boolean(transcript?.segments.length),
       ...(boundaries && { boundaries }),
       ...(options.goal && { goal: options.goal }),
@@ -261,6 +268,9 @@ export class Engine {
     const events = motionEvents(energy, cutTimes, fps);
 
     const spec = buildSpec({ record, probe, range, changes, shots, overall, events, version: options.version, ...(transcript && { transcript }) });
+    // Tracked moves outlive a new style pass: they are measured on their own windows.
+    const tracks = ws.readJson<TrackedMove[]>("tracks.json");
+    if (tracks?.length) linkTracks(spec, tracks);
     const files: Record<string, string> = {
       spec: ws.writeJson("motion-spec.json", spec),
       style: writeWithMeasuredBlock(ws, "STYLE.md", styleMarkdown(spec).measured, styleMarkdown(spec).skeleton),
@@ -270,6 +280,64 @@ export class Engine {
     files.analysis = existsSync(analysis) ? analysis : ws.writeText("ANALYSIS.md", ANALYSIS_SKELETON(record.title ?? record.input));
     this.progress(ws, `style: ${shots.length} shots, ${events.length} moves, ${overall.length} palette colours (${start.toFixed(2)}–${end.toFixed(2)} s)${notes.length ? `; ${notes.join(" ")}` : ""}`);
     return { source, spec, files };
+  }
+
+  /**
+   * Follows one element through a window frame by frame and fits the exact timing curve of each property that moves
+   * (x, y, scale, opacity). The window defaults to a move found by `style`. Adds the result to tracks.json and
+   * motion-spec.json (where the style move it refines gets the curve), and writes TRACK.md and an SVG of the curves.
+   */
+  async track(
+    input: string,
+    options: { start?: number; end?: number; move?: number; box?: Box; at?: number } = {},
+  ): Promise<{ source: Source; track: TrackedMove; files: Record<string, string>; note?: string }> {
+    const source = await this.source(input);
+    const { probe, record, ws } = source;
+    if (!probe.hasVideo) throw new InvalidInputError("This source has no picture to track.");
+    const spec = ws.readJson<MotionSpec>("motion-spec.json");
+    let start = options.start;
+    let end = options.end;
+    let move = options.move;
+    let note: string | undefined;
+    if (start === undefined || end === undefined) {
+      const events = spec?.events ?? [];
+      if (move !== undefined && !events[move - 1]) throw new InvalidInputError(`There is no style move ${move}; motion-spec.json lists ${events.length}.`);
+      // Without a window: the given style move, else the first one that starts inside the given range, else the first.
+      const index = move !== undefined ? move - 1 : events.findIndex((e) => e.start >= (start ?? 0) - 0.05);
+      const event = events[index];
+      if (!event) {
+        throw new InvalidInputError(
+          spec ? "No style move to track in this range: pass start and end around the move." : "Pass start and end around the move, or run `style` first so `track` can use the moves it found.",
+        );
+      }
+      move = index + 1;
+      // Some rest on both sides: the fit finds where the move really starts and ends.
+      start = start ?? Math.max(0, event.start - 0.3);
+      end = end ?? Math.min(probe.duration, event.end + 0.4);
+      note = `Window from style move ${move} (${event.start.toFixed(3)}–${event.end.toFixed(3)} s).`;
+    }
+    const tracks = ws.readJson<TrackedMove[]>("tracks.json") ?? [];
+    const same = (t: TrackedMove) =>
+      Math.abs(t.window.start - start!) < 0.01 && Math.abs(t.window.end - end!) < 0.01 && (options.box ? !t.element.auto : t.element.auto);
+    const previous = tracks.find(same);
+    const id = previous?.id ?? `t${tracks.reduce((n, t) => Math.max(n, Number(t.id.slice(1)) || 0), 0) + 1}`;
+    const track = await trackWindow(record.mediaPath, probe, this.options.tools, {
+      start,
+      end,
+      id,
+      ...(options.box && { box: options.box }),
+      ...(options.at !== undefined && { at: options.at }),
+      ...(move !== undefined && { move }),
+    });
+    const all = [...tracks.filter((t) => t.id !== id), track].sort((a, b) => a.start - b.start || a.id.localeCompare(b.id));
+    const files: Record<string, string> = { tracks: ws.writeJson("tracks.json", all) };
+    if (spec) files.spec = ws.writeJson("motion-spec.json", linkTracks(spec, all));
+    const svgName = (t: TrackedMove) => `track-${t.id}.svg`;
+    files.svg = ws.writeText(svgName(track), trackSvg(track));
+    const md = trackMarkdown(all, svgName);
+    files.report = writeWithMeasuredBlock(ws, "TRACK.md", md.measured, md.skeleton);
+    this.progress(ws, `track ${id}: ${track.properties.map((p) => `${p.property} ${p.curve.kind}`).join(", ") || "nothing moved"} (${start.toFixed(2)}–${end.toFixed(2)} s)`);
+    return { source, track, files, ...(note && { note }) };
   }
 
   /**

@@ -7,7 +7,7 @@ export type Goal = (typeof GOALS)[number];
 export type VideoType = "talking-head" | "screen" | "motion-graphics" | "music-video" | "live-action" | "still";
 
 export interface PlanStep {
-  tool: "transcript" | "frames" | "boundaries" | "style" | "audio";
+  tool: "transcript" | "frames" | "boundaries" | "style" | "audio" | "track";
   args: Record<string, unknown>;
   why: string;
 }
@@ -88,6 +88,23 @@ export function busiestWindows(boundaries: Boundaries | undefined, duration: num
   return chosen.sort((a, b) => a.start - b.start);
 }
 
+/** Most `track` steps a plan lists; the rest are named in a note. */
+export const MAX_TRACK_STEPS = 6;
+
+/** After `style`: one `track` step per move that matters (the longest untracked ones), or one per move number. */
+function addTrackSteps(steps: PlanStep[], notes: string[], moves: { start: number; end: number; frames: number; tracked?: boolean }[] | undefined): void {
+  if (!moves) {
+    steps.push({ tool: "track", args: { move: 1, element: "auto" }, why: "after style: the exact curve (cubic-bezier or spring) of each move that matters; repeat with move 2, 3, …" });
+    return;
+  }
+  const open = moves.map((m, i) => ({ ...m, number: i + 1 })).filter((m) => !m.tracked);
+  const chosen = [...open].sort((a, b) => b.frames - a.frames || a.start - b.start).slice(0, MAX_TRACK_STEPS).sort((a, b) => a.start - b.start);
+  for (const m of chosen) {
+    steps.push({ tool: "track", args: { move: m.number, element: "auto" }, why: `exact curve of the move at ${m.start.toFixed(2)}–${m.end.toFixed(2)} s (${m.frames} frames); pass a box when several things move` });
+  }
+  if (open.length > chosen.length) notes.push(`${open.length - chosen.length} more moves can be tracked the same way (track with move: n).`);
+}
+
 export function buildPlan(input: {
   goal?: Goal;
   request?: string;
@@ -95,6 +112,8 @@ export function buildPlan(input: {
   boundaries?: Boundaries;
   hasSpeech: boolean;
   phrase?: string;
+  /** Moves from an earlier `style` run, to point `track` at. */
+  moves?: { start: number; end: number; frames: number; tracked?: boolean }[];
 }): Plan {
   const { probe, boundaries, hasSpeech } = input;
   const { type, reasons } = classify(probe, boundaries, hasSpeech);
@@ -162,6 +181,7 @@ export function buildPlan(input: {
         addSheets(Math.ceil(probe.fps ?? 30));
       }
       steps.push({ tool: "style", args: {}, why: "palette, shots, systems, STYLE.md and motion-spec.json (2.1)" });
+      addTrackSteps(steps, notes, input.moves);
       if ((boundaries?.candidates.length ?? 0) > events.length) notes.push(`${boundaries!.candidates.length - events.length} more changes: inspect them the same way if they matter.`);
       break;
     }

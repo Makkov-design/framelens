@@ -3,6 +3,8 @@ import { dirname, join } from "node:path";
 import type { EasingFamily } from "../style/motion.js";
 import type { MotionSpec } from "../style/spec.js";
 import { oneLine, safeHex } from "../text.js";
+import { cssEasing, curveAt, curveFamily, curveLabel, safeCurve, springPoints, type Curve } from "../track/curve.js";
+import { primaryCurve } from "../track/run.js";
 import { exportAfterEffects } from "./after-effects.js";
 import { exportHypit } from "./hypit.js";
 import { exportLottie } from "./lottie.js";
@@ -34,8 +36,62 @@ interface Scene {
   duration: number;
   background: string;
   accent: string;
-  /** The first move inside the shot, if any: when the title enters, how long it takes and with which curve. */
-  move?: { offset: number; seconds: number; easing: EasingFamily };
+  /**
+   * The first move inside the shot, if any: when the title enters, how long it takes and with which curve. A move
+   * measured with `track` carries its fitted `curve`; otherwise only the easing family is known.
+   */
+  move?: SceneMove;
+}
+
+export interface SceneMove {
+  offset: number;
+  seconds: number;
+  easing: EasingFamily;
+  curve?: Curve;
+  track?: string;
+}
+
+/** The move's cubic-bezier: the tracked one, a straight line, or the family's; undefined for springs and steps. */
+export function moveBezier(move: Pick<SceneMove, "easing" | "curve">): [number, number, number, number] | undefined {
+  if (!move.curve) return BEZIER[move.easing];
+  if (move.curve.kind === "bezier") return move.curve.bezier;
+  if (move.curve.kind === "linear") return [0, 0, 1, 1];
+  return undefined;
+}
+
+/** The move's easing as CSS: the tracked curve exactly (linear() for a spring), else the family's cubic-bezier. */
+export function moveCss(move: Pick<SceneMove, "easing" | "curve">): string {
+  return move.curve ? cssEasing(move.curve) : `cubic-bezier(${BEZIER[move.easing].join(", ")})`;
+}
+
+/**
+ * Keyframes for curves that two bezier keys cannot carry: a spring sampled on every frame (straight segments), or
+ * the jumps of steps (held keys). Each key is [progress through the move 0..1, value progress]. Undefined otherwise.
+ */
+export function moveKeys(move: Pick<SceneMove, "seconds" | "curve">, fps: number): { keys: [number, number][]; hold: boolean } | undefined {
+  const curve = move.curve;
+  if (curve?.kind === "steps") return { keys: Array.from({ length: curve.steps + 1 }, (_, k) => [r3(k / curve.steps), r3(k / curve.steps)] as [number, number]), hold: true };
+  if (curve?.kind !== "spring") return undefined;
+  const count = Math.max(2, Math.min(240, Math.round(move.seconds * fps)));
+  return { keys: Array.from({ length: count + 1 }, (_, i) => [r3(i / count), Math.round(curveAt(curve, i / count) * 10000) / 10000] as [number, number]), hold: false };
+}
+
+/** The tracked curve that stands for a move in a shot: the first track whose primary property starts in it. */
+function trackedMove(spec: MotionSpec, shot: { start: number; end: number }, fps: number): SceneMove | undefined {
+  for (const track of spec.tracks ?? []) {
+    const p = track && Array.isArray(track.properties) ? primaryCurve(track) : undefined;
+    const curve = p && safeCurve(p.curve);
+    if (!p || !curve || !Number.isFinite(p.start) || !Number.isFinite(p.seconds)) continue;
+    if (p.start < shot.start || p.start >= shot.end) continue;
+    return {
+      offset: r3(Math.max(0, p.start - shot.start)),
+      seconds: r3(Math.min(3600, Math.max(1 / fps, p.seconds))),
+      easing: curveFamily(curve),
+      curve,
+      track: String(track.id).replace(/[^A-Za-z0-9_-]/g, "").slice(0, 16),
+    };
+  }
+  return undefined;
 }
 
 export const r3 = (n: number) => Math.round(n * 1000) / 1000;
@@ -50,6 +106,7 @@ export function scenesFromSpec(spec: MotionSpec): Scene[] {
     const start = r3(shot.start - spec.range.start);
     const duration = r3(Math.max(1 / (spec.timebase.fps ?? 30), shot.end - shot.start));
     const event = spec.events.find((e) => e.start >= shot.start && e.start < shot.end);
+    const tracked = trackedMove(spec, shot, spec.timebase.fps ?? 30);
     const colours = shot.palette.map((p) => safeHex(p, ""));
     const background = colours[0] || fallback;
     const accent = colours.find((p) => p && p !== background) ?? spec.palette.map((p) => safeHex(p.hex, "")).find((p) => p && p !== background) ?? "#FFFFFF";
@@ -59,7 +116,8 @@ export function scenesFromSpec(spec: MotionSpec): Scene[] {
       duration,
       background,
       accent,
-      ...(event && {
+      ...(tracked && { move: tracked }),
+      ...(!tracked && event && {
         move: {
           offset: r3(Math.max(0, event.start - shot.start)),
           seconds: r3(Math.max(1, event.frames) / (spec.timebase.fps ?? 30)),
@@ -92,9 +150,47 @@ content, then refine every move against the reference with \`frames\` every_fram
 
 - Canvas ${spec.timebase.width ?? 1920}×${spec.timebase.height ?? 1080} at ${fps} fps, ${spec.shots.length} shots, ${spec.rhythm.cuts} cuts.
 - Rhythm: median shot ${spec.rhythm.medianShotSeconds} s, ${spec.rhythm.cutsPerMinute} cuts per minute${spec.audio.tempo_bpm ? `, music ${spec.audio.tempo_bpm} BPM` : ""}.
-- Easing families are derived from whole-picture motion; they are a family to start from, not a fitted curve.
+- ${tracksNote(spec)}
 - Check the result: render it, then run Frame Lens \`compare\` with the reference and your render.
 `;
+}
+
+function tracksNote(spec: MotionSpec): string {
+  const tracked = (spec.tracks ?? []).filter((t) => t && Array.isArray(t.properties) && t.properties.length);
+  if (!tracked.length) return "Easing families are derived from whole-picture motion; they are a family to start from, not a fitted curve. Run Frame Lens `track` on a move for its exact curve.";
+  const list = tracked.slice(0, 12).map((t) => {
+    const p = primaryCurve(t);
+    const curve = p && safeCurve(p.curve);
+    return `${String(t.id).replace(/[^A-Za-z0-9_-]/g, "")} at ${Number(t.start).toFixed(3)} s: ${curve ? curveLabel(curve) : "no curve"}`;
+  });
+  return `Moves tracked with \`track\` use their fitted curves (${list.join("; ")}); the other moves use a derived easing family.`;
+}
+
+/** JavaScript for GSAP eases that are not built in: an exact cubic-bezier, a curve through points, and steps. */
+const GSAP_HELPERS = `    // Frame Lens eases: an exact CSS cubic-bezier, a spring as points on every frame (straight between them), steps.
+    const flBezier = (x1, y1, x2, y2) => (u) => {
+      if (u <= 0 || u >= 1) return u <= 0 ? 0 : 1;
+      const bx = (s) => 3 * (1 - s) * (1 - s) * s * x1 + 3 * (1 - s) * s * s * x2 + s * s * s;
+      let lo = 0, hi = 1, s = u;
+      for (let i = 0; i < 40; i++) { if (bx(s) < u) lo = s; else hi = s; s = (lo + hi) / 2; }
+      return 3 * (1 - s) * (1 - s) * s * y1 + 3 * (1 - s) * s * s * y2 + s * s * s;
+    };
+    const flPoints = (p) => (u) => {
+      if (u <= 0 || u >= 1) return u <= 0 ? 0 : 1;
+      const x = u * (p.length - 1), i = Math.floor(x);
+      return p[i] + (p[i + 1] - p[i]) * (x - i);
+    };
+    const flSteps = (n) => (u) => (u >= 1 ? 1 : Math.floor(u * n) / n);
+`;
+
+/** The GSAP `ease` value for a move: a built-in name, or a helper call for a tracked curve. */
+function gsapEase(move: SceneMove): { ease: string; helpers: boolean } {
+  const c = move.curve;
+  if (!c) return { ease: JSON.stringify(GSAP_EASE[move.easing]), helpers: false };
+  if (c.kind === "linear") return { ease: '"none"', helpers: false };
+  if (c.kind === "bezier") return { ease: `flBezier(${c.bezier.join(", ")})`, helpers: true };
+  if (c.kind === "steps") return { ease: `flSteps(${c.steps})`, helpers: true };
+  return { ease: `flPoints([${springPoints(c).join(", ")}])`, helpers: true };
 }
 
 export function exportHyperframes(spec: MotionSpec, root: string): string[] {
@@ -138,8 +234,9 @@ ${hosts}
   for (const s of scenes) {
     const titleStart = s.move ? s.move.offset : Math.min(0.2, s.duration / 4);
     const titleDuration = r3(Math.max(0.01, s.duration - titleStart - 0.01));
+    const ease = s.move && gsapEase(s.move);
     const tween = s.move
-      ? `tl.fromTo("#${s.id}-title", { opacity: 0, y: 60 }, { opacity: 1, y: 0, duration: ${s.move.seconds}, ease: "${GSAP_EASE[s.move.easing]}" }, ${s.move.offset});`
+      ? `tl.fromTo("#${s.id}-title", { opacity: 0, y: 60 }, { opacity: 1, y: 0, duration: ${s.move.seconds}, ease: ${ease!.ease} }, ${s.move.offset});${s.move.track ? ` // tracked ${s.move.track}` : ""}`
       : `tl.fromTo("#${s.id}-title", { opacity: 0 }, { opacity: 1, duration: 0.2, ease: "power2.out" }, ${r3(titleStart)});`;
     files[`compositions/${s.id}.html`] = `<template>
   <style>
@@ -160,7 +257,7 @@ ${hosts}
     <h1 id="${s.id}-title" class="clip" data-start="${r3(titleStart)}" data-duration="${titleDuration}">${s.id.replace("-", " ")}</h1>
   </div>
   <script>
-    const tl = gsap.timeline({ paused: true });
+${ease?.helpers ? GSAP_HELPERS : ""}    const tl = gsap.timeline({ paused: true });
     ${tween}
     window.__timelines["${s.id}"] = tl;
   </script>
@@ -180,7 +277,14 @@ export function exportRemotion(spec: MotionSpec, root: string): string[] {
     durationInFrames: frames(s.duration),
     background: s.background,
     accent: s.accent,
-    ...(s.move && { enterAt: Math.round(s.move.offset * fps), enterFrames: frames(s.move.seconds), bezier: BEZIER[s.move.easing] }),
+    ...(s.move && {
+      enterAt: Math.round(s.move.offset * fps),
+      enterFrames: frames(s.move.seconds),
+      ...(moveBezier(s.move) && { bezier: moveBezier(s.move) }),
+      ...(s.move.curve?.kind === "spring" && { spring: { stiffness: s.move.curve.stiffness, damping: s.move.curve.damping, mass: s.move.curve.mass } }),
+      ...(s.move.curve?.kind === "steps" && { steps: s.move.curve.steps }),
+      ...(s.move.track && { track: s.move.track }),
+    }),
   }));
   const files: Record<string, string> = {
     "package.json": `${JSON.stringify(
@@ -214,21 +318,34 @@ export const CUTS = ${JSON.stringify(spec.anchors.cuts.map((c) => Math.round((c.
 export const BEATS = ${JSON.stringify(spec.anchors.beats.map((b) => Math.round((b.t - spec.range.start) * fps)))};
 export const SCENES = ${JSON.stringify(sceneData, null, 2)};
 `,
-    "src/Reference.tsx": `import { AbsoluteFill, Easing, Sequence, interpolate, useCurrentFrame } from "remotion";
+    "src/Reference.tsx": `import { AbsoluteFill, Easing, Sequence, interpolate, spring, useCurrentFrame, useVideoConfig } from "remotion";
 import { HEIGHT, SCENES } from "./timing";
 
-type SceneData = (typeof SCENES)[number] & { enterAt?: number; enterFrames?: number; bezier?: number[] };
+type SceneData = (typeof SCENES)[number] & {
+  enterAt?: number;
+  enterFrames?: number;
+  bezier?: number[];
+  /** A move measured with Frame Lens track that settles like a spring. */
+  spring?: { stiffness: number; damping: number; mass: number };
+  steps?: number;
+};
 
 const Scene = ({ scene }: { scene: SceneData }) => {
   const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
   const enterAt = scene.enterAt ?? 6;
   const enterFrames = scene.enterFrames ?? 6;
   const [x1, y1, x2, y2] = scene.bezier ?? [0.25, 0.1, 0.25, 1];
-  const progress = interpolate(frame, [enterAt, enterAt + enterFrames], [0, 1], {
-    easing: Easing.bezier(x1!, y1!, x2!, y2!),
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-  });
+  const linear = interpolate(frame, [enterAt, enterAt + enterFrames], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  const progress = scene.spring
+    ? spring({ frame: frame - enterAt, fps, config: scene.spring })
+    : scene.steps
+      ? (linear >= 1 ? 1 : Math.floor(linear * scene.steps) / scene.steps)
+      : interpolate(frame, [enterAt, enterAt + enterFrames], [0, 1], {
+          easing: Easing.bezier(x1!, y1!, x2!, y2!),
+          extrapolateLeft: "clamp",
+          extrapolateRight: "clamp",
+        });
   return (
     <AbsoluteFill style={{ background: scene.background, alignItems: "center", justifyContent: "center" }}>
       <h1 style={{ color: scene.accent, fontSize: HEIGHT / 10, fontWeight: 800, textTransform: "uppercase", opacity: progress, transform: \`translateY(\${(1 - progress) * 60}px)\` }}>
@@ -260,14 +377,15 @@ export function exportCss(spec: MotionSpec, root: string): string[] {
   const easings = Object.entries(BEZIER)
     .filter(([family]) => family !== "unclear")
     .map(([family, b]) => `  --fl-ease-${family}: cubic-bezier(${b.join(", ")});`)
+    .concat(scenes.filter((s) => s.move?.curve).map((s) => `  --fl-ease-${s.id}: ${moveCss(s.move!)}; /* tracked ${s.move!.track} */`))
     .join("\n");
   const sceneCss = scenes
     .map((s) => {
-      const enter = s.move ?? { offset: 0.2, seconds: 0.2, easing: "ease-out" as EasingFamily };
+      const enter: SceneMove = s.move ?? { offset: 0.2, seconds: 0.2, easing: "ease-out" };
       // No fill mode: a scene is visible only during its slot. With `both` every scene showed from the first
       // frame and the last one in the page covered all the others.
       return `#${s.id} { background: ${s.background}; animation: fl-show ${s.duration}s linear ${s.start}s; }
-#${s.id} h1 { color: ${s.accent}; animation: fl-enter ${enter.seconds}s cubic-bezier(${BEZIER[enter.easing].join(", ")}) ${r3(s.start + enter.offset)}s both; }`;
+#${s.id} h1 { color: ${s.accent}; animation: fl-enter ${enter.seconds}s ${moveCss(enter)} ${r3(s.start + enter.offset)}s both; }`;
     })
     .join("\n");
   const files: Record<string, string> = {

@@ -62,7 +62,7 @@ describe.skipIf(!tools)("local tools over MCP", () => {
 
   it("lists the local tools next to the Gemini ones", async () => {
     const names = (await client.listTools()).tools.map((t) => t.name);
-    expect(names).toEqual(expect.arrayContaining(["probe", "plan", "transcript", "frames", "boundaries", "summarize_youtube_video"]));
+    expect(names).toEqual(expect.arrayContaining(["probe", "plan", "transcript", "frames", "boundaries", "track", "summarize_youtube_video"]));
   });
 
   it("probes a file into its workspace", async () => {
