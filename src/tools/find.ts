@@ -3,6 +3,7 @@ import { delimiter, join } from "node:path";
 import { ToolError } from "./errors.js";
 import { framelensHome, readEnv, type Env } from "./env.js";
 import { run } from "./run.js";
+import { ffmpegPinnedPath } from "./ffmpeg.js";
 import { ytDlpPinnedPath } from "./ytdlp.js";
 
 export type ToolName = "ffmpeg" | "ffprobe" | "yt-dlp";
@@ -16,7 +17,7 @@ export const TOOL_ENV: Record<ToolName, string> = {
 export interface ToolLocation {
   name: ToolName;
   path: string;
-  /** env: FRAMELENS_* override, pinned: downloaded by `doctor --prepare`, path: PATH, winget: WinGet folders */
+  /** env: FRAMELENS_* override, pinned: downloaded by Frame Lens (automatically or `doctor --prepare`), path: PATH, winget: WinGet folders */
   source: "env" | "pinned" | "path" | "winget";
 }
 
@@ -80,7 +81,8 @@ function fromWinget(name: ToolName, env: Env): string | undefined {
 }
 
 /**
- * Looks for a tool: FRAMELENS_* override, then (yt-dlp only) the pinned copy, then PATH, then WinGet folders.
+ * Looks for a tool: FRAMELENS_* override, then (yt-dlp only) the pinned copy, then PATH, then WinGet folders, then
+ * (ffmpeg and ffprobe) the pinned copy.
  * Returns undefined when it is nowhere. Throws when an override points at a missing file.
  */
 export function findTool(name: ToolName, options: FindOptions = {}): ToolLocation | undefined {
@@ -106,6 +108,12 @@ export function findTool(name: ToolName, options: FindOptions = {}): ToolLocatio
   if (platform === "win32") {
     const winget = fromWinget(name, env);
     if (winget) return { name, path: winget, source: "winget" };
+  }
+
+  // The pinned ffmpeg comes last: an ffmpeg the user installed is preferred over the one Frame Lens fetched.
+  if (name !== "yt-dlp") {
+    const pinned = ffmpegPinnedPath(framelensHome(env), name, platform);
+    if (pinned && isFile(pinned, platform)) return { name, path: pinned, source: "pinned" };
   }
   return undefined;
 }
@@ -142,7 +150,7 @@ export function missingToolMessage(name: ToolName): string {
     return "yt-dlp is not installed. Run `npx framelens doctor --prepare` to download the pinned version, or set FRAMELENS_YTDLP to its path.";
   }
   return (
-    `${name} is not installed. Install ffmpeg (Windows: winget install Gyan.FFmpeg, macOS: brew install ffmpeg, ` +
-    `Linux: apt install ffmpeg) or set ${TOOL_ENV[name]} to its path. \`npx framelens doctor\` shows what is found.`
+    `${name} is not installed. Run \`npx framelens doctor --prepare\` to download the pinned build, install ffmpeg ` +
+    `(Windows: winget install Gyan.FFmpeg, macOS: brew install ffmpeg, Linux: apt install ffmpeg) or set ${TOOL_ENV[name]} to its path.`
   );
 }

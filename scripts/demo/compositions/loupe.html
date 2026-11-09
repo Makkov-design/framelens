@@ -1,0 +1,119 @@
+<template>
+  <style>
+    @font-face { font-family: "Panchang"; src: url("assets/fonts/panchang-700.woff2") format("woff2"); font-weight: 700; }
+    @font-face { font-family: "General Sans"; src: url("assets/fonts/general-sans-400.woff2") format("woff2"); font-weight: 400; }
+    @font-face { font-family: "General Sans"; src: url("assets/fonts/general-sans-600.woff2") format("woff2"); font-weight: 600; }
+    #root { position: absolute; inset: 0; background: oklch(82% 0.2 142); color: oklch(21% 0.035 155); }
+    #lp-title { position: absolute; left: 96px; top: 80px; font: 700 56px/1 "Panchang", sans-serif; letter-spacing: -0.01em; }
+    #lp-frame { position: absolute; left: 96px; top: 176px; width: 1152px; height: 648px; border-radius: 14px; overflow: hidden; background: oklch(21% 0.035 155); }
+    .lp-shot { position: absolute; left: 0; top: 0; width: 1152px; height: 648px; object-fit: cover; }
+    #lp-ruler { position: absolute; left: 96px; top: 848px; width: 1152px; height: 140px; }
+    #lp-base { position: absolute; left: 0; top: 56px; width: 1152px; height: 2px; background: oklch(21% 0.035 155); }
+    #lp-bands { position: absolute; left: 0; top: 64px; width: 1152px; height: 24px; }
+    .lp-band { position: absolute; top: 0; height: 24px; border-right: 2px solid oklch(82% 0.2 142); }
+    .lp-cut { position: absolute; top: 0; width: 4px; height: 56px; background: oklch(58% 0.22 27); transform-origin: 50% 100%; }
+    .lp-sec { position: absolute; top: 100px; font: 400 28px/1 "JetBrains Mono", monospace; transform: translateX(-2px); }
+    #lp-head { position: absolute; left: 96px; top: 176px; width: 4px; height: 728px; background: oklch(21% 0.035 155); }
+    #lp-read { position: absolute; left: 1328px; top: 176px; width: 496px; }
+    .lp-row { padding: 20px 0 22px; border-top: 2px solid oklch(21% 0.035 155); }
+    .lp-row dt { font: 600 28px/1 "General Sans", sans-serif; color: oklch(20% 0.05 150); margin-bottom: 14px; }
+    .lp-row dd { font: 400 44px/1 "JetBrains Mono", monospace; font-variant-numeric: tabular-nums; }
+    #lp-cuts dd { color: oklch(52% 0.21 27); }
+  </style>
+  <div id="root" data-composition-id="loupe" data-width="1920" data-height="1080">
+    <h2 id="lp-title" class="clip" data-start="0" data-duration="7">Every cut, to the frame</h2>
+
+    <div id="lp-frame">
+      <!-- One real frame per shot of the trailer; each swaps in when the playhead crosses that shot's measured cut. -->
+      <img id="lp-s01" class="clip lp-shot" src="assets/bbb/f10.webp" data-start="0" data-duration="2.033" alt="" />
+      <img id="lp-s02" class="clip lp-shot" src="assets/bbb/f21.webp" data-start="2.033" data-duration="0.367" alt="" />
+      <img id="lp-s03" class="clip lp-shot" src="assets/bbb/f25.webp" data-start="2.4" data-duration="0.367" alt="" />
+      <img id="lp-s04" class="clip lp-shot" src="assets/bbb/f28.webp" data-start="2.767" data-duration="0.133" alt="" />
+      <img id="lp-s05" class="clip lp-shot" src="assets/bbb/f30.webp" data-start="2.9" data-duration="0.2" alt="" />
+      <img id="lp-s06" class="clip lp-shot" src="assets/bbb/f32.webp" data-start="3.1" data-duration="0.167" alt="" />
+      <img id="lp-s07" class="clip lp-shot" src="assets/bbb/f34.webp" data-start="3.267" data-duration="0.133" alt="" />
+      <img id="lp-s08" class="clip lp-shot" src="assets/bbb/f43.webp" data-start="3.4" data-duration="1.5" alt="" />
+      <img id="lp-s09" class="clip lp-shot" src="assets/bbb/f52.webp" data-start="4.9" data-duration="0.167" alt="" />
+      <img id="lp-s10" class="clip lp-shot" src="assets/bbb/f54.webp" data-start="5.067" data-duration="0.733" alt="" />
+      <img id="lp-s11" class="clip lp-shot" src="assets/bbb/f62.webp" data-start="5.8" data-duration="0.2" alt="" />
+      <img id="lp-s12" class="clip lp-shot" src="assets/bbb/f65.webp" data-start="6" data-duration="1" alt="" />
+    </div>
+
+    <div id="lp-ruler">
+      <div id="lp-base"></div>
+      <div id="lp-bands">
+        <div class="lp-band" style="left:0.0px;width:317.0px;background:#414D42"></div>
+        <div class="lp-band" style="left:317.0px;width:74.0px;background:#F4D7D2"></div>
+        <div class="lp-band" style="left:391.0px;width:69.9px;background:#FDFDFD"></div>
+        <div class="lp-band" style="left:460.9px;width:23.7px;background:#837358"></div>
+        <div class="lp-band" style="left:484.6px;width:39.1px;background:#F4D7D2"></div>
+        <div class="lp-band" style="left:523.7px;width:34.9px;background:#8F9051"></div>
+        <div class="lp-band" style="left:558.6px;width:21.0px;background:#EECFC3"></div>
+        <div class="lp-band" style="left:579.6px;width:290.5px;background:#101310"></div>
+        <div class="lp-band" style="left:870.1px;width:37.7px;background:#A7C3EE"></div>
+        <div class="lp-band" style="left:907.8px;width:138.2px;background:#FCFDFD"></div>
+        <div class="lp-band" style="left:1046.0px;width:37.7px;background:#FDFDFD"></div>
+        <div class="lp-band" style="left:1083.7px;width:68.3px;background:#FCFDFD"></div>
+      </div>
+      <div class="lp-cut" id="lp-cut-01" style="left:315.0px"></div>
+      <div class="lp-cut" id="lp-cut-02" style="left:389.0px"></div>
+      <div class="lp-cut" id="lp-cut-03" style="left:458.9px"></div>
+      <div class="lp-cut" id="lp-cut-04" style="left:482.6px"></div>
+      <div class="lp-cut" id="lp-cut-05" style="left:521.7px"></div>
+      <div class="lp-cut" id="lp-cut-06" style="left:556.6px"></div>
+      <div class="lp-cut" id="lp-cut-07" style="left:577.6px"></div>
+      <div class="lp-cut" id="lp-cut-08" style="left:868.1px"></div>
+      <div class="lp-cut" id="lp-cut-09" style="left:905.8px"></div>
+      <div class="lp-cut" id="lp-cut-10" style="left:1044.0px"></div>
+      <div class="lp-cut" id="lp-cut-11" style="left:1081.7px"></div>
+      <span class="lp-sec" style="left:0.0px">0</span>
+      <span class="lp-sec" style="left:174.6px">5</span>
+      <span class="lp-sec" style="left:349.1px">10</span>
+      <span class="lp-sec" style="left:523.7px">15</span>
+      <span class="lp-sec" style="left:698.3px">20</span>
+      <span class="lp-sec" style="left:872.9px">25</span>
+      <span class="lp-sec" style="left:1047.4px">30 s</span>
+    </div>
+
+    <div id="lp-head"></div>
+
+    <dl id="lp-read">
+      <div class="lp-row"><dt>Trailer time</dt><dd id="lp-time">0.00 s</dd></div>
+      <div class="lp-row"><dt>Trailer frame, 25 fps</dt><dd id="lp-fr">0</dd></div>
+      <div class="lp-row"><dt>Shot</dt><dd id="lp-shot">1 of 12</dd></div>
+      <div class="lp-row" id="lp-cuts"><dt>Cuts measured</dt><dd id="lp-ncut">0</dd></div>
+    </dl>
+  </div>
+  <script>
+    // Frame Lens's reading of the Big Buck Bunny trailer (docs/assets/bbb/reading.js): duration and cut times.
+    const DUR = 32.995;
+    const CUTS = [9.08, 11.2, 13.2, 13.88, 15, 16, 16.6, 24.92, 26, 29.96, 31.04];
+    const K = 0.18; // demo seconds per trailer second
+    const SWEEP_AT = 0.4; // local start of the playhead sweep
+    const at = (c) => Math.round((SWEEP_AT + K * c) * 30) / 30; // on a whole frame, like the image swaps
+
+    const tl = gsap.timeline({ paused: true });
+    tl.fromTo("#lp-title", { opacity: 0, filter: "blur(8px)" }, { opacity: 1, filter: "blur(0px)", duration: 0.18, ease: "power2.out" }, 0.04);
+    tl.fromTo("#lp-read .lp-row", { opacity: 0 }, { opacity: 1, duration: 0.16, ease: "power2.out", stagger: 0.06 }, 0.16);
+    tl.set(".lp-cut", { scaleY: 0 }, 0);
+    // Bands are revealed behind the playhead; the playhead itself is progress, so linear.
+    const prog = { t: 0 };
+    tl.fromTo("#lp-bands", { clipPath: "inset(0 100% 0 0)" }, { clipPath: "inset(0 0% 0 0)", duration: K * DUR, ease: "none" }, SWEEP_AT);
+    tl.fromTo("#lp-head", { x: 0 }, { x: 1152, duration: K * DUR, ease: "none" }, SWEEP_AT);
+    tl.fromTo(prog, { t: 0 }, {
+      t: DUR, duration: K * DUR, ease: "none",
+      onUpdate: () => {
+        const t = prog.t;
+        const n = CUTS.filter((c) => at(c) <= tl.time() + 1e-6).length;
+        document.querySelector("#lp-time").textContent = t.toFixed(2) + " s";
+        document.querySelector("#lp-fr").textContent = String(Math.round(t * 25));
+        document.querySelector("#lp-shot").textContent = (n + 1) + " of 12";
+        document.querySelector("#lp-ncut").textContent = String(n);
+      },
+    }, SWEEP_AT);
+    CUTS.forEach((c, i) => {
+      tl.fromTo("#lp-cut-" + String(i + 1).padStart(2, "0"), { scaleY: 0 }, { scaleY: 1, duration: 0.12, ease: "expo.out" }, at(c));
+    });
+    window.__timelines["loupe"] = tl;
+  </script>
+</template>

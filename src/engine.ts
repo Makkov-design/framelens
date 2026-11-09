@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { appendFileSync, existsSync, readdirSync, statSync } from "node:fs";
+import { appendFileSync, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { InvalidInputError } from "./errors.js";
 import { oneLine } from "./text.js";
@@ -13,7 +13,8 @@ import { buildPlan, type Goal, type Plan } from "./router/plan.js";
 import { findPhrase, readCaptions, toMarkdown, wordsAt, type Transcript } from "./speech/transcript.js";
 import { analyzeAudio, spectrogram, type AudioAnalysis } from "./audio/analyze.js";
 import { readPage, type PageResult } from "./browser/read.js";
-import { specFromPage } from "./browser/web.js";
+import { cleanReading, specFromPage, type PageReading } from "./browser/web.js";
+import { inboxContents, inboxNote, newestInboxItem, newestInboxReading } from "./sources/inbox.js";
 import { matchCuts, paletteDistance, similarity, verdict, type Comparison } from "./compare/compare.js";
 import { exportSpec, type ExportTarget } from "./export/exporters.js";
 import { onBeatRatio } from "./audio/dsp.js";
@@ -107,6 +108,28 @@ export const localFileResolver: SourceResolver = async (input, { workspaceRoot }
 
 const r3 = (n: number) => Math.round(n * 1000) / 1000;
 
+/** A page reading is a few hundred KB; anything far larger is not one. */
+const MAX_READING_BYTES = 20 * 1024 * 1024;
+
+/**
+ * A page reading saved by the browser extension (or a web.json): checked to be one, then cleaned like a live
+ * reading, because the page it came from wrote every string in it.
+ */
+export function readSavedReading(file: string): { reading: PageReading; capturedAt?: number } {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(file, "utf8").replace(/^\uFEFF/, ""));
+  } catch {
+    throw new InvalidInputError(`${file} is not JSON. Pass a .framelens.json file the Frame Lens browser extension saved.`);
+  }
+  const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const marked = typeof r.framelens === "string" && r.framelens.startsWith("framelens.page-reading/");
+  const shaped = Array.isArray(r.animations) && typeof r.url === "string" && r.viewport !== null && typeof r.viewport === "object";
+  if (!marked && !shaped) throw new InvalidInputError(`${file} is not a page reading. Pass a .framelens.json file the Frame Lens browser extension saved, or a web.json.`);
+  const capturedAt = typeof r.capturedAt === "string" ? Date.parse(r.capturedAt) : NaN;
+  return { reading: cleanReading(raw), ...(Number.isFinite(capturedAt) && capturedAt <= Date.now() + 60_000 && { capturedAt }) };
+}
+
 export class Engine {
   constructor(
     private readonly options: {
@@ -115,8 +138,15 @@ export class Engine {
       root: string;
       logger: Logger;
       transcriptFallback?: TranscriptFallback;
+      /** Settings for `inbox` (FRAMELENS_INBOX, FRAMELENS_DOWNLOADS); the process environment by default. */
+      env?: Record<string, string | undefined>;
     },
   ) {}
+
+  /** The absolute folder that holds every source's workspace. */
+  get root(): string {
+    return resolve(this.options.root);
+  }
 
   /** Resolves and probes a source; the probe is kept in the workspace. */
   async source(input: string): Promise<Source> {
@@ -428,41 +458,80 @@ export class Engine {
   }
 
   /** Writes a starter project for a renderer from the source's motion-spec.json (running `style` first if needed). */
-  async export(input: string, target: ExportTarget, version: string): Promise<{ ws: Workspace; title: string; dir: string; files: string[] }> {
+  async export(input: string, target: ExportTarget, version: string, env: Record<string, string | undefined> = this.options.env ?? process.env): Promise<{ ws: Workspace; title: string; dir: string; files: string[]; inboxNote?: string }> {
+    // `inbox`: the newest video or page reading. When only one of the two was already worked on (`web inbox`, or
+    // `style inbox`), that one, since it is what the user just looked at; otherwise the newer of the two.
+    let wanted = input;
+    let note: string | undefined;
+    if (input.trim().toLowerCase() === "inbox") {
+      const { media, reading } = inboxContents(env);
+      const worked = [reading && this.webWorkspace(reading.path) ? reading : undefined, media && this.hasMediaWorkspace(media.path) ? media : undefined].filter((x) => x !== undefined);
+      const item = worked.length === 1 ? worked[0]! : newestInboxItem(env);
+      wanted = item.path;
+      const other = item.kind === "reading" ? media : reading;
+      if (other) note = `The inbox also has a ${other.kind === "reading" ? "page reading" : "video"}, ${other.path}; this export is from ${item.path}. Pass a path to export the other.`;
+      if (item.kind === "reading" && !this.webWorkspace(item.path)) await this.web(item.path, version, env);
+    }
     // A web page read with `web` has its spec in its own workspace; anything else is a video source.
-    const web = this.webWorkspace(input);
+    const web = this.webWorkspace(wanted);
     let ws: Workspace;
     let spec: MotionSpec | undefined;
     if (web) {
       ws = web;
       spec = web.readJson<MotionSpec>("motion-spec.json");
     } else {
-      const source = await this.source(input);
+      const source = await this.source(wanted);
       ws = source.ws;
-      spec = ws.readJson<MotionSpec>("motion-spec.json") ?? (await this.style(input, { version })).spec;
+      spec = ws.readJson<MotionSpec>("motion-spec.json") ?? (await this.style(wanted, { version })).spec;
     }
     const dir = ws.ensure("export", target);
     const files = exportSpec(spec!, target, dir, { workspace: ws.dir });
     this.progress(ws, `export: ${target} starter with ${spec!.shots.length} scenes → ${ws.display(dir)}`);
-    return { ws, title: spec!.source.title ?? input, dir, files };
+    return { ws, title: spec!.source.title ?? input, dir, files, ...(note && { inboxNote: note }) };
+  }
+
+  /** Whether a local video already has a workspace here (a tool ran on it). */
+  private hasMediaWorkspace(mediaPath: string): boolean {
+    if (!existsSync(this.options.root)) return false;
+    const wanted = resolve(mediaPath);
+    for (const name of readdirSync(this.options.root)) {
+      if (!name.startsWith("file-")) continue;
+      try {
+        const record = new Workspace(this.options.root, name).readJson<{ mediaPath?: string }>("source.json");
+        if (record?.mediaPath && resolve(record.mediaPath) === wanted) return true;
+      } catch {
+        // An unreadable record is no workspace for this file.
+      }
+    }
+    return false;
   }
 
   /** The workspace of a page read with `web`, or a Lottie, Figma or Rive source read with `exact`, if any. */
   private webWorkspace(input: string): Workspace | undefined {
     const wanted = input.trim();
-    if (/^https?:\/\//i.test(wanted)) {
-      const ws = new Workspace(this.options.root, `web-${createHash("sha1").update(input).digest("hex").slice(0, 10)}`);
-      if (existsSync(ws.path("motion-spec.json"))) return ws;
-    }
-    if (!existsSync(this.options.root)) return undefined;
+    if (!wanted || !existsSync(this.options.root)) return undefined;
+    const web = /^https?:\/\//i;
+    const same = (v: unknown) => typeof v === "string" && v !== "" && (v === wanted || (!web.test(v) && !web.test(wanted) && resolve(v) === resolve(wanted)));
+    // Several readings of one page (live, and saved by the extension at different times): the newest reading wins.
+    // The live reading's folder is named after the address, so it counts even without its source.json.
+    const live = web.test(wanted) ? `web-${createHash("sha1").update(wanted).digest("hex").slice(0, 10)}` : undefined;
+    let best: { ws: Workspace; at: number } | undefined;
     for (const name of readdirSync(this.options.root)) {
       if (!/^(web|lottie|figma|rive)-/.test(name)) continue;
       const ws = new Workspace(this.options.root, name);
-      const record = ws.readJson<{ input?: string; url?: string; mediaPath?: string }>("source.json");
-      const same = record && [record.input, record.url, record.mediaPath].some((v) => v && (v === wanted || resolve(v) === resolve(wanted)));
-      if (same && existsSync(ws.path("motion-spec.json"))) return ws;
+      let record: { input?: string; url?: string; mediaPath?: string; readFrom?: string; readAt?: string; fetchedAt?: string } | undefined;
+      try {
+        record = ws.readJson("source.json");
+      } catch {
+        record = undefined;
+      }
+      const matches = name === live || (record && [record.input, record.url, record.mediaPath, record.readFrom].some(same));
+      if (!matches || !existsSync(ws.path("motion-spec.json"))) continue;
+      record ??= {};
+      const at = Date.parse(record.readAt ?? record.fetchedAt ?? "") || statSync(ws.path("motion-spec.json")).mtimeMs;
+      if (!best || at > best.at) best = { ws, at };
     }
-    return undefined;
+    return best?.ws;
   }
 
   /**
@@ -524,20 +593,55 @@ export class Engine {
    * A live web page: reads its animations exactly (durations, delays, curves, keyframes) from the browser, plus fonts
    * and colours, films the opening motion frame by frame, and writes the same motion-spec.json as a video.
    */
-  async web(url: string, version: string): Promise<{ ws: Workspace; spec: MotionSpec; result: PageResult; files: Record<string, string> }> {
-    const id = `web-${createHash("sha1").update(url).digest("hex").slice(0, 10)}`;
-    const ws = new Workspace(this.options.root, id);
-    const result = await readPage(url, ws.ensure("frames", "web"), this.options.tools);
+  async web(input: string, version: string, env: Record<string, string | undefined> = this.options.env ?? process.env): Promise<{ ws: Workspace; spec: MotionSpec; result: PageResult; files: Record<string, string>; savedReading?: string; inboxNote?: string }> {
+    const url = input.trim();
+    let id: string;
+    let result: PageResult;
+    let savedReading: string | undefined;
+    let readAt = Date.now();
+    let ws: Workspace;
+    if (/^https?:\/\//i.test(url)) {
+      id = `web-${createHash("sha1").update(url).digest("hex").slice(0, 10)}`;
+      ws = new Workspace(this.options.root, id);
+      result = await readPage(url, ws.ensure("frames", "web"), this.options.tools);
+    } else {
+      // A reading the browser extension saved in the user's own browser (pages behind their login), or a web.json.
+      savedReading = url.toLowerCase() === "inbox" ? newestInboxReading(env) : resolve(url.replace(/^["']|["']$/g, ""));
+      const stat = existsSync(savedReading) ? statSync(savedReading) : undefined;
+      if (!stat?.isFile()) throw new InvalidInputError(`"${oneLine(input, 300)}" is neither a web page address nor a page reading file. Pass an http(s) address, the path of a .framelens.json the browser extension saved, or "inbox".`);
+      if (stat.size > MAX_READING_BYTES) throw new InvalidInputError(`${savedReading} is larger than a page reading can be (${MAX_READING_BYTES / 1024 / 1024} MB).`);
+      const saved = readSavedReading(savedReading);
+      result = { reading: saved.reading, views: [] };
+      readAt = saved.capturedAt ?? stat.mtimeMs;
+      id = `web-${createHash("sha1").update(`${savedReading}|${stat.size}|${stat.mtimeMs}`).digest("hex").slice(0, 10)}`;
+      ws = new Workspace(this.options.root, id);
+    }
     const spec = specFromPage(result.reading, version);
-    ws.writeJson("source.json", { id, kind: "url", input: url, url, title: result.reading.title, mediaPath: "", fetchedAt: new Date().toISOString() });
+    ws.writeJson("source.json", {
+      id,
+      kind: "url",
+      input: savedReading ?? url,
+      url: result.reading.url,
+      title: result.reading.title,
+      mediaPath: "",
+      fetchedAt: new Date().toISOString(),
+      // When the page itself was read: the newest reading of a page is the one export uses.
+      readAt: new Date(readAt).toISOString(),
+      ...(savedReading && { readFrom: savedReading }),
+    });
     const { measured, skeleton } = styleMarkdown(spec);
     const files: Record<string, string> = {
       reading: ws.writeJson("web.json", result.reading),
       spec: ws.writeJson("motion-spec.json", spec),
       style: writeWithMeasuredBlock(ws, "STYLE.md", measured, skeleton),
     };
-    this.progress(ws, `web: ${result.reading.animations.length} animations${result.reading.gsap ? " (GSAP found)" : ""}, ${result.reading.fonts.length} text styles, ${result.views.length} views`);
-    return { ws, spec, result, files };
+    this.progress(
+      ws,
+      `web: ${result.reading.animations.length} animations${result.reading.gsap ? " (GSAP found)" : ""}, ${result.reading.fonts.length} text styles, ` +
+        (savedReading ? `read from ${savedReading}` : `${result.views.length} views`),
+    );
+    const note = url.toLowerCase() === "inbox" ? inboxNote(env, "reading") : undefined;
+    return { ws, spec, result, files, ...(savedReading && { savedReading }), ...(note && { inboxNote: note }) };
   }
 
   /** Appends a line to PROGRESS.md so a later session can see what was already done. */

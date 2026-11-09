@@ -8,6 +8,7 @@ import type { Logger } from "./logger.js";
 import { oneLine } from "./text.js";
 import { EXPORT_TARGETS } from "./export/exporters.js";
 import { GOALS } from "./router/plan.js";
+import { collectSetupNotes, setupNotesOf } from "./tools/setup.js";
 import { curveLabel } from "./track/curve.js";
 import { transitionName } from "./style/spec.js";
 
@@ -44,7 +45,19 @@ function sourceLine(source: Source, thirdParty = source.record.kind !== "file"):
     p.fps ? `${p.fps} fps${p.vfr ? " (variable)" : ""}` : "",
     p.hdr ? "HDR" : "",
   ].filter(Boolean);
-  return `> ${parts.join(" · ")}\n> Workspace: ${source.ws.display(source.ws.dir)}${thirdParty ? `\n> ${NOTICE}` : ""}`;
+  return `> ${parts.join(" · ")}\n> Workspace: ${source.ws.display(source.ws.dir)}${source.record.inboxNote ? `\n> ${source.record.inboxNote}` : ""}${thirdParty ? `\n> ${NOTICE}` : ""}`;
+}
+
+/**
+ * Tells the agent what automatic setup did during the call (a downloaded ffmpeg or yt-dlp), at the end of the text
+ * and as `setup` in structuredContent, so it can pass it on instead of the download happening silently.
+ */
+export function withSetupNotes(result: CallToolResult, notes: string[]): CallToolResult {
+  if (!notes.length) return result;
+  const [first, ...rest] = result.content;
+  const content: CallToolResult["content"] =
+    first?.type === "text" ? [{ ...first, text: `${first.text}\n\n${notes.join("\n")}` }, ...rest] : [{ type: "text", text: notes.join("\n") }, ...result.content];
+  return { ...result, content, ...(result.structuredContent && { structuredContent: { ...result.structuredContent, setup: notes } }) };
 }
 
 /** The analysis tools that run on the user's computer (ffmpeg and friends) instead of Gemini. */
@@ -54,17 +67,17 @@ export function registerLocalTools(server: McpServer, engine: Engine, logger: Lo
   async function run(tool: string, body: () => Promise<CallToolResult>): Promise<CallToolResult> {
     const startedAt = Date.now();
     try {
-      const result = await body();
+      const { value: result, notes } = await collectSetupNotes(body);
       logger.info("tool done", { tool, ms: Date.now() - startedAt });
-      return result;
+      return withSetupNotes(result, notes);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (error instanceof InvalidInputError || error instanceof AnalyzerError) {
         logger.warn("tool failed", { tool, error: message });
-        return { content: [{ type: "text", text: message }], isError: true };
+        return withSetupNotes({ content: [{ type: "text", text: message }], isError: true }, setupNotesOf(error));
       }
       logger.error("tool crashed", { tool, error });
-      return { content: [{ type: "text", text: `${tool} failed: ${message}` }], isError: true };
+      return withSetupNotes({ content: [{ type: "text", text: `${tool} failed: ${message}` }], isError: true }, setupNotesOf(error));
     }
   }
 
@@ -417,10 +430,11 @@ export function registerLocalTools(server: McpServer, engine: Engine, logger: Lo
     },
     (args) =>
       run("export", async () => {
-        const { ws, title, dir, files } = await engine.export(args.source, args.target, options.version ?? "dev");
+        const { ws, title, dir, files, inboxNote } = await engine.export(args.source, args.target, options.version ?? "dev");
         const text = [
           `> ${oneLine(title)}`,
           `> Workspace: ${ws.display(ws.dir)}`,
+          ...(inboxNote ? [`> ${inboxNote}`] : []),
           "",
           `${args.target} starter written to ${ws.display(dir)}:`,
           ...files.map((f) => `- ${ws.display(f)}`),

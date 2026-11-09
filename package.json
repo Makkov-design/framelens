@@ -1,6 +1,7 @@
 {
   "name": "framelens",
   "version": "2.0.0",
+  "mcpName": "io.github.Makkov-design/framelens",
   "description": "Eyes and ears for AI agents: measured analysis of any video or animation (frames, cuts, easing, palette, beats, transcripts) and starter projects for HyperFrames, Remotion, CSS, After Effects and Lottie. MCP server.",
   "type": "module",
   "bin": {
@@ -17,7 +18,8 @@
   },
   "scripts": {
     "bundle": "node scripts/build.mjs",
-    "typecheck": "tsc -p tsconfig.json",
+    "build:extension": "node scripts/build-extension.mjs",
+    "typecheck": "tsc -p tsconfig.json && tsc -p extension/tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",
     "smoke": "node scripts/smoke.mjs",

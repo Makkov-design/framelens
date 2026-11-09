@@ -2,6 +2,7 @@ import { mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import { extname, join } from "node:path";
 import { readEnv, run, ToolError, type Env, type ToolLocation } from "../tools/index.js";
 import { cookieArgs, redactArgs } from "./cookies.js";
+import { mayBeAccessControl } from "./access.js";
 import { SourceError } from "./errors.js";
 import type { CaptionTrack } from "./types.js";
 
@@ -60,24 +61,29 @@ export function mapYtDlpFailure(stderr: string, url: string): SourceError {
   const platform = platformName(url);
   const errorLine = [...text.split("\n")].reverse().find((l) => /^ERROR:/i.test(l.trim()))?.trim() ?? text.trim().split("\n").pop() ?? "";
   const brief = errorLine.replace(/^ERROR:\s*(\[[^\]]+\]\s*[\w-]*:?\s*)?/i, "").slice(0, 300);
+  // yt-dlp's own words travel with the error: the message below is help text, but the cobalt policy and the login
+  // profile decide on what the site actually said (src/sources/access.ts).
+  const detail = text.trim().slice(-4000);
+  const accessControl = mayBeAccessControl(text);
 
   if (/unsupported url/i.test(text)) {
     return new SourceError(
       "unsupported_url",
       `Frame Lens cannot read a video from this link (${platform}). Open the page, save the video file yourself and pass its path, or put it in the inbox folder. Detail: ${brief}`,
+      { accessControl, detail },
     );
   }
   if (GEO.test(text)) {
-    return new SourceError("geo_blocked", `${platform} blocks this video in your country. Save the file another way and pass its path or use the inbox folder. Detail: ${brief}`);
+    return new SourceError("geo_blocked", `${platform} blocks this video in your country. Save the file another way and pass its path or use the inbox folder. Detail: ${brief}`, { accessControl: true, detail });
   }
   if (GONE.test(text)) {
-    return new SourceError("unavailable", `${platform} says this video is private, removed or unavailable, so it cannot be fetched. Detail: ${brief}`);
+    return new SourceError("unavailable", `${platform} says this video is private, removed or unavailable, so it cannot be fetched. Detail: ${brief}`, { accessControl: true, detail });
   }
-  if (LOGIN.test(text)) return new SourceError("login_required", LOGIN_TIERS(platform));
+  if (LOGIN.test(text)) return new SourceError("login_required", LOGIN_TIERS(platform), { accessControl: true, detail });
   if (/http error 429|too many requests/i.test(text)) {
-    return new SourceError("download_failed", `${platform} is limiting requests from this connection (HTTP 429). Wait a while and try again, or save the file yourself into the inbox folder.`);
+    return new SourceError("download_failed", `${platform} is limiting requests from this connection (HTTP 429). Wait a while and try again, or save the file yourself into the inbox folder.`, { accessControl: true, detail });
   }
-  return new SourceError("download_failed", `yt-dlp could not fetch this link. ${brief || "No error text was reported."}`);
+  return new SourceError("download_failed", `yt-dlp could not fetch this link. ${brief || "No error text was reported."}`, { accessControl, detail });
 }
 
 interface Info {

@@ -1,0 +1,57 @@
+<template>
+  <style>
+    @font-face { font-family: "Panchang"; src: url("assets/fonts/panchang-700.woff2") format("woff2"); font-weight: 700; }
+    @font-face { font-family: "General Sans"; src: url("assets/fonts/general-sans-400.woff2") format("woff2"); font-weight: 400; }
+    @font-face { font-family: "General Sans"; src: url("assets/fonts/general-sans-600.woff2") format("woff2"); font-weight: 600; }
+    #root { position: absolute; inset: 0; background: oklch(97.5% 0.012 135); color: oklch(21% 0.035 155); }
+    .mv-title { position: absolute; left: 96px; top: 80px; font: 700 56px/1 "Panchang", sans-serif; letter-spacing: -0.01em; }
+    #mv-frame { position: absolute; left: 96px; top: 176px; width: 768px; height: 432px; border-radius: 14px; object-fit: cover; }
+    #mv-cap { position: absolute; left: 96px; top: 632px; font: 400 28px/1 "JetBrains Mono", monospace; }
+    #mv-sw { position: absolute; left: 944px; top: 200px; width: 880px; }
+    .mv-label { font: 600 28px/1 "General Sans", sans-serif; color: oklch(36% 0.035 152); margin-bottom: 20px; }
+    #mv-chips { display: flex; gap: 32px; }
+    .mv-chip { width: 176px; }
+    .mv-chip i { display: block; width: 176px; height: 176px; border-radius: 8px; border: 2px solid oklch(21% 0.035 155); }
+    .mv-chip b { display: block; margin-top: 14px; font: 400 28px/1 "JetBrains Mono", monospace; }
+    #mv-share { position: absolute; left: 944px; top: 560px; width: 880px; }
+    #mv-bar { position: relative; width: 800px; height: 96px; }
+    .mv-seg { position: absolute; top: 0; height: 96px; border: 2px solid oklch(21% 0.035 155); transform-origin: 0 50%; }
+    .mv-pct { position: absolute; top: 116px; font: 400 28px/1 "JetBrains Mono", monospace; }
+  </style>
+  <div id="root" data-composition-id="palette" data-width="1920" data-height="1080">
+    <h2 id="pl-title" class="mv-title clip" data-start="0" data-duration="3">Its colours, measured</h2>
+    <img id="mv-frame" src="assets/bbb/f54.webp" alt="" />
+    <p id="mv-cap">Shot 10 of 12 · 26.00–29.96 s</p>
+    <div id="mv-sw" class="clip" data-start="0" data-duration="3">
+      <p class="mv-label">Shot 10</p>
+      <div id="mv-chips">
+        <div class="mv-chip"><i style="background:#FCFDFD"></i><b>#FCFDFD</b></div>
+        <div class="mv-chip"><i style="background:#2CA2CF"></i><b>#2CA2CF</b></div>
+        <div class="mv-chip"><i style="background:#2BB3E6"></i><b>#2BB3E6</b></div>
+        <div class="mv-chip"><i style="background:#79D3F4"></i><b>#79D3F4</b></div>
+      </div>
+    </div>
+    <div id="mv-share" class="clip" data-start="0" data-duration="3">
+      <p class="mv-label">Whole trailer, top six by share</p>
+      <div id="mv-bar">
+        <div class="mv-seg" style="left:0.0px;width:234.2px;background:#FCFDFD"></div><span class="mv-pct" style="left:0.0px">22.1%</span>
+        <div class="mv-seg" style="left:234.2px;width:152.6px;background:#101310"></div><span class="mv-pct" style="left:234.2px">14.4%</span>
+        <div class="mv-seg" style="left:386.8px;width:121.9px;background:#6D7450"></div><span class="mv-pct" style="left:386.8px">11.5%</span>
+        <div class="mv-seg" style="left:508.6px;width:115.5px;background:#434D42"></div><span class="mv-pct" style="left:508.6px">10.9%</span>
+        <div class="mv-seg" style="left:624.1px;width:91.1px;background:#94994A"></div><span class="mv-pct" style="left:624.1px">8.6%</span>
+        <div class="mv-seg" style="left:715.2px;width:84.8px;background:#23231D"></div><span class="mv-pct" style="left:715.2px">8.0%</span>
+      </div>
+    </div>
+  </div>
+  <script>
+    // Frame Lens's palettes from docs/assets/bbb/reading.js: shot 10's four colours, the whole trailer's top six by share.
+    const tl = gsap.timeline({ paused: true });
+    tl.fromTo("#pl-title", { opacity: 0, filter: "blur(8px)" }, { opacity: 1, filter: "blur(0px)", duration: 0.18, ease: "power2.out" }, 0.04);
+    tl.fromTo("#mv-sw .mv-label", { opacity: 0 }, { opacity: 1, duration: 0.16 }, 0.1);
+    tl.fromTo("#mv-chips .mv-chip", { opacity: 0, scale: 0.7 }, { opacity: 1, scale: 1, duration: 0.3, ease: "expo.out", stagger: 0.1 }, 0.2);
+    tl.fromTo("#mv-share .mv-label", { opacity: 0 }, { opacity: 1, duration: 0.16 }, 0.7);
+    tl.fromTo("#mv-bar .mv-seg", { scaleX: 0 }, { scaleX: 1, duration: 0.36, ease: "expo.out", stagger: 0.06 }, 0.8);
+    tl.fromTo("#mv-bar .mv-pct", { opacity: 0 }, { opacity: 1, duration: 0.16, stagger: 0.06 }, 1.0);
+    window.__timelines["palette"] = tl;
+  </script>
+</template>

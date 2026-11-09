@@ -20,6 +20,19 @@ describe("doctor", () => {
     expect(text).toContain("Gemini key: not set");
   });
 
+  it("--prepare fetches the pinned ffmpeg only when ffmpeg or ffprobe is missing", async () => {
+    const calls: string[] = [];
+    const prepareYtDlp = async () => (calls.push("yt-dlp"), { path: "/x/yt-dlp", version: "1", downloaded: true });
+    const prepareFfmpeg = async () => (calls.push("ffmpeg"), { ffmpeg: "/x/ffmpeg", ffprobe: "/x/ffprobe", version: "9.0.2", source: "test", downloaded: true });
+    const lines: string[] = [];
+    await runDoctor({ prepare: true, env: { PATH: "", FRAMELENS_HOME: resolve("test/fixtures/no-home") }, write: (l) => lines.push(l), prepareYtDlp, prepareFfmpeg });
+    expect(calls).toEqual(["yt-dlp", "ffmpeg"]);
+    expect(lines.join("\n")).toContain("FFmpeg 9.0.2 (test) installed and verified.");
+    calls.length = 0;
+    await runDoctor({ prepare: true, env: { PATH: "", FRAMELENS_FFMPEG: fake, FRAMELENS_FFPROBE: fake }, write: () => {}, prepareYtDlp, prepareFfmpeg });
+    expect(calls).toEqual(["yt-dlp"]);
+  });
+
   it("reports a wrong override as a problem instead of crashing", async () => {
     const lines: string[] = [];
     await runDoctor({ env: { FRAMELENS_FFMPEG: "/nope/ffmpeg", PATH: "" }, write: (l) => lines.push(l) });

@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Frame Lens README banner</title>
+<link rel="stylesheet" href="https://api.fontshare.com/v2/css?f[]=panchang@700&f[]=general-sans@400,600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&display=swap">
+<link rel="stylesheet" href="../../docs/tokens.css">
+<style>
+  /* Source of docs/assets/readme/banner.png: node scripts/site/readme-shots.mjs */
+  body { margin: 0; background: var(--color-paper); }
+  .banner { width: 1280px; height: 640px; box-sizing: border-box; padding: 56px 64px; background: var(--color-field); color: var(--color-field-ink); display: grid; grid-template-rows: auto auto 1fr auto; gap: 0; font-family: var(--font-body); }
+  .top { display: flex; justify-content: space-between; align-items: center; font: 600 22px/1 var(--font-body); }
+  .mark { font: 700 28px/1 var(--font-display); }
+  .tag { font: 600 18px/1 var(--font-outlier); letter-spacing: 0.02em; }
+  h1 { margin: 36px 0 0; font: 700 76px/1.02 var(--font-display); letter-spacing: -0.01em; max-width: 15ch; }
+  .film { align-self: end; margin-top: 28px; background: var(--color-band); border-radius: 16px; padding: 12px 12px 14px; }
+  .strip { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; position: relative; }
+  .strip img { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 6px; display: block; }
+  .strip .cut { position: absolute; top: -4px; bottom: -4px; width: 4px; border-radius: 2px; background: var(--color-accent); }
+  .reading { display: flex; gap: 28px; margin-top: 12px; padding: 0 4px; font: 400 17px/1 var(--font-outlier); color: var(--color-band-ink); }
+  .reading b { font-weight: 600; color: var(--color-band-ink); }
+  .reading .rec { color: oklch(72% 0.19 27); font-weight: 600; }
+  .bottom { display: flex; justify-content: space-between; align-items: center; margin-top: 26px; }
+  .cmd { font: 600 22px/1 var(--font-outlier); background: var(--color-field-ink); color: var(--color-field); padding: 14px 20px; border-radius: 999px; }
+  .targets { font: 600 19px/1 var(--font-body); }
+</style>
+</head>
+<body>
+  <div class="banner">
+    <div class="top"><span class="mark">Frame Lens</span><span class="tag">MCP server · free · local</span></div>
+    <h1>Video your agent can measure</h1>
+    <div class="film">
+      <div class="strip">
+        <img src="../../docs/assets/bbb/f19.webp" alt="">
+        <img src="../../docs/assets/bbb/f31.webp" alt="">
+        <img src="../../docs/assets/bbb/f41.webp" alt="">
+        <img src="../../docs/assets/bbb/f51.webp" alt="">
+        <img src="../../docs/assets/bbb/f54.webp" alt="">
+        <img src="../../docs/assets/bbb/f61.webp" alt="">
+        <span class="cut" style="left: calc(33.333% - 5px)"></span>
+        <span class="cut" style="left: calc(50% - 5px)"></span>
+        <span class="cut" style="left: calc(83.333% - 5px)"></span>
+      </div>
+      <div class="reading"><span class="rec">● cut 9.08 s, frame 227</span><span><b>11 cuts</b></span><span>8 fades and dissolves</span><span>20 shots at 25 fps</span></div>
+    </div>
+    <div class="bottom"><span class="cmd">npx -y framelens init</span><span class="targets">Cuts · easing · colour · beats → HyperFrames, Remotion, CSS, AE, Lottie</span></div>
+  </div>
+</body>
+</html>
