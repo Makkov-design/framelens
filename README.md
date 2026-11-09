@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="https://makkov-design.github.io/framelens/"><img src="docs/assets/readme/banner.png" width="100%" alt="Frame Lens: video your agent can measure. A strip of Big Buck Bunny trailer frames with red cut marks and the reading 26.04 s, 23 frames at 25 fps, cubic-bezier(0.7, 0, 0.84, 0)."></a>
+  <a href="https://makkov-design.github.io/framelens/"><img src="docs/assets/readme/banner.png" width="100%" alt="Frame Lens: video your agent can measure. A strip of Big Buck Bunny trailer frames with red cut marks and the reading: cut at 9.08 s, frame 227; 12 shots, 11 cuts, 25 fps."></a>
 </p>
 
 <h1 align="center">Frame Lens</h1>
@@ -41,10 +41,17 @@ Figma, and turns what it finds into starter projects for HyperFrames, Remotion, 
 An agent that "watches" a video usually gets a handful of stills or the captions, and describes what it guesses:
 *"a quick, smooth move"*. That is not something you can build from.
 
-Frame Lens measures. On the Big Buck Bunny trailer it finds the move that **starts at 26.04 s and ends at 26.96 s:
-23 frames at 25 fps, on `cubic-bezier(0.7, 0, 0.84, 0)`**, in shot 10 of 12, on a `#FCFDFD` / `#2CA2CF` palette. It
-then writes that move into CSS, Remotion, HyperFrames, After Effects and Lottie, and checks your render against the
-reference.
+Frame Lens measures. On the 33-second Big Buck Bunny trailer it finds **11 cuts to the frame (9.08 s, 11.20 s,
+13.20 s, 13.88 s, 15.00 s, 16.00 s, 16.60 s, 24.92 s, 26.00 s, 29.96 s, 31.04 s)**, 12 shots at 25 fps and a palette
+for each. For the moves that matter, `track` fits the exact curve (a `cubic-bezier` or a spring, with its fit error),
+`export` writes it into CSS, Remotion, HyperFrames, After Effects or Lottie, and `compare` checks your render against
+the reference.
+
+<!--
+  EXAMPLE PLACEHOLDER: a real tracked move from the trailer (start time, length in frames, exact curve and fit error)
+  goes here once the site's readings are regenerated with the transition fix. Do not use the "26.04 s, 23 frames,
+  cubic-bezier(0.7, 0, 0.84, 0)" move: it is a fade to white plus a scale-in that Frame Lens 2.0 read as one move.
+-->
 
 - **Measured, not described.** Cuts on their exact frame, every move with its duration and curve, an OKLab palette per
   shot, loudness, tempo and beats, transcripts with the time of every word.
@@ -59,23 +66,20 @@ reference.
 These are real Frame Lens readings of the [Big Buck Bunny](https://peach.blender.org) trailer, from the
 [website](https://makkov-design.github.io/framelens/).
 
-<table>
-  <tr>
-    <td width="44%" valign="top">
-      <img src="docs/assets/readme/loupe.webp" alt="The loupe: a trailer frame at 26.50 s, a ruler of shots and cuts, and the readout: frame 663, shot 10 of 12, palette, move ease-in 23 frames cubic-bezier(0.7, 0, 0.84, 0)">
-      <p><b>The loupe.</b> Every mark on the ruler is a measurement: shots, cuts, moves, palette, frame by frame.</p>
-    </td>
-    <td width="56%" valign="top">
-      <img src="docs/assets/readme/contact-sheet.webp" alt="A contact sheet of 32 trailer frames, one a second, with red marks where a cut falls">
-      <p><b>The first pass.</b> One frame a second for the style goal, red where a cut falls. Dense frames come only after this.</p>
-      <img src="docs/assets/readme/measured.webp" alt="A description says quick; Frame Lens says starts 26.04 s, ends 26.96 s, 23 frames at 25 fps, cubic-bezier(0.7, 0, 0.84, 0)">
-    </td>
-  </tr>
-</table>
+<img src="docs/assets/readme/contact-sheet.webp" alt="A contact sheet of 32 trailer frames, one a second, with red marks where a cut falls">
 
-<img src="docs/assets/readme/export.webp" alt="The fitted curve cubic-bezier(0.7, 0, 0.84, 0) with frames 651 to 674 placed on it, next to the CSS export of the same move">
+**The first pass.** One frame a second for the style goal, red where a cut falls. Dense frames come only after this,
+around the moments that matter.
 
-<img src="docs/assets/readme/readings.webp" alt="Table: the trailer read from pixels, 12 shots, 11 cuts, 25 fps; a live website read from the browser, 328 animations, mostly 500 ms on cubic-bezier(0.16, 1, 0.3, 1); a Lottie file read from keyframes, y 600 to 540 in 23 frames">
+<img src="docs/assets/readme/readings.webp" alt="Table: the trailer read from pixels, 12 shots, 11 cuts, 25 fps; a live website read from the browser, 328 animations, mostly 500 ms on cubic-bezier(0.16, 1, 0.3, 1); Rive files and Figma prototypes read from the file; YouTube and most video sites through a pinned yt-dlp">
+
+**Measured or read exactly.** Video is measured from pixels; websites, Lottie, Rive and Figma are read from their own
+data.
+
+<!--
+  SCREENSHOT PLACEHOLDER: the site's loupe (.loupe), "described vs measured" (.versus) and export/curve (.export)
+  sections go here once they show the corrected tracked move. Re-enable them in scripts/site/readme-shots.mjs.
+-->
 
 ## Quick start
 
