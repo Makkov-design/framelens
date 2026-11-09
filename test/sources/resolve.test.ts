@@ -24,7 +24,7 @@ afterEach(() => {
   delete process.env.FAKE_YTDLP_LOG;
 });
 
-const env = (extra: Record<string, string> = {}) => ({ FRAMELENS_YTDLP: fake, FRAMELENS_FFMPEG: fake, PATH: "", ...extra });
+const env = (extra: Record<string, string> = {}) => ({ FRAMELENS_YTDLP: fake, FRAMELENS_FFMPEG: fake, PATH: "", FRAMELENS_DOWNLOADS: join(root, "no-downloads"), ...extra });
 const calls = () => (existsSync(argLog) ? readFileSync(argLog, "utf8").trim().split("\n").map((l) => JSON.parse(l) as string[]) : []);
 const YT = "https://www.youtube.com/watch?v=jNQXAC9IVRw&list=PL123";
 

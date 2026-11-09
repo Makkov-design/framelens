@@ -4,6 +4,7 @@ import { get as httpsGet } from "node:https";
 import { join } from "node:path";
 import { InvalidInputError } from "../errors.js";
 import type { MediaTools } from "../media/exec.js";
+import { isBotCheckOrLimit } from "../sources/access.js";
 import { evaluate, findBrowser, launchBrowser, navigate, profileDir } from "./cdp.js";
 
 /** Login pages for `framelens login <site>`. */
@@ -155,11 +156,13 @@ export function logout(): boolean {
 
 /**
  * Whether a failed link may be played through the user's logged-in Frame Lens profile: only a real login wall on a
- * site from LOGIN_PAGES. A bot check ("confirm you're not a bot", CAPTCHA, YouTube) is never answered this way:
- * Frame Lens does not get around bot checks.
+ * site from LOGIN_PAGES. A bot check, challenge, rate limit or block ("confirm you're not a bot", CAPTCHA, "rate-limit
+ * reached or login required", YouTube) is never answered this way: Frame Lens does not get around bot checks.
+ * `detail` is what the site or yt-dlp said (SourceError.detail), not Frame Lens's own help text, and is read by the
+ * same classifier as the cobalt policy (src/sources/access.ts).
  */
-export function capturableLogin(input: string, message: string): boolean {
-  if (/not a bot|bot check|captcha|unusual traffic|rate.?limit/i.test(message)) return false;
+export function capturableLogin(input: string, detail: string): boolean {
+  if (isBotCheckOrLimit(detail)) return false;
   let host: string;
   try {
     host = new URL(input.trim()).hostname.toLowerCase();

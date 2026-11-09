@@ -1,4 +1,4 @@
-import type { Env, FindOptions } from "../tools/index.js";
+import type { Env, FindOptions, ToolLocation, ToolName } from "../tools/index.js";
 
 export type SourceKind = "youtube" | "url" | "file";
 
@@ -25,9 +25,11 @@ export interface SourceRecord {
   captions?: CaptionTrack[];
   fetchedAt: string;
   /** Versions of the tools used to produce this record. */
-  tools: { ytDlp?: string; ffmpeg?: string };
+  tools: { ytDlp?: string; ffmpeg?: string; cobalt?: string };
   /** Set on the returned object only (not stored): the workspace already had the media. */
   reused?: boolean;
+  /** Set on the returned object only: `inbox` also holds an item of the other kind (a page reading). */
+  inboxNote?: string;
 }
 
 export interface ResolveOptions {
@@ -41,4 +43,11 @@ export interface ResolveOptions {
   downloadTimeoutMs?: number;
   /** Where to look for tools (tests). */
   find?: FindOptions;
+  /**
+   * Finds (and may install) yt-dlp and ffmpeg. The server passes automatic setup here (tools/setup.ts); without it a
+   * missing tool is an error that says how to get it.
+   */
+  locate?: (name: ToolName, signal?: AbortSignal) => Promise<ToolLocation>;
+  /** HTTP client for the opt-in cobalt instance (tests). */
+  fetchFn?: typeof fetch;
 }

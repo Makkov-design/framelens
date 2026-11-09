@@ -31,6 +31,9 @@ jobs:
       - run: npm run bundle
       - name: Committed bundle is up to date
         run: git diff --exit-code --stat -- dist/framelens.mjs || (echo "Run npm run bundle and commit dist/framelens.mjs" && exit 1)
+      - run: npm run build:extension
+      - name: Committed extension build is up to date
+        run: git diff --exit-code --stat -- extension/dist || (echo "Run npm run build:extension and commit extension/dist" && exit 1)
       - run: npm audit --audit-level=high
 
   bundle-runs:

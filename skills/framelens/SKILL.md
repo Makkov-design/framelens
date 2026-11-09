@@ -45,12 +45,16 @@ deferred, load them with ToolSearch query `framelens` first.
    fix what it names.
 8. **Without ffmpeg or in a cloud session**: use the Gemini tools for YouTube links, and say that timing and colours
    are then described, not measured.
+9. **In a cloud session, when the task needs measured frames, timing or colour**: say once that this runs on the
+   user's PC and offer to continue there (for example a Remote Control session from the phone while the PC is on);
+   meanwhile deliver the Gemini or caption result, labelled as described, not measured.
 
 ## Working rules
 
 - Frames like a loupe: an overview first, dense frames only around the moments that matter. Do not sample a whole
   long video at 10 fps; the `plan` estimate tells you the image cost.
-- Open sheets by path from the workspace (`.framelens/<id>/sheets/…`); only the first ones come inline.
+- Open sheets by the absolute paths the results give (the workspace is `.framelens/` in the project, or `~/.framelens/`
+  when the server runs from a system folder); only the first ones come inline.
 - Keep facts and interpretation apart. Every number in `motion-spec.json` has an `evidence` label: `measured`,
   `derived` (fitted, e.g. easing families from whole-picture motion) or `inferred` (your judgement). Use the same words
   when you report.
@@ -60,10 +64,11 @@ deferred, load them with ToolSearch query `framelens` first.
 
 ## Limits
 
-- Links need yt-dlp (`framelens doctor --prepare`). Platforms that require a login (Instagram, Facebook, X, Threads)
-  may fail. Then offer, in this order: the user saves the video with the platform's own download button or a screen
-  recording and gives you the file (or puts it in the inbox folder); opt-in cookies as described in the README; or
-  `npx framelens login <site>`, where the user logs in themselves in a separate browser profile. Never ask for their
+- A missing ffmpeg or yt-dlp is downloaded (pinned, verified) on first use; pass on the result's note that it was.
+  Platforms that require a login (Instagram, Facebook, X, Threads) may fail. Then offer, in this order: the user
+  records the tab with the Frame Lens browser extension (or saves the video with the platform's own download button)
+  and you use source `inbox`; for a website behind a login, the extension's "Read this page's motion" and `web` with
+  `inbox`; opt-in cookies as described in the README; or `npx framelens login <site>`, where the user logs in themselves in a separate browser profile. Never ask for their
   password and never try to get around a login.
 - Easing from video is an estimate of the family (exact on web pages, Lottie and Figma); fonts in video are guesses.
   Say so.
