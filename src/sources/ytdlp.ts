@@ -52,8 +52,19 @@ const LOGIN_TIERS = (platform: string) =>
 
 const GEO = /available in your (country|region)|geo.?(restrict|block)|blocked it in your country/i;
 const GONE = /private video|video is private|has been removed|has been deleted|video unavailable|video is unavailable|no longer available|terminated|does not exist|isn.t available/i;
-const BOT_CHECK = /not a bot|bot check|captcha|unusual traffic/i;
 const LOGIN = /not a bot|confirm your age|age.?restrict|login required|log ?in|sign in|cookies|authenticat|registered users|rate-limit reached/i;
+
+/**
+ * Wording that may mean access control: logins, age gates, bot checks and challenges, blocks, rate limits, private
+ * or paid posts, HTTP 401/403/407/429. Deliberately wide: a failure that matches is never retried another way.
+ */
+export const ACCESS_CONTROL =
+  /\b(401|403|407|429)\b|forbidden|unauthori[sz]ed|too many requests|rate.?limit|\bblock(ed|ing)?\b|captcha|\bbots?\b|anti.?bot|challenge|cloudflare|unusual traffic|\bverif|\bconfirm|\bage\b|age.?(gate|restrict|verif)|inappropriate|log.?in|sign.?in|authenticat|credential|account|cookie|nsfw|adult|mature|sensitive|private|members?.only|subscri|premium|paywall|purchase|\brent(al)?\b|not available in your|\bgeo|country|region|impersonat|registered users|permission|denied|restricted/i;
+
+/** Whether yt-dlp's error text may be access control (links are left out: their words say nothing about it). */
+export function mayBeAccessControl(stderr: string): boolean {
+  return ACCESS_CONTROL.test(stderr.replace(/https?:\/\/\S+/gi, " "));
+}
 
 /** Turns yt-dlp's stderr into an error that tells the user what to do. */
 export function mapYtDlpFailure(stderr: string, url: string): SourceError {
@@ -61,24 +72,26 @@ export function mapYtDlpFailure(stderr: string, url: string): SourceError {
   const platform = platformName(url);
   const errorLine = [...text.split("\n")].reverse().find((l) => /^ERROR:/i.test(l.trim()))?.trim() ?? text.trim().split("\n").pop() ?? "";
   const brief = errorLine.replace(/^ERROR:\s*(\[[^\]]+\]\s*[\w-]*:?\s*)?/i, "").slice(0, 300);
+  const accessControl = mayBeAccessControl(text);
 
   if (/unsupported url/i.test(text)) {
     return new SourceError(
       "unsupported_url",
       `Frame Lens cannot read a video from this link (${platform}). Open the page, save the video file yourself and pass its path, or put it in the inbox folder. Detail: ${brief}`,
+      { accessControl },
     );
   }
   if (GEO.test(text)) {
-    return new SourceError("geo_blocked", `${platform} blocks this video in your country. Save the file another way and pass its path or use the inbox folder. Detail: ${brief}`);
+    return new SourceError("geo_blocked", `${platform} blocks this video in your country. Save the file another way and pass its path or use the inbox folder. Detail: ${brief}`, { accessControl: true });
   }
   if (GONE.test(text)) {
-    return new SourceError("unavailable", `${platform} says this video is private, removed or unavailable, so it cannot be fetched. Detail: ${brief}`);
+    return new SourceError("unavailable", `${platform} says this video is private, removed or unavailable, so it cannot be fetched. Detail: ${brief}`, { accessControl: true });
   }
-  if (LOGIN.test(text)) return new SourceError("login_required", LOGIN_TIERS(platform), { botCheck: BOT_CHECK.test(text) });
+  if (LOGIN.test(text)) return new SourceError("login_required", LOGIN_TIERS(platform), { accessControl: true });
   if (/http error 429|too many requests/i.test(text)) {
-    return new SourceError("download_failed", `${platform} is limiting requests from this connection (HTTP 429). Wait a while and try again, or save the file yourself into the inbox folder.`);
+    return new SourceError("download_failed", `${platform} is limiting requests from this connection (HTTP 429). Wait a while and try again, or save the file yourself into the inbox folder.`, { accessControl: true });
   }
-  return new SourceError("download_failed", `yt-dlp could not fetch this link. ${brief || "No error text was reported."}`);
+  return new SourceError("download_failed", `yt-dlp could not fetch this link. ${brief || "No error text was reported."}`, { accessControl });
 }
 
 interface Info {

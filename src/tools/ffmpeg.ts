@@ -1,9 +1,10 @@
-import { createHash } from "node:crypto";
-import { chmodSync, closeSync, createReadStream, createWriteStream, existsSync, mkdirSync, openSync, readSync, renameSync, rmSync, statSync, writeSync } from "node:fs";
+import { createHash, randomBytes } from "node:crypto";
+import { chmodSync, closeSync, createReadStream, createWriteStream, existsSync, mkdirSync, openSync, readSync, rmSync, statSync } from "node:fs";
 import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { join } from "node:path";
 import { createInflateRaw } from "node:zlib";
+import { cleanStalePartials, downloadToFile, hasHash, partialName, placeVerified } from "./download.js";
 import { ToolError } from "./errors.js";
 import { framelensHome, type Env } from "./env.js";
 
@@ -124,6 +125,10 @@ export function ffmpegPinnedPath(home: string, tool: "ffmpeg" | "ffprobe", platf
   return join(home, "tools", "ffmpeg", FFMPEG_PIN.version, platform === "win32" ? `${tool}.exe` : tool);
 }
 
+function ffmpegPinnedDir(env: Env): string {
+  return join(framelensHome(env), "tools", "ffmpeg", FFMPEG_PIN.version);
+}
+
 export interface PrepareFfmpegOptions {
   env?: Env;
   platform?: NodeJS.Platform;
@@ -134,6 +139,9 @@ export interface PrepareFfmpegOptions {
   asset?: FfmpegAsset;
   signal?: AbortSignal;
   log?: (line: string) => void;
+  /** Download limits (default 15 minutes in all, 60 s without data). */
+  timeoutMs?: number;
+  stallMs?: number;
 }
 
 export interface PrepareFfmpegResult {
@@ -143,52 +151,6 @@ export interface PrepareFfmpegResult {
   source: string;
   /** false when verified copies were already there. */
   downloaded: boolean;
-}
-
-function hashFile(path: string): string {
-  const hash = createHash("sha256");
-  const fd = openSync(path, "r");
-  try {
-    const buf = Buffer.alloc(1 << 20);
-    for (let n; (n = readSync(fd, buf, 0, buf.length, null)) > 0; ) hash.update(buf.subarray(0, n));
-  } finally {
-    closeSync(fd);
-  }
-  return hash.digest("hex");
-}
-
-/** Streams a download to `file`, hashing it on the way; stops past `maxBytes`. Returns the SHA-256. */
-async function downloadTo(url: string, file: string, maxBytes: number, doFetch: typeof fetch, signal?: AbortSignal): Promise<string> {
-  let response: Response;
-  try {
-    response = await doFetch(url, { redirect: "follow", ...(signal && { signal }) });
-  } catch (error) {
-    throw new ToolError("download_failed", `Could not download ${url}: ${error instanceof Error ? error.message : String(error)}`);
-  }
-  if (!response.ok || !response.body) throw new ToolError("download_failed", `Could not download ${url}: HTTP ${response.status}.`);
-  const hash = createHash("sha256");
-  const fd = openSync(file, "w");
-  let size = 0;
-  try {
-    const reader = response.body.getReader();
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      size += value.length;
-      if (size > maxBytes) {
-        await reader.cancel().catch(() => undefined);
-        throw new ToolError("download_failed", `${url} is larger than the pinned archive; the download was stopped.`);
-      }
-      hash.update(value);
-      writeSync(fd, value);
-    }
-  } catch (error) {
-    if (error instanceof ToolError) throw error;
-    throw new ToolError("download_failed", `Could not download ${url}: ${error instanceof Error ? error.message : String(error)}`);
-  } finally {
-    closeSync(fd);
-  }
-  return hash.digest("hex");
 }
 
 interface ZipEntry {
@@ -258,7 +220,8 @@ async function unzipEntry(archive: string, name: string, out: string): Promise<s
 /**
  * Downloads the pinned ffmpeg and ffprobe into ~/.framelens/tools/ffmpeg/<version>/: every archive is checked
  * against its pinned SHA-256 before anything is unpacked, and every binary against its own pinned SHA-256 before it
- * is put in place. Nothing that fails a check is kept, and nothing downloaded is run here.
+ * is put in place. Nothing that fails a check is kept, and nothing downloaded is run here. Two servers installing at
+ * once each work on their own temporary files; a binary another one already put in place is verified and kept.
  */
 export async function prepareFfmpeg(options: PrepareFfmpegOptions = {}): Promise<PrepareFfmpegResult> {
   const platform = options.platform ?? process.platform;
@@ -270,37 +233,44 @@ export async function prepareFfmpeg(options: PrepareFfmpegOptions = {}): Promise
       `No pinned ffmpeg build for ${platform}/${arch}. Install ffmpeg yourself and set FRAMELENS_FFMPEG and FRAMELENS_FFPROBE to its programs.`,
     );
   }
-  const dir = join(framelensHome(options.env ?? process.env), "tools", "ffmpeg", FFMPEG_PIN.version);
+  const dir = ffmpegPinnedDir(options.env ?? process.env);
   const exe = platform === "win32" ? ".exe" : "";
   const target = { ffmpeg: join(dir, `ffmpeg${exe}`), ffprobe: join(dir, `ffprobe${exe}`) };
   const { ffmpeg, ffprobe } = target;
   const log = options.log ?? (() => {});
-  const doFetch = options.fetchFn ?? fetch;
   const files = asset.archives.flatMap((a) => a.files);
-  const verified = (f: FfmpegFile) => existsSync(target[f.tool]) && hashFile(target[f.tool]) === f.sha256;
+  const verified = (f: FfmpegFile) => hasHash(target[f.tool], f.sha256);
   if (files.every(verified)) return { ffmpeg, ffprobe, version: FFMPEG_PIN.version, source: asset.source, downloaded: false };
 
   mkdirSync(dir, { recursive: true });
+  // A server killed mid-download leaves its partial archive (up to 115 MB) behind: clear those first.
+  cleanStalePartials(dir);
   for (const archive of asset.archives) {
     const missing = archive.files.filter((f) => !verified(f));
     if (!missing.length) continue;
-    const download = join(dir, `.download-${process.pid}-${Date.now()}.zip`);
+    const download = join(dir, `.download-${process.pid}-${randomBytes(4).toString("hex")}.zip`);
     try {
       log(`Downloading ffmpeg ${FFMPEG_PIN.version} (${Math.round(archive.bytes / 1024 / 1024)} MB) from ${new URL(archive.url).host} ...`);
-      const actual = await downloadTo(archive.url, download, Math.ceil(archive.bytes * 1.01) + 1024, doFetch, options.signal);
+      const { sha256: actual } = await downloadToFile(archive.url, download, {
+        what: "ffmpeg",
+        maxBytes: Math.ceil(archive.bytes * 1.01) + 1024,
+        ...(options.fetchFn && { fetchFn: options.fetchFn }),
+        ...(options.signal && { signal: options.signal }),
+        ...(options.timeoutMs && { timeoutMs: options.timeoutMs }),
+        ...(options.stallMs && { stallMs: options.stallMs }),
+      });
       if (actual !== archive.sha256) {
         throw new ToolError("checksum", `The downloaded ffmpeg archive has SHA-256 ${actual}, expected ${archive.sha256}. It was discarded.`);
       }
       for (const file of missing) {
-        const partial = `${target[file.tool]}.part`;
+        const partial = partialName(target[file.tool]);
         try {
           const unpacked = await unzipEntry(download, file.entry, partial);
           if (unpacked !== file.sha256) {
             throw new ToolError("checksum", `The unpacked ${file.tool} has SHA-256 ${unpacked}, expected ${file.sha256}. It was discarded.`);
           }
           if (platform !== "win32") chmodSync(partial, 0o755);
-          rmSync(target[file.tool], { force: true });
-          renameSync(partial, target[file.tool]);
+          placeVerified(partial, target[file.tool], file.sha256);
         } finally {
           rmSync(partial, { force: true });
         }
@@ -309,6 +279,13 @@ export async function prepareFfmpeg(options: PrepareFfmpegOptions = {}): Promise
       rmSync(download, { force: true });
     }
   }
+  if (!files.every(verified)) throw new ToolError("checksum", `ffmpeg in ${dir} does not match the pinned build after installing.`);
   log(`Saved ffmpeg and ffprobe ${FFMPEG_PIN.version} in ${dir}`);
   return { ffmpeg, ffprobe, version: FFMPEG_PIN.version, source: asset.source, downloaded: true };
+}
+
+/** Whether a pinned binary on disk is the one recorded here (checked before Frame Lens trusts it). */
+export function pinnedFfmpegIntact(path: string, tool: "ffmpeg" | "ffprobe", platform: NodeJS.Platform = process.platform, arch: string = process.arch): boolean {
+  const file = ffmpegAsset(platform, arch)?.archives.flatMap((a) => a.files).find((f) => f.tool === tool);
+  return Boolean(file && hasHash(path, file.sha256));
 }

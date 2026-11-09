@@ -70,16 +70,44 @@ function nothingThere(env: Env, what: string): SourceError {
   return new SourceError("inbox_empty", `No ${what} found in the inbox (${inboxFolders(env).join(", ") || extensionFolder(env)}). Save it there and try again.`);
 }
 
-/** The newest video or GIF in the inbox folders. */
-export function newestInboxFile(env: Env): string {
-  const found = newest(inboxFolders(env), (name) => MEDIA_EXTENSIONS.has(extname(name).toLowerCase()));
-  if (!found) throw nothingThere(env, "video or GIF");
-  return found;
+const isMedia = (name: string) => MEDIA_EXTENSIONS.has(extname(name).toLowerCase());
+const isReading = (name: string) => name.toLowerCase().endsWith(READING_SUFFIX);
+
+export interface InboxItem {
+  path: string;
+  kind: "media" | "reading";
 }
 
-/** The newest page reading the browser extension saved (`*.framelens.json`). */
+/**
+ * The newest item in the inbox, a video (or GIF) or a page reading. `inbox` means this one item for every tool, so
+ * `web inbox` and then `export inbox` work on the same thing.
+ */
+export function newestInboxItem(env: Env): InboxItem {
+  const found = newest(inboxFolders(env), (name) => isMedia(name) || isReading(name));
+  if (!found) throw nothingThere(env, "video, GIF or page reading");
+  return { path: found, kind: isReading(found) ? "reading" : "media" };
+}
+
+/** The newest inbox item, which must be a video or GIF (the video tools). */
+export function newestInboxFile(env: Env): string {
+  const item = newestInboxItem(env);
+  if (item.kind === "media") return item.path;
+  const video = newest(inboxFolders(env), isMedia);
+  throw new SourceError(
+    "bad_input",
+    `The newest item in the inbox is a page reading (${item.path}): use \`web\` or \`export\` with "inbox" for it.` +
+      (video ? ` For the newest video, pass its path: ${video}` : ""),
+  );
+}
+
+/** The newest inbox item, which must be a page reading the browser extension saved (`*.framelens.json`). */
 export function newestInboxReading(env: Env): string {
-  const found = newest(inboxFolders(env), (name) => name.toLowerCase().endsWith(READING_SUFFIX));
-  if (!found) throw nothingThere(env, "page reading (*.framelens.json from the browser extension)");
-  return found;
+  const item = newestInboxItem(env);
+  if (item.kind === "reading") return item.path;
+  const reading = newest(inboxFolders(env), isReading);
+  throw new SourceError(
+    "bad_input",
+    `The newest item in the inbox is a video (${item.path}): use the video tools with "inbox" for it.` +
+      (reading ? ` For the newest page reading, pass its path: ${reading}` : ""),
+  );
 }

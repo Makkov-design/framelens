@@ -16,7 +16,7 @@ import { createHash } from "node:crypto";
 import { capturableLogin, captureVideo, hasLoginProfile, login, logout } from "./browser/capture.js";
 import { maxDownloadMb, resolveSource, SourceError } from "./sources/index.js";
 import { geminiTranscriptFallback } from "./speech/gemini.js";
-import { findTool, ToolSetup } from "./tools/index.js";
+import { ToolSetup } from "./tools/index.js";
 import { chooseWorkspaceRoot, Workspace } from "./workspace/workspace.js";
 import type { Logger } from "./logger.js";
 
@@ -24,8 +24,8 @@ function createEngine(logger: Logger, transcriptFallback?: TranscriptFallback): 
   // Found once at start: env override, PATH, WinGet folders, then the pinned copy. When ffmpeg is nowhere, the bare
   // name stays and automatic setup downloads the pinned build on first use (unless FRAMELENS_AUTO_INSTALL=0).
   const setup = new ToolSetup({ log: (line) => logger.info(line) });
-  const ffmpeg = findTool("ffmpeg")?.path ?? "ffmpeg";
-  const ffprobe = findTool("ffprobe")?.path ?? "ffprobe";
+  const ffmpeg = setup.startPath("ffmpeg");
+  const ffprobe = setup.startPath("ffprobe");
   const tools = { ffmpeg, ffprobe, exec: setup.wrapExec(execTool) };
   const workspace = chooseWorkspaceRoot();
   if (workspace.from !== "cwd") logger.info(`workspace folder ${workspace.root}: ${workspace.reason}`);
@@ -48,7 +48,6 @@ function createEngine(logger: Logger, transcriptFallback?: TranscriptFallback): 
     },
     root: workspace.root,
     logger,
-    setupNotes: () => setup.takeNotes(),
     ...(transcriptFallback && { transcriptFallback }),
   });
 }

@@ -5,6 +5,7 @@ import type { Engine } from "./engine.js";
 import { InvalidInputError } from "./errors.js";
 import type { Logger } from "./logger.js";
 import { withSetupNotes } from "./local-tools.js";
+import { collectSetupNotes, setupNotesOf } from "./tools/setup.js";
 import { oneLine } from "./text.js";
 
 /** Tools that drive a local browser: reading the animations of a live web page. */
@@ -33,7 +34,8 @@ export function registerBrowserTools(server: McpServer, engine: Engine, logger: 
     async ({ url }) => {
       const started = Date.now();
       try {
-        const { ws, spec, result, files, savedReading } = await engine.web(url, options.version ?? "dev");
+        const { value, notes } = await collectSetupNotes(() => engine.web(url, options.version ?? "dev"));
+        const { ws, spec, result, files, savedReading } = value;
         const r = result.reading;
         const lines = [
           `> ${oneLine(r.title || r.url || url)} · ${r.viewport.width}×${r.viewport.height} · page ${r.scrollHeight}px tall${savedReading ? ` · read in the user's browser: ${savedReading}` : ""}`,
@@ -57,11 +59,11 @@ export function registerBrowserTools(server: McpServer, engine: Engine, logger: 
             ...(result.sheet ? [{ type: "image" as const, data: readFileSync(result.sheet.file).toString("base64"), mimeType: "image/jpeg" }] : []),
           ],
           structuredContent: { workspace: ws.dir, files, animations: r.animations.length, gsap: r.gsap, fonts: r.fonts, palette: spec.palette, ...(savedReading && { saved_reading: savedReading }) },
-        }, engine.takeSetupNotes());
+        }, notes);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         logger.warn("tool failed", { tool: "web", error: message });
-        return withSetupNotes({ content: [{ type: "text", text: error instanceof InvalidInputError ? message : `web failed: ${message}` }], isError: true }, engine.takeSetupNotes());
+        return withSetupNotes({ content: [{ type: "text", text: error instanceof InvalidInputError ? message : `web failed: ${message}` }], isError: true }, setupNotesOf(error));
       }
     },
   );

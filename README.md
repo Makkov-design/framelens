@@ -168,7 +168,7 @@ Pin the version so a new release never runs without you choosing it. Without npm
 | Your phone or a platform's own download button | Put the file in the inbox folder (`FRAMELENS_INBOX`) and use the source `inbox` |
 | Sites that ask you to log in (Instagram, Facebook, X, Threads, Vimeo) | Your own access only, in this order: save the video with the platform's own download button or a screen recording and give the file; opt in to your browser's cookies with `FRAMELENS_COOKIES_FROM_BROWSER=firefox` or `FRAMELENS_COOKIES_FILE=<cookies.txt>` (Chrome and Edge on Windows encrypt cookies so they cannot be used); or run `npx framelens login instagram` once: a browser window with a separate Frame Lens profile opens, you log in yourself (a second account is wiser), and links that need the login are then played there and saved. `framelens logout` deletes that profile |
 | A video or a page you see while logged in | The [browser extension](#browser-extension): record the tab, or read the page's motion, then `inbox` |
-| Links yt-dlp cannot fetch, with your own [cobalt](https://github.com/imputnet/cobalt) server | Opt in with `FRAMELENS_COBALT_URL` (below) |
+| Public links yt-dlp has no extractor for, with your own [cobalt](https://github.com/imputnet/cobalt) server | Opt in with `FRAMELENS_COBALT_URL` (below) |
 | A live website | `web` with its address |
 | Lottie, dotLottie, Rive `.riv`, Figma | `exact` with the file, link or Figma URL (a direct `.riv` link; rive.app pages are not read) |
 
@@ -176,22 +176,25 @@ Frame Lens never bypasses logins, CAPTCHAs or bot checks, never uses online down
 and downloads one video at a time at your request. Platforms' terms may forbid automated downloading, and a platform
 can restrict an account it sees doing it: analyze videos you are allowed to watch and use, for reference.
 
-**Self-hosted cobalt (opt-in).** If you run your own [cobalt](https://github.com/imputnet/cobalt) instance, set
-`FRAMELENS_COBALT_URL` to its API address (and `FRAMELENS_COBALT_KEY` to an API key if it asks for one): links that
-yt-dlp cannot fetch are then tried through it, and the media comes through your instance only. Nothing changes when
-it is unset. Public instances are not supported (the main one is protected against bots and is not for other
-projects). cobalt never gets around a login, and a link that failed on a bot check, or a private, removed or
-geo-blocked video, is never sent to it.
+**Self-hosted cobalt (opt-in).** This is meant for a [cobalt](https://github.com/imputnet/cobalt) instance you run
+yourself: set `FRAMELENS_COBALT_URL` to its API address (and `FRAMELENS_COBALT_KEY` to an API key if it asks for
+one). A link then goes to it only when yt-dlp has no extractor for it ("Unsupported URL"), or fails for a reason that
+is clearly not access control. A failure that mentions a login or sign-in, an age check, a bot check or challenge, a
+block, a rate limit, a private, members-only or paid post, or HTTP 401, 403 or 429, is never sent to cobalt: those
+stay with you (the extension, your own cookies or `framelens login`). The media comes through your instance only,
+and a redirect to this computer or the local network is refused. Nothing changes when it is unset. Frame Lens cannot
+tell someone else's public instance from yours; it only refuses the official cobalt.tools hosts by name, which are not
+for other projects.
 
 ## Configuration
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `FRAMELENS_WORKSPACE` | `./.framelens`, or `~/.framelens` from a system or read-only folder | Where workspaces go |
-| `FRAMELENS_INBOX` | — | Folder whose newest video is the source `inbox` (Downloads/FrameLens is always looked in too) |
+| `FRAMELENS_WORKSPACE` | `./.framelens`, or `~/.framelens` from a system or read-only folder | Where workspaces go (a relative path is taken from the home folder) |
+| `FRAMELENS_INBOX` | — | Folder for the source `inbox`: the newest video or page reading there or in Downloads/FrameLens |
 | `FRAMELENS_DOWNLOADS` | `~/Downloads` | The browser's download folder, where the extension saves into `FrameLens/` |
 | `FRAMELENS_AUTO_INSTALL` | on | `0` stops Frame Lens from downloading a missing ffmpeg or yt-dlp |
-| `FRAMELENS_COBALT_URL`, `FRAMELENS_COBALT_KEY` | — | Your own cobalt instance for links yt-dlp cannot fetch, and its API key |
+| `FRAMELENS_COBALT_URL`, `FRAMELENS_COBALT_KEY` | — | Your own cobalt instance for public links yt-dlp has no extractor for, and its API key |
 | `FRAMELENS_FFMPEG`, `FRAMELENS_FFPROBE`, `FRAMELENS_YTDLP` | found automatically | Paths to the tools |
 | `FRAMELENS_MAX_DOWNLOAD_MB` | `2048` | Largest download |
 | `FRAMELENS_COOKIES_FROM_BROWSER`, `FRAMELENS_COOKIES_FILE` | — | Opt-in cookies for sites that need your login |

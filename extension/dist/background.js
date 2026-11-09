@@ -78,6 +78,55 @@ function mergeReadings(readings) {
   };
 }
 
+// extension/src/downloads.ts
+function explain(error) {
+  if (!error) return "the browser stopped it";
+  if (/USER_CANCELED/.test(error)) return "it was cancelled";
+  if (/NO_SPACE/.test(error)) return "the disk is full";
+  if (/ACCESS_DENIED|FILE_BLOCKED|FILE_SECURITY_CHECK_FAILED|FILE_VIRUS_INFECTED/.test(error)) return `the browser or the system refused the file (${error})`;
+  if (/NAME_TOO_LONG|TOO_LARGE|FILE_FAILED/.test(error)) return `the file could not be written (${error})`;
+  return error;
+}
+async function downloadAndWait(api, options, timeoutMs = 10 * 6e4) {
+  let id = -1;
+  let listener;
+  const finished = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("The browser did not finish saving the file.")), timeoutMs);
+    const settle = (state, error, filename) => {
+      if (state === "complete") {
+        clearTimeout(timer);
+        resolve(filename ?? "");
+      } else if (state === "interrupted") {
+        clearTimeout(timer);
+        reject(new Error(`The file was not saved: ${explain(error)}.`));
+      }
+    };
+    listener = (delta) => {
+      if (delta.id !== id) return;
+      if (delta.state?.current) {
+        void api.search({ id }).then(
+          ([item]) => settle(delta.state?.current, delta.error?.current ?? item?.error, item?.filename),
+          () => settle(delta.state?.current, delta.error?.current, void 0)
+        );
+      }
+    };
+    api.onChanged.addListener(listener);
+    api.download(options).then(async (started) => {
+      id = started;
+      const [item] = await api.search({ id });
+      settle(item?.state, item?.error, item?.filename);
+    }).catch((error) => {
+      clearTimeout(timer);
+      reject(new Error(`The file was not saved: ${error?.message ?? String(error)}`));
+    });
+  });
+  try {
+    return await finished;
+  } finally {
+    if (listener) api.onChanged.removeListener(listener);
+  }
+}
+
 // extension/src/names.ts
 var FOLDER = "FrameLens";
 var READING_FORMAT = "framelens.page-reading/1";
@@ -142,8 +191,8 @@ async function readTab(tabId, options = {}) {
     for (let i = 0; i < bytes.length; i += 32768) binary += String.fromCharCode(...bytes.subarray(i, i + 32768));
     const url = `data:application/json;base64,${btoa(binary)}`;
     if (url.length > 2 * 1024 * 1024 - 64) throw new Error("This page's reading is too large to save (over 2 MB).");
-    await chrome.downloads.download({ url, filename, conflictAction: "uniquify", saveAs: false });
-    return { reading, filename };
+    const savedTo = await downloadAndWait(chrome.downloads, { url, filename, conflictAction: "uniquify", saveAs: false });
+    return { reading, filename, savedTo };
   } finally {
     await inPage(tabId, { func: scrollPage, args: [start?.x ?? 0, start?.y ?? 0, 0] }).catch(() => void 0);
   }
@@ -179,20 +228,12 @@ async function stopRecording() {
 async function saveRecording(message) {
   const filename = recordingFileName(message.pageUrl, /* @__PURE__ */ new Date());
   try {
-    const id = await chrome.downloads.download({ url: message.url, filename, conflictAction: "uniquify", saveAs: false });
-    await new Promise((resolve) => {
-      const done = (delta) => {
-        if (delta.id !== id || !delta.state || delta.state.current === "in_progress") return;
-        chrome.downloads.onChanged.removeListener(done);
-        resolve();
-      };
-      chrome.downloads.onChanged.addListener(done);
-    });
+    const savedTo = await downloadAndWait(chrome.downloads, { url: message.url, filename, conflictAction: "uniquify", saveAs: false });
+    return { filename, savedTo };
   } finally {
     await chrome.action.setBadgeText({ text: "" });
     await chrome.offscreen.closeDocument().catch(() => void 0);
   }
-  return filename;
 }
 var lastSaved = {};
 chrome.runtime.onMessage.addListener((message, _sender, reply) => {
@@ -203,7 +244,7 @@ chrome.runtime.onMessage.addListener((message, _sender, reply) => {
   };
   switch (message.type) {
     case "read":
-      return answer(readTab(message.tabId).then(({ reading, filename }) => ({ filename, animations: reading.animations.length, gsap: reading.gsap })));
+      return answer(readTab(message.tabId).then(({ reading, filename, savedTo }) => ({ filename, savedTo, animations: reading.animations.length, gsap: reading.gsap })));
     case "record-start":
       return answer(startRecording(message.tabId));
     case "record-stop":
@@ -213,7 +254,7 @@ chrome.runtime.onMessage.addListener((message, _sender, reply) => {
     case "recorded":
       return answer(
         saveRecording(message).then(
-          (filename) => (lastSaved = { filename }, { filename }),
+          (saved) => (lastSaved = { filename: saved.filename }, saved),
           (error) => {
             lastSaved = { error: error.message };
             throw error;

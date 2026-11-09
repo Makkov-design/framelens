@@ -1,4 +1,5 @@
 import { cleanReading, mergeReadings, type PageReading } from "../../src/browser/page-script.js";
+import { downloadAndWait } from "./downloads.js";
 import { READING_FORMAT, readingFileName, recordingFileName } from "./names.js";
 
 declare const chrome: any;
@@ -35,7 +36,7 @@ function scrollPage(x: number, y: number, ms: number): Promise<{ x: number; y: n
 }
 
 /** Reads the tab's animations at the top and every half screen down to the bottom, then puts the scroll back. */
-export async function readTab(tabId: number, options: { maxScroll?: number } = {}): Promise<{ reading: PageReading; filename: string }> {
+export async function readTab(tabId: number, options: { maxScroll?: number } = {}): Promise<{ reading: PageReading; filename: string; savedTo: string }> {
   const start = await inPage<{ x: number; y: number }>(tabId, { func: () => ({ x: window.scrollX, y: window.scrollY }) });
   try {
     await inPage(tabId, { func: scrollPage, args: [0, 0, 600] });
@@ -60,8 +61,9 @@ export async function readTab(tabId: number, options: { maxScroll?: number } = {
     for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
     const url = `data:application/json;base64,${btoa(binary)}`;
     if (url.length > 2 * 1024 * 1024 - 64) throw new Error("This page's reading is too large to save (over 2 MB).");
-    await chrome.downloads.download({ url, filename, conflictAction: "uniquify", saveAs: false });
-    return { reading, filename };
+    // Only a file that is really there counts: an interrupted download is reported, not called saved.
+    const savedTo = await downloadAndWait(chrome.downloads, { url, filename, conflictAction: "uniquify", saveAs: false });
+    return { reading, filename, savedTo };
   } finally {
     await inPage(tabId, { func: scrollPage, args: [start?.x ?? 0, start?.y ?? 0, 0] }).catch(() => undefined);
   }
@@ -104,23 +106,15 @@ export async function stopRecording(): Promise<void> {
 }
 
 /** The offscreen document hands over the finished file as a blob: address; it is saved, then the document closes. */
-async function saveRecording(message: { url: string; pageUrl?: string }): Promise<string> {
+async function saveRecording(message: { url: string; pageUrl?: string }): Promise<{ filename: string; savedTo: string }> {
   const filename = recordingFileName(message.pageUrl, new Date());
   try {
-    const id: number = await chrome.downloads.download({ url: message.url, filename, conflictAction: "uniquify", saveAs: false });
-    await new Promise<void>((resolve) => {
-      const done = (delta: { id: number; state?: { current?: string } }) => {
-        if (delta.id !== id || !delta.state || delta.state.current === "in_progress") return;
-        chrome.downloads.onChanged.removeListener(done);
-        resolve();
-      };
-      chrome.downloads.onChanged.addListener(done);
-    });
+    const savedTo = await downloadAndWait(chrome.downloads, { url: message.url, filename, conflictAction: "uniquify", saveAs: false });
+    return { filename, savedTo };
   } finally {
     await chrome.action.setBadgeText({ text: "" });
     await chrome.offscreen.closeDocument().catch(() => undefined);
   }
-  return filename;
 }
 
 let lastSaved: { filename?: string; error?: string } = {};
@@ -133,7 +127,7 @@ chrome.runtime.onMessage.addListener((message: Record<string, any>, _sender: unk
   };
   switch (message.type) {
     case "read":
-      return answer(readTab(message.tabId).then(({ reading, filename }) => ({ filename, animations: reading.animations.length, gsap: reading.gsap })));
+      return answer(readTab(message.tabId).then(({ reading, filename, savedTo }) => ({ filename, savedTo, animations: reading.animations.length, gsap: reading.gsap })));
     case "record-start":
       return answer(startRecording(message.tabId));
     case "record-stop":
@@ -143,7 +137,7 @@ chrome.runtime.onMessage.addListener((message: Record<string, any>, _sender: unk
     case "recorded":
       return answer(
         saveRecording(message as { url: string; pageUrl?: string }).then(
-          (filename) => ((lastSaved = { filename }), { filename }),
+          (saved) => ((lastSaved = { filename: saved.filename }), saved),
           (error: Error) => {
             lastSaved = { error: error.message };
             throw error;

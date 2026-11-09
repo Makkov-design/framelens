@@ -1,6 +1,6 @@
-import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { cleanStalePartials, downloadToFile, hasHash, partialName, placeVerified } from "./download.js";
 import { ToolError } from "./errors.js";
 import { framelensHome, type Env } from "./env.js";
 
@@ -47,6 +47,9 @@ export interface PrepareOptions {
   expectedSha256?: string;
   signal?: AbortSignal;
   log?: (line: string) => void;
+  /** Download limits (default 15 minutes in all, 60 s without data). */
+  timeoutMs?: number;
+  stallMs?: number;
 }
 
 export interface PrepareResult {
@@ -56,7 +59,7 @@ export interface PrepareResult {
   downloaded: boolean;
 }
 
-const sha256 = (data: Uint8Array) => createHash("sha256").update(data).digest("hex");
+const MAX_YTDLP_BYTES = 128 * 1024 * 1024;
 
 /**
  * Downloads the pinned yt-dlp into ~/.framelens/tools/yt-dlp/<version>/ and checks it against the hash recorded in
@@ -75,44 +78,52 @@ export async function prepareYtDlp(options: PrepareOptions = {}): Promise<Prepar
   }
   const expected = options.expectedSha256 ?? asset.sha256;
   const log = options.log ?? (() => {});
-  const doFetch = options.fetchFn ?? fetch;
   const base = options.baseUrl ?? `https://github.com/yt-dlp/yt-dlp/releases/download/${YTDLP_PIN.version}`;
 
-  if (existsSync(target)) {
-    if (sha256(readFileSync(target)) === expected) return { path: target, version: YTDLP_PIN.version, downloaded: false };
-    log("The yt-dlp file on disk does not match the pinned hash; downloading it again.");
-    rmSync(target, { force: true });
-  }
+  if (hasHash(target, expected)) return { path: target, version: YTDLP_PIN.version, downloaded: false };
+  if (existsSync(target)) log("The yt-dlp file on disk does not match the pinned hash; downloading it again.");
 
-  const get = async (url: string): Promise<Uint8Array> => {
-    let response: Response;
-    try {
-      response = await doFetch(url, { redirect: "follow", signal: options.signal });
-    } catch (error) {
-      throw new ToolError("download_failed", `Could not download ${url}: ${error instanceof Error ? error.message : String(error)}`);
-    }
-    if (!response.ok) throw new ToolError("download_failed", `Could not download ${url}: HTTP ${response.status}.`);
-    return new Uint8Array(await response.arrayBuffer());
+  const dir = dirname(target);
+  mkdirSync(dir, { recursive: true });
+  cleanStalePartials(dir);
+  const partial = partialName(target);
+  const common = {
+    ...(options.fetchFn && { fetchFn: options.fetchFn }),
+    ...(options.signal && { signal: options.signal }),
+    ...(options.timeoutMs && { timeoutMs: options.timeoutMs }),
+    ...(options.stallMs && { stallMs: options.stallMs }),
   };
-
-  log(`Downloading yt-dlp ${YTDLP_PIN.version} (${asset.file}) from github.com/yt-dlp/yt-dlp ...`);
-  const binary = await get(`${base}/${asset.file}`);
-  const actual = sha256(binary);
-  if (actual !== expected) {
-    throw new ToolError("checksum", `The downloaded yt-dlp has SHA-256 ${actual}, expected ${expected}. It was discarded.`);
+  try {
+    log(`Downloading yt-dlp ${YTDLP_PIN.version} (${asset.file}) from github.com/yt-dlp/yt-dlp ...`);
+    // The pinned files are 20-40 MB; a server sending far more is not serving them.
+    const { sha256: actual } = await downloadToFile(`${base}/${asset.file}`, partial, { what: "yt-dlp", maxBytes: MAX_YTDLP_BYTES, ...common });
+    if (actual !== expected) {
+      throw new ToolError("checksum", `The downloaded yt-dlp has SHA-256 ${actual}, expected ${expected}. It was discarded.`);
+    }
+    const sumsFile = partialName(join(dir, "SHA2-256SUMS"));
+    let sums: string;
+    try {
+      await downloadToFile(`${base}/SHA2-256SUMS`, sumsFile, { what: "yt-dlp checksum list", maxBytes: 1024 * 1024, ...common });
+      sums = readFileSync(sumsFile, "utf8");
+    } finally {
+      rmSync(sumsFile, { force: true });
+    }
+    const line = sums.split(/\r?\n/).find((l) => l.trim().endsWith(` ${asset.file}`) || l.trim().endsWith(`*${asset.file}`));
+    const published = line?.trim().split(/\s+/)[0]?.toLowerCase();
+    if (published !== actual) {
+      throw new ToolError("checksum", `The release's SHA2-256SUMS does not list ${actual} for ${asset.file}. The download was discarded.`);
+    }
+    if (platform !== "win32") chmodSync(partial, 0o755);
+    placeVerified(partial, target, expected);
+  } finally {
+    rmSync(partial, { force: true });
   }
-  const sums = new TextDecoder().decode(await get(`${base}/SHA2-256SUMS`));
-  const line = sums.split(/\r?\n/).find((l) => l.trim().endsWith(` ${asset.file}`) || l.trim().endsWith(`*${asset.file}`));
-  const published = line?.trim().split(/\s+/)[0]?.toLowerCase();
-  if (published !== actual) {
-    throw new ToolError("checksum", `The release's SHA2-256SUMS does not list ${actual} for ${asset.file}. The download was discarded.`);
-  }
-
-  mkdirSync(dirname(target), { recursive: true });
-  const partial = `${target}.part`;
-  writeFileSync(partial, binary);
-  if (platform !== "win32") chmodSync(partial, 0o755);
-  renameSync(partial, target);
   log(`Saved ${target}`);
   return { path: target, version: YTDLP_PIN.version, downloaded: true };
+}
+
+/** Whether the pinned yt-dlp on disk is the one recorded here (checked before Frame Lens trusts it). */
+export function pinnedYtDlpIntact(path: string, platform: NodeJS.Platform = process.platform, arch: string = process.arch): boolean {
+  const asset = assetFor(platform, arch);
+  return Boolean(asset && hasHash(path, asset.sha256));
 }

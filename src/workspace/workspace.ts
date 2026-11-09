@@ -1,6 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { isAbsolute, join, relative, resolve, win32 } from "node:path";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { isAbsolute, join, posix, relative, resolve, win32 } from "node:path";
 import { framelensHome } from "../tools/env.js";
 
 /** What the sources layer writes to `source.json` and hands to the core. */
@@ -35,8 +35,26 @@ const inside = (path: string, dir: string, separator: string) => path === dir ||
  * can start the server in one of these (Windows uses System32, macOS `/`).
  */
 export function isSystemFolder(dir: string, env: Env = process.env, platform: NodeJS.Platform = process.platform): boolean {
+  // The same folder under another name: a junction or symlink, or an 8.3 short name (C:\PROGRA~1) on Windows.
+  const names = [dir];
+  if (platform === process.platform) {
+    try {
+      names.push(realpathSync.native(dir));
+    } catch {
+      // Not there (or not readable): the name alone decides.
+    }
+  }
+  return names.some((name) => systemByName(name, env, platform));
+}
+
+function systemByName(dir: string, env: Env, platform: NodeJS.Platform): boolean {
   if (platform === "win32") {
-    const p = win32.resolve(dir).toLowerCase();
+    let p = dir.replaceAll("/", "\\");
+    // Device and long-path prefixes (\\?\C:\…, \\.\C:\…, \\?\UNC\server\share\…) name the same folders.
+    p = p.replace(/^\\\\[?.]\\UNC\\/i, "\\\\").replace(/^\\\\[?.]\\(?=[a-z]:)/i, "");
+    // An administrative share (\\host\C$\Windows) is the drive itself.
+    p = p.replace(/^\\\\[^\\]+\\([a-z])\$(?=\\|$)/i, "$1:");
+    p = win32.resolve(p).toLowerCase();
     // A drive's root (C:\) or a share's root (\\server\share\).
     if (/^[a-z]:\\$/.test(p) || /^\\\\[^\\]+\\[^\\]+\\?$/.test(p)) return true;
     const system = [env.SystemRoot, env.SYSTEMROOT, env.windir, env.WINDIR, "C:\\Windows", env.ProgramFiles, env.PROGRAMFILES, env["ProgramFiles(x86)"], env["PROGRAMFILES(X86)"], env.ProgramW6432, "C:\\Program Files", "C:\\Program Files (x86)"]
@@ -44,9 +62,11 @@ export function isSystemFolder(dir: string, env: Env = process.env, platform: No
       .map((d) => d.trim().replace(/[\\/]+$/, "").replaceAll("/", "\\").toLowerCase());
     return system.some((d) => inside(p, d, "\\"));
   }
-  const p = dir.replace(/\/+$/, "") || "/";
+  // macOS file systems ignore case by default: /system is /System.
+  const fold = (s: string) => (platform === "darwin" ? s.toLowerCase() : s);
+  const p = fold(posix.normalize(dir).replace(/\/+$/, "")) || "/";
   if (p === "/") return true;
-  return ["/usr", "/bin", "/sbin", "/etc", "/System", "/Library"].some((d) => inside(p, d, "/"));
+  return ["/usr", "/bin", "/sbin", "/etc", "/System", "/Library"].some((d) => inside(p, fold(d), "/"));
 }
 
 /** Whether Frame Lens can create and remove a file in `<dir>/.framelens`. Leaves nothing behind that was not there. */
@@ -80,9 +100,14 @@ export function canWriteWorkspace(root: string): boolean {
  * unless the working folder is a system folder or cannot be written to, then `~/.framelens` (and the temp folder
  * as a last resort). Claude Desktop on Windows starts the server in C:\WINDOWS\system32, where every write fails.
  */
-export function chooseWorkspaceRoot(env: Env = process.env, cwd = process.cwd(), options: { platform?: NodeJS.Platform; home?: string; canWrite?: (root: string) => boolean } = {}): WorkspaceRootChoice {
+export function chooseWorkspaceRoot(
+  env: Env = process.env,
+  cwd = process.cwd(),
+  options: { platform?: NodeJS.Platform; home?: string; userHome?: string; canWrite?: (root: string) => boolean } = {},
+): WorkspaceRootChoice {
   const configured = env.FRAMELENS_WORKSPACE?.trim() || env.YTLENS_WORKSPACE?.trim();
-  if (configured) return { root: resolve(cwd, configured), from: "env", reason: "FRAMELENS_WORKSPACE is set" };
+  // A relative FRAMELENS_WORKSPACE is taken from the home folder: the working folder may be System32.
+  if (configured) return { root: resolve(options.userHome ?? homedir(), configured), from: "env", reason: "FRAMELENS_WORKSPACE is set" };
   const canWrite = options.canWrite ?? canWriteWorkspace;
   const local = join(resolve(cwd), ".framelens");
   const system = isSystemFolder(cwd, env, options.platform);

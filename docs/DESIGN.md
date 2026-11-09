@@ -24,8 +24,11 @@ research and reasoning lives in the plan page; this file is what the code must f
    ±0.5 s around events. Never dense sampling of a whole long video.
 7. **Honest access.** Only content the user can see, fetched the way the user can: file, public link, the user's
    own cookies (opt-in), the user's own browser profile, the browser extension in the user's own browser (they
-   record what they watch), or the user's own self-hosted cobalt instance (opt-in). Never bot-check or CAPTCHA
-   evasion, client impersonation of our own, public online downloader sites, paid scrapers or account pools.
+   record what they watch), or the user's own self-hosted cobalt instance (opt-in, and only for public links that
+   yt-dlp has no extractor for or fails on for reasons that are clearly not access control). Never bot-check or
+   CAPTCHA evasion, client impersonation of our own, public online downloader sites, paid scrapers or account pools.
+   Anything that looks like access control (login, age or bot check, block, rate limit, private post, HTTP
+   401/403/429) is never retried another way.
 8. **Understanding, not production.** We do not generate footage, voices or variants. We export specs and starter
    projects to renderers (HyperFrames, Remotion, CSS/Motion, later Lottie, After Effects, Hypit).
 
@@ -125,8 +128,10 @@ Tiers, tried in order with a clear message when one fails: 0 file or inbox folde
 file) · 1 public link via pinned yt-dlp (gallery-dl optional fallback) · 2 opt-in cookies (Firefox profile or a
 cookies.txt path; Chrome/Edge on Windows cannot work) · 3 a dedicated Frame Lens browser profile (2.4) · 3+ the
 browser extension (`extension/`, 2.1): the user records the tab or reads the page in their own browser, files go to
-`Downloads/FrameLens` and the `inbox` finds them. Links yt-dlp cannot fetch may go to the user's own cobalt instance
-(`FRAMELENS_COBALT_URL`), never after a bot check. One video per request, with pauses between requests.
+`Downloads/FrameLens` and the `inbox` finds them (`inbox` is the newest item of either kind, for every tool). Public
+links yt-dlp has no extractor for may go to the user's own cobalt instance (`FRAMELENS_COBALT_URL`); a failure that
+may be access control never does (allow-list in `sources/cobalt.ts`, wording in `ACCESS_CONTROL`,
+`sources/ytdlp.ts`). One video per request, with pauses between requests.
 
 ## Engineering rules
 

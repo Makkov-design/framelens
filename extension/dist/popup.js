@@ -30,7 +30,7 @@ readButton.addEventListener("click", async () => {
     if (restricted(tab.url)) throw new Error("The browser does not let extensions read this page (its own pages and the extension stores).");
     say("Reading the page… it scrolls down once and back.");
     const r = await ask({ type: "read", tabId: tab.id });
-    say(`Saved ${r.animations} animations${r.gsap ? " (GSAP timeline read)" : ""} to Downloads/${r.filename}. In Frame Lens: the web tool with "inbox".`);
+    say(`Saved ${r.animations} animations${r.gsap ? " (GSAP timeline read)" : ""} to ${r.savedTo || `Downloads/${r.filename}`}. In Frame Lens: the web tool with "inbox".`);
   } catch (error) {
     say(error.message, true);
   } finally {

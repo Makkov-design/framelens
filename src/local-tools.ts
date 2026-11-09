@@ -8,6 +8,7 @@ import type { Logger } from "./logger.js";
 import { oneLine } from "./text.js";
 import { EXPORT_TARGETS } from "./export/exporters.js";
 import { GOALS } from "./router/plan.js";
+import { collectSetupNotes, setupNotesOf } from "./tools/setup.js";
 
 /** Seconds with decimals (12.48), or M:SS(.mmm) / H:MM:SS(.mmm). */
 export function parseTime(value: string | number): number {
@@ -64,17 +65,17 @@ export function registerLocalTools(server: McpServer, engine: Engine, logger: Lo
   async function run(tool: string, body: () => Promise<CallToolResult>): Promise<CallToolResult> {
     const startedAt = Date.now();
     try {
-      const result = await body();
+      const { value: result, notes } = await collectSetupNotes(body);
       logger.info("tool done", { tool, ms: Date.now() - startedAt });
-      return withSetupNotes(result, engine.takeSetupNotes());
+      return withSetupNotes(result, notes);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (error instanceof InvalidInputError || error instanceof AnalyzerError) {
         logger.warn("tool failed", { tool, error: message });
-        return withSetupNotes({ content: [{ type: "text", text: message }], isError: true }, engine.takeSetupNotes());
+        return withSetupNotes({ content: [{ type: "text", text: message }], isError: true }, setupNotesOf(error));
       }
       logger.error("tool crashed", { tool, error });
-      return withSetupNotes({ content: [{ type: "text", text: `${tool} failed: ${message}` }], isError: true }, engine.takeSetupNotes());
+      return withSetupNotes({ content: [{ type: "text", text: `${tool} failed: ${message}` }], isError: true }, setupNotesOf(error));
     }
   }
 

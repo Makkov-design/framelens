@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { hasLoginProfile } from "./browser/capture.js";
 import { findBrowser } from "./browser/cdp.js";
 import {
@@ -16,7 +17,8 @@ import {
   type Env,
   type ToolName,
 } from "./tools/index.js";
-import { cobaltOrigin } from "./sources/cobalt.js";
+import { checkCobaltInstance } from "./sources/cobalt.js";
+import { extensionFolder } from "./sources/inbox.js";
 import { chooseWorkspaceRoot } from "./workspace/workspace.js";
 
 export interface DoctorOptions {
@@ -111,10 +113,17 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<number> {
   out(
     `  Automatic setup (FRAMELENS_AUTO_INSTALL): ${autoInstallEnabled(env) ? `on: a missing ffmpeg (${FFMPEG_PIN.version}) or yt-dlp (${YTDLP_PIN.version}) is downloaded, verified and used` : "off"}`,
   );
-  out(`  Self-hosted cobalt (FRAMELENS_COBALT_URL): ${readEnv(env, "FRAMELENS_COBALT_URL") ? `${cobaltOrigin(readEnv(env, "FRAMELENS_COBALT_URL")!)}${readEnv(env, "FRAMELENS_COBALT_KEY") ? " with an API key" : ""}` : "not set"}`);
+  if (!readEnv(env, "FRAMELENS_COBALT_URL")) out("  Self-hosted cobalt (FRAMELENS_COBALT_URL): not set");
+  else {
+    // The same check the server makes, so doctor never shows an address the server would refuse as in use.
+    const cobalt = checkCobaltInstance(env);
+    out(`  Self-hosted cobalt (FRAMELENS_COBALT_URL): ${"url" in cobalt ? `${cobalt.url.origin}${readEnv(env, "FRAMELENS_COBALT_KEY") ? " with an API key" : ""}` : `not used: ${cobalt.error}`}`);
+  }
   const geminiKey = readEnv(env, "GEMINI_API_KEY") ?? readEnv(env, "GOOGLE_API_KEY");
   out(`  Gemini key: ${geminiKey ? "set" : "not set"} (cloud video descriptions; local analysis works without it)`);
-  out(`  Inbox folder (FRAMELENS_INBOX): ${readEnv(env, "FRAMELENS_INBOX") ?? "not set"}`);
+  const inbox = readEnv(env, "FRAMELENS_INBOX");
+  const downloads = extensionFolder(env);
+  out(`  Inbox (source "inbox", newest file): ${inbox ? `${inbox}${existsSync(inbox) ? "" : " (missing)"} and ` : "FRAMELENS_INBOX not set; "}${downloads}${existsSync(downloads) ? "" : " (not created yet)"}, where the browser extension saves`);
   const cookies = readEnv(env, "FRAMELENS_COOKIES_FILE") ? "cookies file" : readEnv(env, "FRAMELENS_COOKIES_FROM_BROWSER") ? "browser profile" : "off";
   out(`  Cookies (opt-in): ${cookies}`);
   out(`  Overrides: ${Object.values(TOOL_ENV).filter((n) => readEnv(env, n)).join(", ") || "none"}`);
