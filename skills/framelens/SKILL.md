@@ -11,7 +11,8 @@ Frame Lens gives you eyes and ears for a video or an animation. It has three eng
   `boundaries`, `style`, `track`, `audio`, `export`, `compare`. They measure real frame times, cuts, palette, motion and sound,
   and write everything to a workspace folder.
 - **Exact sources** (no estimates): `web` reads a live page's animations from the browser (CSS, Web Animations,
-  Motion, GSAP) with real fonts and colours; `exact` reads Lottie/dotLottie keyframes and Figma prototype transitions.
+  Motion, GSAP) with real fonts and colours; `exact` reads Lottie/dotLottie and Rive keyframes and Figma prototype
+  transitions.
 - **Gemini tools** (YouTube links, need `GEMINI_API_KEY`, work in cloud sessions): `summarize_youtube_video`,
   `extract_key_moments`, `ask_about_youtube_video`, `get_video_transcript`, `list_supported_models`.
 
@@ -80,4 +81,6 @@ deferred, load them with ToolSearch query `framelens` first.
 
 Never silently fall back to captions or guesses. Tell the user what did not run and why (server not connected, ffmpeg
 or a browser missing, `GEMINI_API_KEY` not set, quota, private video, login required), and how to fix it
-(`framelens doctor`).
+(`framelens doctor`). To install: `npx -y framelens init` in the project, or
+`claude mcp add framelens --scope user -- npx -y framelens` (Windows: `cmd /c npx -y framelens`); other clients are
+in the README's "For AI agents" section. `npx -y framelens doctor --prepare` checks the machine and fetches the tools.
