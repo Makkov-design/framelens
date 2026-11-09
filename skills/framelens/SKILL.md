@@ -20,7 +20,7 @@ deferred, load them with ToolSearch query `framelens` first.
 
 ## Workflow
 
-1. **Pick the source type.** A website → `web`. A Lottie file or link, or a Figma URL → `exact`. Any video → `plan`.
+1. **Pick the source type.** A website → `web`. A Lottie or Rive (.riv) file or link, or a Figma URL → `exact`. Any video → `plan`.
 2. **Plan by goal.** Call `plan` with the source and the user's request in their own words (or `goal`: listen, learn,
    find, style, sound, production). It classifies the video and returns the steps. Follow them in order.
 3. **Listen** (podcast, lecture): `transcript`, then one overview sheet. The words carry the content.

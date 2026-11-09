@@ -43,7 +43,7 @@ export async function readCapped(res: FetchResponse, max: number): Promise<Buffe
 
 export const isHttpUrl = (s: string) => /^https?:\/\//i.test(s.trim());
 
-/** Downloads a .json / .lottie file into `dir` and returns its path. Only http(s), capped size and time. */
+/** Downloads a .json / .lottie / .riv file into `dir` and returns its path. Only http(s), capped size and time. */
 export async function downloadFile(url: string, dir: string, fetchImpl: FetchLike = fetch as unknown as FetchLike): Promise<string> {
   const parsed = new URL(url);
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") throw new Error("Only http(s) links can be downloaded.");
@@ -53,7 +53,7 @@ export async function downloadFile(url: string, dir: string, fetchImpl: FetchLik
   const data = await readCapped(res, MAX_DOWNLOAD);
   mkdirSync(dir, { recursive: true });
   const base = basename(parsed.pathname).replace(/[^A-Za-z0-9._-]/g, "_") || "animation";
-  const ext = /\.(json|lottie)$/i.test(base) ? "" : data[0] === 0x50 && data[1] === 0x4b ? ".lottie" : ".json";
+  const ext = /\.(json|lottie|riv)$/i.test(base) ? "" : data[0] === 0x50 && data[1] === 0x4b ? ".lottie" : data.subarray(0, 4).toString("latin1") === "RIVE" ? ".riv" : ".json";
   const file = join(dir, `${createHash("sha1").update(parsed.href).digest("hex").slice(0, 8)}-${base}${ext}`);
   writeFileSync(file, data);
   return file;

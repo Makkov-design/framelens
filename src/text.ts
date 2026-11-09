@@ -7,6 +7,18 @@ export function oneLine(text: unknown, max = 200): string {
   return String(text ?? "").replace(/[\u0000-\u001f\u007f\u2028\u2029`]+/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
 }
 
+/**
+ * Third-party text for Markdown prose and table cells: one line (as `oneLine`), with the characters that make links,
+ * images, HTML, emphasis, strikethrough or table columns escaped, and bare URLs defused so they stay plain text. Use it
+ * after a list marker or a table pipe (one line cannot start a heading there).
+ */
+export function mdText(text: unknown, max = 200): string {
+  return oneLine(text, max)
+    .replace(/[\\*_[\]<>|~]/g, "\\$&")
+    .replace(/:\/\//g, ":\\/\\/")
+    .replace(/\bwww\./gi, "www\\.");
+}
+
 /** A colour from untrusted data as `#RRGGBB`, or the fallback: it lands in generated HTML, CSS and scripts. */
 export function safeHex(value: unknown, fallback = "#111111"): string {
   if (typeof value !== "string") return fallback;

@@ -43,7 +43,7 @@ research and reasoning lives in the plan page; this file is what the code must f
 | `style/` (2.1) | Shots, cuts, palette, typography notes, `STYLE.md`, `motion-spec.json`, `ANALYSIS.md`, `TIMELINE.md` |
 | `track/` (2.1) | Element tracking (normalised cross-correlation, then Lucas–Kanade subpixel refinement with gain and offset, drift checked against the first template) and curve fitting (cubic-bezier, spring, linear, steps by least squares with Nelder–Mead), `TRACK.md`, `tracks.json` |
 | `audio/` (2.2) | Loudness, silences, onsets, tempo and beat grid, cut-on-beat, spectrogram image, SFX labels |
-| `exact/` (2.4) | Lottie, live web pages (WAAPI/GSAP), Figma |
+| `exact/` (2.4) | Lottie, live web pages (WAAPI/GSAP), Figma; Rive `.riv` (`rive.ts` reads the runtime binary format, keys copied from Rive's MIT defs in `rive-defs.ts`) |
 | `export/`, `compare/` (2.3) | Starter projects per renderer; render-vs-reference comparison |
 
 Every external process goes through `tools/` (one place for timeouts, Windows quoting, `windowsHide`, killing the
