@@ -29,6 +29,13 @@ export interface TrackPoint {
   visibility: number;
   /** How far the element's own brightness moved from the reference, as a share of its contrast there. */
   shift: number;
+  /** The element's own mean brightness (NaN when it touches the frame's edge). */
+  inner: number;
+  /**
+   * How opacity was measured: against a uniform surrounding, against the background seen once the element had faded
+   * away completely (`estimated`), or against a busy surrounding (`ring`, the least exact).
+   */
+  basis?: "uniform" | "estimated" | "ring";
   /** The match was too weak to trust (element hidden, faded out or lost): the position is a prediction. */
   lost: boolean;
 }
@@ -298,31 +305,47 @@ function scaleRefine(t: Template, frame: Pixels, w: number, h: number, x: number
 }
 
 /**
- * The whole picture searched on a grid: among the matches nearly as strong as the best one (within 0.05), the one
- * nearest the predicted position. A look-alike elsewhere in the picture (a twin, a repeated pattern) correlates as well
- * as the element; continuity decides.
+ * Searches outwards from the predicted position in rings of doubling radius (on a shrunk copy of the frame), each
+ * refined to the pixel, and stops at the first clear match. The element moves continuously, so the nearest clear
+ * match is the element; a look-alike further away (a twin, a repeated pattern) is reached only when nothing nearer
+ * matches. Returns the position in full-size pixels and how far the full-size search must still look around it.
  */
-function nearestStrong(t: Template, frame: Pixels, w: number, h: number, px: number, py: number, s: number, step: number) {
-  const found: { x: number; y: number; score: number }[] = [];
-  let top = -2;
-  for (let y = 0; y <= h; y += step) {
-    for (let x = 0; x <= w; x += step) {
-      const score = ncc(t, frame, w, h, x, y, s);
-      if (score > 0.5) found.push({ x, y, score });
-      if (score > top) top = score;
+function expandingSearch(
+  templates: Template[],
+  small: { data: Float32Array; w: number; h: number },
+  f: number,
+  px: number,
+  py: number,
+  s: number,
+  start: number,
+  elementSize: number,
+  limit: number,
+): { x: number; y: number; score: number; reach: number } {
+  let best = { x: px, y: py, score: -2, reach: 2 };
+  const cx = px / f;
+  const cy = py / f;
+  for (let r = start * 2; ; r *= 2) {
+    const step = Math.max(1, Math.round(Math.min(r / 12, elementSize / 6) / f));
+    const reach = Math.floor(r / f / step) * step;
+    for (const t of templates) {
+      // Every promising grid point, nearest first; the first one that refines to a clear match wins.
+      const found: { x: number; y: number; score: number; d: number }[] = [];
+      for (let oy = -reach; oy <= reach; oy += step) {
+        for (let ox = -reach; ox <= reach; ox += step) {
+          const score = ncc(t, small.data, small.w, small.h, cx + ox, cy + oy, s / f);
+          if (score > best.score) best = { x: (cx + ox) * f, y: (cy + oy) * f, score, reach: step * f + 1 };
+          if (score >= 0.6) found.push({ x: cx + ox, y: cy + oy, score, d: Math.hypot(ox, oy) });
+        }
+      }
+      found.sort((a, b) => a.d - b.d);
+      for (const c of found.slice(0, 12)) {
+        const fine = step > 1 ? gridSearch(t, small.data, small.w, small.h, c.x, c.y, s / f, step, 1) : c;
+        if (fine.score >= 0.85) return { x: fine.x * f, y: fine.y * f, score: fine.score, reach: f + 1 };
+        if (fine.score > best.score) best = { x: fine.x * f, y: fine.y * f, score: fine.score, reach: f + 1 };
+      }
     }
+    if (r >= Math.min(limit, Math.max(small.w, small.h) * f)) return best;
   }
-  let best = { x: px, y: py, score: -2 };
-  let distance = Infinity;
-  for (const c of found) {
-    if (c.score < top - 0.05) continue;
-    const d = Math.hypot(c.x - px, c.y - py);
-    if (d < distance) {
-      distance = d;
-      best = c;
-    }
-  }
-  return best;
 }
 
 /** Vertex of the parabola through (−h, a), (0, b), (h, c); stays within ±h. */
@@ -336,6 +359,8 @@ function parabola(a: number, b: number, c: number, h: number): number {
 interface Appearance {
   inner: number;
   ring: number;
+  /** Standard deviation of the ring: high on a busy background. */
+  ringSpread: number;
   /** The box and its ring lie inside the frame, so both numbers are real pixels rather than repeated edges. */
   inside: boolean;
 }
@@ -343,6 +368,7 @@ interface Appearance {
 function appearance(frame: Pixels, w: number, h: number, cx: number, cy: number, bw: number, bh: number): Appearance {
   let inner = 0;
   let ring = 0;
+  let ring2 = 0;
   let ringN = 0;
   const n = 12;
   for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
@@ -353,12 +379,14 @@ function appearance(frame: Pixels, w: number, h: number, cx: number, cy: number,
     if (m > 0.25) {
       const k = 1.15 + (m - 0.25) * 1.2;
       ring += sample(frame, w, h, cx + (u / m) * (k / 2) * bw, cy + (v / m) * (k / 2) * bh);
+      ring2 += sample(frame, w, h, cx + (u / m) * (k / 2) * bw, cy + (v / m) * (k / 2) * bh) ** 2;
       ringN++;
     }
   }
   const hx = 0.73 * bw;
   const hy = 0.73 * bh;
-  return { inner: inner / (n * n), ring: ring / Math.max(1, ringN), inside: cx - hx >= 0 && cy - hy >= 0 && cx + hx <= w - 1 && cy + hy <= h - 1 };
+  const ringMean = ring / Math.max(1, ringN);
+  return { inner: inner / (n * n), ring: ringMean, ringSpread: Math.sqrt(Math.max(0, ring2 / Math.max(1, ringN) - ringMean ** 2)), inside: cx - hx >= 0 && cy - hy >= 0 && cx + hx <= w - 1 && cy + hy <= h - 1 };
 }
 
 /** Contrast against the surroundings next to the reference's (1 = as there), or NaN when not measurable. */
@@ -415,23 +443,40 @@ const MAX_LOST_SEARCH = 12;
 export async function trackElement(video: GrayFrames, box: Box, index: number, options: TrackOptions = {}): Promise<TrackPoint[]> {
   const minScore = options.minScore ?? 0.5;
   const fixed = await trackPass(video, box, index, minScore, false);
-  if (options.scale === false) return settleVisibility(fixed);
+  if (options.scale === false) return settleVisibility(fixed, fixed.ringSpread);
   // Size is measured in a second pass and kept only when it explains the frames better: on a busy background the
   // pixels around the element otherwise pull the size a little on every frame until the match is lost.
   const scaled = await trackPass(video, box, index, minScore, true);
   const a = trackQuality(fixed);
   const b = trackQuality(scaled);
-  return settleVisibility(b.lost <= a.lost && b.score > a.score + 0.001 ? scaled : fixed);
+  return settleVisibility(b.lost <= a.lost && b.score > a.score + 0.001 ? scaled : fixed, fixed.ringSpread);
 }
 
 /**
  * Opacity only changes when the element's own brightness does: moving over a gradient changes the surroundings and
  * the contrast, not the element. When the element never changes its own brightness, it is fully visible throughout.
  */
-function settleVisibility(points: TrackPoint[]): TrackPoint[] {
+function settleVisibility(points: TrackPoint[], ringSpread: number): TrackPoint[] {
   const fades = points.some((p) => !p.lost && p.shift >= FADE_SHIFT) || points.some((p) => p.lost && p.shift >= FADE_SHIFT && p.visibility < 0.3);
-  if (fades) return points;
-  return points.map((p) => (Number.isFinite(p.visibility) ? { ...p, visibility: 1 } : p));
+  if (!fades) return points.map((p) => (Number.isFinite(p.visibility) ? { ...p, visibility: 1 } : p));
+  // When the element faded away completely in one place, the frames where it is gone show the very background it
+  // fades over: opacity measured against that is exact even on a busy background, where the ring around it is not.
+  const gone = points.filter((p) => p.lost && p.shift >= FADE_SHIFT && p.visibility < 0.15 && Number.isFinite(p.inner));
+  const ref = points.find((p) => p.shift === 0 && !p.lost && Number.isFinite(p.inner));
+  if (gone.length >= 3 && ref) {
+    const bg = [...gone.map((p) => p.inner)].sort((a, b) => a - b)[Math.floor(gone.length / 2)]!;
+    const gx = gone.reduce((sum, p) => sum + p.x, 0) / gone.length;
+    const gy = gone.reduce((sum, p) => sum + p.y, 0) / gone.length;
+    const span = ref.inner - bg;
+    if (Math.abs(span) > 8) {
+      return points.map((p) => {
+        if (!Number.isFinite(p.inner) || Math.hypot(p.x - gx, p.y - gy) > 2) return { ...p, basis: "ring" as const };
+        return { ...p, visibility: Math.max(0, Math.min(1.5, (p.inner - bg) / span)), basis: "estimated" as const };
+      });
+    }
+  }
+  const basis = ringSpread < 6 ? ("uniform" as const) : ("ring" as const);
+  return points.map((p) => ({ ...p, basis }));
 }
 
 function trackQuality(points: TrackPoint[]): { lost: number; score: number; value: number } {
@@ -442,7 +487,7 @@ function trackQuality(points: TrackPoint[]): { lost: number; score: number; valu
 
 const yieldToLoop = () => new Promise<void>((resolve) => setImmediate(resolve));
 
-async function trackPass(video: GrayFrames, box: Box, index: number, minScore: number, measureScale: boolean): Promise<TrackPoint[]> {
+async function trackPass(video: GrayFrames, box: Box, index: number, minScore: number, measureScale: boolean): Promise<TrackPoint[] & { ringSpread: number }> {
   const { width: w, height: h, frames } = video;
   const raw = frames[index]!.data;
   const ref = smooth(raw, w, h);
@@ -456,7 +501,7 @@ async function trackPass(video: GrayFrames, box: Box, index: number, minScore: n
   // The whole-picture search runs on a copy no wider than about 320 pixels.
   const shrinkBy = Math.max(1, Math.floor(Math.max(w, h) / 320));
   const out: TrackPoint[] = new Array(frames.length);
-  out[index] = { t: frames[index]!.t, x: cx0, y: cy0, scale: 1, score: 1, visibility: refLook.inside ? 1 : NaN, shift: 0, lost: false };
+  out[index] = { t: frames[index]!.t, x: cx0, y: cy0, scale: 1, score: 1, visibility: refLook.inside ? 1 : NaN, shift: 0, inner: refLook.inside ? refLook.inner : NaN, lost: false };
   let steps = 0;
 
   for (const dir of [1, -1]) {
@@ -486,17 +531,12 @@ async function trackPass(video: GrayFrames, box: Box, index: number, minScore: n
       const searchWide = best.score < 0.85 && !faded && lostRun < MAX_LOST_SEARCH && (lostRun < 3 || lostRun % 3 === 0);
       if (searchWide) {
         const small = shrink(frame, w, h, shrinkBy);
-        const step = Math.max(1, Math.round((size * ps) / (8 * shrinkBy)));
         const limit = Math.max(5 * size * ps, 3 * speed);
-        for (const [t, scale] of [[coarse, ps], [originalCoarse, 1]] as const) {
-          const far = nearestStrong(t, small.data, small.w, small.h, px / shrinkBy, py / shrinkBy, scale / shrinkBy, step);
-          const fx = far.x * shrinkBy;
-          const fy = far.y * shrinkBy;
-          // Continuity: a jump beyond the element's reach is look-alike background, not the element.
-          if (far.score > best.score + 0.02 && Math.hypot(fx - px, fy - py) <= limit) {
-            best = { x: fx, y: fy, score: far.score };
-            reach = step * shrinkBy + 1;
-          }
+        const far = expandingSearch([coarse, originalCoarse], small, shrinkBy, px, py, ps, Math.max(radius, size * ps), size * ps, limit);
+        // Continuity: a jump beyond the element's reach is look-alike background, not the element.
+        if (far.score > best.score + 0.02 && Math.hypot(far.x - px, far.y - py) <= limit) {
+          best = { x: far.x, y: far.y, score: far.score };
+          reach = far.reach;
         }
       }
       const near = gridSearch(current, frame, w, h, best.x, best.y, ps, reach, 1);
@@ -531,7 +571,7 @@ async function trackPass(video: GrayFrames, box: Box, index: number, minScore: n
         lostRun++;
         faded = faded || faint;
         const held = appearance(frames[i]!.data, w, h, x, y, box.w * s, box.h * s);
-        out[i] = { t: frames[i]!.t, x, y, scale: s, score: fine.score, visibility: visibilityOf(held, refLook), shift: shiftOf(held, refLook), lost: true };
+        out[i] = { t: frames[i]!.t, x, y, scale: s, score: fine.score, visibility: visibilityOf(held, refLook), shift: shiftOf(held, refLook), inner: held.inside ? held.inner : NaN, lost: true };
         continue;
       }
       lostRun = 0;
@@ -549,10 +589,10 @@ async function trackPass(video: GrayFrames, box: Box, index: number, minScore: n
         const patchCoarse = resample(coarse, frame, w, h, x, y, s);
         coarse = finishTemplate(coarse.dx, coarse.dy, coarse.raw.map((v, k) => 0.7 * v + 0.3 * patchCoarse[k]!));
       }
-      out[i] = { t: frames[i]!.t, x, y, scale: s, score: fine.score, visibility, shift, lost: false };
+      out[i] = { t: frames[i]!.t, x, y, scale: s, score: fine.score, visibility, shift, inner: look.inside ? look.inner : NaN, lost: false };
     }
   }
-  return out;
+  return Object.assign(out, { ringSpread: refLook.ringSpread });
 }
 
 /** Mean step across the box outline in one frame: high where an element's edges sit exactly on the box. */
@@ -685,7 +725,7 @@ export async function autoBox(video: GrayFrames): Promise<{ box: Box; index: num
   }
   if (!candidates.length) return undefined;
   candidates.sort((a, b) => b.energy - a.energy);
-  const tried = candidates.slice(0, 4);
+  const tried = candidates.slice(0, 4).map((c) => ({ ...c, box: tighten(frames, picks, w, h, c.box, c.index, threshold) }));
   let winner = tried[0]!;
   if (tried.length > 1) {
     let value = -1;
@@ -695,7 +735,58 @@ export async function autoBox(video: GrayFrames): Promise<{ box: Box; index: num
         value = q.value;
         winner = c;
       }
+      // Followed on nearly every frame with a clear match: no other candidate can do better.
+      if (q.value >= 0.97) break;
     }
   }
   return { box: winner.box, index: winner.index };
+}
+
+/**
+ * The box shrunk to the element at full resolution: the pixels that differ between the reference frame and the
+ * frame that differs most inside the box (the element elsewhere or faded out), within the box and a small margin. The
+ * coarse box from the analysis grid can be several pixels too large, which shifts every absolute position.
+ */
+function tighten(frames: GrayFrames["frames"], picks: number[], w: number, h: number, b: Box, index: number, threshold: number): Box {
+  // The emptiest frame: the one that differs most from the reference inside the box.
+  const ref = frames[index]!.data;
+  let empty = -1;
+  let most = -1;
+  for (const k of picks) {
+    if (k === index) continue;
+    const data = frames[k]!.data;
+    let sum = 0;
+    for (let y = Math.max(0, Math.floor(b.y)); y < Math.min(h, Math.ceil(b.y + b.h)); y += 2) {
+      for (let x = Math.max(0, Math.floor(b.x)); x < Math.min(w, Math.ceil(b.x + b.w)); x += 2) sum += Math.abs(ref[y * w + x]! - data[y * w + x]!);
+    }
+    if (sum > most) {
+      most = sum;
+      empty = k;
+    }
+  }
+  if (empty < 0) return b;
+  const other = frames[empty]!.data;
+  const m = 4;
+  const x0 = Math.max(0, Math.floor(b.x) - m);
+  const y0 = Math.max(0, Math.floor(b.y) - m);
+  const x1 = Math.min(w - 1, Math.ceil(b.x + b.w) + m);
+  const y1 = Math.min(h - 1, Math.ceil(b.y + b.h) + m);
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -1;
+  let maxY = -1;
+  let count = 0;
+  for (let y = y0; y <= y1; y++) {
+    for (let x = x0; x <= x1; x++) {
+      if (Math.abs(ref[y * w + x]! - other[y * w + x]!) <= threshold) continue;
+      count++;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+  }
+  // Keep the coarse box when the comparison found too little (the element overlaps itself in both frames).
+  if (count < 0.3 * b.w * b.h || maxX - minX + 1 < 0.5 * b.w || maxY - minY + 1 < 0.5 * b.h) return b;
+  return { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 };
 }

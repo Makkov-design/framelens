@@ -193,6 +193,11 @@ async function trackOnce(
       continue;
     }
     if (fit) {
+      // Opacity read against a busy surrounding is less certain than its fit error says.
+      if (property === "opacity" && points.some((p) => p.basis === "ring") && fit.quality === "exact") {
+        fit.quality = "approximate";
+        fit.reason = `${fit.reason}; opacity read against a busy surrounding, so at best approximate`;
+      }
       fits.push({ property, fit });
       continue;
     }

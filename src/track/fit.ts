@@ -82,8 +82,9 @@ export interface PropertyFit {
   /** False when the move is too short (5 frames or fewer) to tell one curve from another. */
   identifiable: boolean;
   /**
-   * `exact`: error within 1 % of the travel (or within the sample noise); `approximate`: within 3 %; `unreliable`:
-   * larger, cut by the window, or too short to identify. Exports use only exact and approximate curves.
+   * `exact`: fit error within 1 % of the travel, sample noise within 0.4 % of it and at least 8 moving frames;
+   * `approximate`: error within 3 % and noise within 1.5 %; `unreliable`: otherwise, or cut by the window, or too
+   * short to identify. Exports use only exact and approximate curves.
    */
   quality: "exact" | "approximate" | "unreliable";
 }
@@ -327,7 +328,18 @@ export function fitProperty(times: number[], values: number[], fps: number, opti
   const identifiable = curve.kind === "spring" ? true : length > MIN_IDENTIFIABLE_FRAMES;
   if (cut) reason = `the window cuts the move at its ${cut === "both" ? "start and end" : cut}, so the curve describes only the part seen`;
   else if (!identifiable) reason = `the move lasts only ${round(length, 1)} frames: too short to tell one curve from another`;
-  const quality = cut || !identifiable || error > EXPORT_MAX_ERROR ? "unreliable" : error <= Math.max(0.01, 3 * (sigma / Math.abs(delta))) ? "exact" : "approximate";
+  // The grade says how close the curve is likely to be to the truth, not only to the samples: the error of the fit,
+  // and the noise of the samples against the travel (a few pixels of travel with a little noise can be fitted
+  // closely and still be several percent off), and how many moving frames there are to pin the shape.
+  const relativeNoise = sigma / Math.abs(delta);
+  const moving = f.filter((x) => x >= start && x <= start + length).length;
+  const quality =
+    cut || !identifiable || error > EXPORT_MAX_ERROR || relativeNoise > 0.015
+      ? "unreliable"
+      : error <= 0.01 && relativeNoise <= 0.004 && moving >= 8
+        ? "exact"
+        : "approximate";
+  if (!cut && identifiable && relativeNoise > 0.015) reason = `the samples are too noisy for the size of the move (noise ${round(relativeNoise * 100, 1)} % of the travel)`;
   return {
     from: round(v0, 4),
     to: round(v1, 4),

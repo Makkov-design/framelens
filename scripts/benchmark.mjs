@@ -95,6 +95,7 @@ const VARIETY = [
   { name: "fade in, ease-in-out", property: "opacity", curve: TRACK_CURVES[1], from: [320, 180], to: [320, 180], opacity: (i, p) => p },
   { name: "fade out (box given), ease", property: "opacity", curve: TRACK_CURVES[0], from: [320, 180], to: [320, 180], opacity: (i, p) => 1 - p, box: { x: 285, y: 145, w: 70, h: 70 } },
   { name: "right, then 1.5 s of rest", property: "x", curve: TRACK_CURVES[0], from: [120, 180], to: [500, 180], tail: 1.5 },
+  { name: "right, identical twin 110 px above the start", property: "x", curve: TRACK_CURVES[0], from: [120, 220], to: [500, 220], twin: [120, 110] },
 ];
 const VARIETY_CONDITIONS = [TRACK_CONDITIONS[0], TRACK_CONDITIONS[2]];
 
@@ -105,7 +106,7 @@ async function trackClip(file, fps, curve, condition, motion = { from: [120, 180
   const progress = curve.kind === "spring" ? (i) => springAt(curve.stiffness, curve.damping, (i - startFrame) / fps) : (i) => bezierAt(curve.bezier, (i - startFrame) / moveFrames);
   await encode(
     file,
-    clipFrames({ total: Math.round(seconds * fps), progress, from: motion.from, to: motion.to, size: 70, busy: condition.busy, noise: condition.noise, seed: fps, ...(motion.scale && { scale: motion.scale }), ...(motion.opacity && { opacity: motion.opacity }) }),
+    clipFrames({ total: Math.round(seconds * fps), progress, from: motion.from, to: motion.to, size: 70, busy: condition.busy, noise: condition.noise, seed: fps, ...(motion.scale && { scale: motion.scale }), ...(motion.opacity && { opacity: motion.opacity }), ...(motion.twin && { twin: motion.twin }) }),
     { fps, timeoutMs: 120_000 },
   );
   return { startFrame, moveFrames, seconds };
@@ -314,7 +315,8 @@ clean renders: duration within one frame, control points within 0.05.
 ### Other motion (30 fps)
 
 Other directions, the y axis, a diagonal spring, scale, a fade-in, a fade-out and a window that is mostly rest after
-the move; clean and over the busy background with noise. The element is found automatically except for the fade-out,
+the move, and a move next to an identical static square (a look-alike the tracker must not jump to); clean and over
+the busy background with noise. The element is found automatically except for the fade-out,
 which ends invisible (a box is given). ${varietyRows.length} clips.
 
 | Condition | Motion | Property | Chosen | Quality | Shape error | Duration error (frames) | Start error (frames) | Spring k / c error |
@@ -322,11 +324,14 @@ which ends invisible (a box is given). ${varietyRows.length} clips.
 ${varietyRows.map((r) => `| ${r.condition} | ${r.curve} | ${VARIETY.find((v) => v.name === r.curve)?.property} | ${r.kind} | ${r.quality} | ${pct(r.shapeError ?? NaN)} | ${f2(r.durationError ?? NaN)} | ${f2(r.startError ?? NaN)} | ${r.stiffnessError !== undefined ? `${pct(r.stiffnessError ?? NaN)} / ${pct(r.dampingError ?? NaN)}` : "—"} |`).join("\n")}
 
 Scale is measured to about 1–2 % of its value and opacity from the element's brightness against its surroundings, so
-their curves are less exact than position (here the duration of a scale or opacity move is off by up to about 2.6
+their curves are less exact than position (here the duration of a scale or opacity move is off by up to about 1.3
 frames, while position stays within a frame): read the shape error above, and the fit error \`track\` reports.
 Springs with a damping ratio of about 0.85 or more barely overshoot (under 1 % of the travel): they are reported as
 the cubic-bezier that matches them within the stated error, not as a spring. Moves of 5 frames or fewer are marked
-unreliable: too short to tell curves apart.
+unreliable: too short to tell curves apart. Grades: \`exact\` needs a fit error within 1 % of the travel, sample
+noise within 0.4 % of it and at least 8 moving frames; \`approximate\` within 3 % and 1.5 %; opacity read against a
+busy surrounding is at best approximate (a fade-out that ends invisible is measured against the background it leaves,
+which removes the surrounding's bias; its noise can still keep it approximate). A 6-frame move is therefore graded approximate even when it is fitted closely.
 
 Limits: these renders are a sharp-edged square without motion blur, moving in a straight line over a static
 background. Real footage adds motion blur, rotation, occlusion, a moving camera and elements that change shape; the

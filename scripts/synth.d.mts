@@ -21,5 +21,6 @@ export function clipFrames(options: {
   seed?: number;
   opacity?: (frame: number, progress: number) => number;
   scale?: (frame: number, progress: number) => number;
+  twin?: [number, number];
 }): Generator<Uint8Array>;
 export function encode(file: string, frames: Iterable<Uint8Array>, options: { width?: number; height?: number; fps: number; ffmpeg?: string; crf?: number; timeoutMs?: number }): Promise<string>;

@@ -88,8 +88,10 @@ export function springAt(stiffness, damping, tau) {
  * The frames of a clip: `total` frames, the move starting `startFrame` frames in. `progress(frameIndex)` gives the
  * value progress (0..1, may overshoot). The square travels from (fromX, fromY) to (toX, toY).
  */
-export function* clipFrames({ width = 640, height = 360, total, progress, from = [120, 180], to = [500, 180], size = 70, busy = false, noise = 0, seed = 11, opacity, scale }) {
-  const background = busy ? busyBackground(width, height) : 40;
+export function* clipFrames({ width = 640, height = 360, total, progress, from = [120, 180], to = [500, 180], size = 70, busy = false, noise = 0, seed = 11, opacity, scale, twin }) {
+  let background = busy ? busyBackground(width, height) : 40;
+  // An identical static square somewhere else: a look-alike the tracker must not jump to.
+  if (twin) background = Float32Array.from(renderFrame(width, height, { cx: twin[0], cy: twin[1], size, background }));
   const rand = random(seed);
   for (let i = 0; i < total; i++) {
     const p = progress(i);
