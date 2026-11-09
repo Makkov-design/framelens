@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+- `track`: follows one element through a window at the full frame rate (found automatically as the biggest moving
+  region, or from a box) with subpixel template matching, and fits the exact timing of each property that moves
+  (x, y, scale, opacity): a `cubic-bezier`, a damped spring (stiffness, damping, mass; also duration and bounce),
+  linear or steps, with the fit error, duration in frames and seconds, and the delay. Writes `TRACK.md` with a plot
+  per property, an SVG of the curves and `tracks.json`, and adds the move to `motion-spec.json` (positions and times
+  `measured`, the curve `derived`). `plan` with the style goal suggests `track` for the moves `style` found.
+- `export` uses a tracked curve wherever one exists: CSS `cubic-bezier()` / `linear()` for springs / `steps()`,
+  Remotion `Easing.bezier` or `spring({config})`, exact GSAP eases in HyperFrames, After Effects keyframe speed and
+  influence (a key per frame for springs, held keys for steps), and Lottie handles.
+- Each fitted curve carries its error and a quality grade (`exact` ≤ 1 %, `approximate` ≤ 3 %, else `unreliable`);
+  a move cut by the window widens the window (or is reported as cut), and moves of 5 frames or fewer are marked
+  unreliable. Only exact and approximate curves reach `export`.
+- The accuracy benchmark adds rendered moves with known beziers and springs in several directions, scale, opacity,
+  on a busy background and with the element found automatically: see [docs/ACCURACY.md](docs/ACCURACY.md).
 - `exact` reads Rive files (`.riv`, a path or a direct link; extensionless links by the `RIVE` fingerprint; rive.app
   pages are refused with how to get the file, never scraped). A dependency-free reader of the runtime format: header,
   table of contents (unknown properties of newer exports are skipped by it), artboards, nodes, fills and strokes,

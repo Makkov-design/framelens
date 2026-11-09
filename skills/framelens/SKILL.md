@@ -8,7 +8,7 @@ description: Use whenever the user shares a video, an animation or a reference w
 Frame Lens gives you eyes and ears for a video or an animation. It has three engines:
 
 - **Local video tools** (ffmpeg on the user's computer, no key): `probe`, `plan`, `transcript`, `frames`,
-  `boundaries`, `style`, `audio`, `export`, `compare`. They measure real frame times, cuts, palette, motion and sound,
+  `boundaries`, `style`, `track`, `audio`, `export`, `compare`. They measure real frame times, cuts, palette, motion and sound,
   and write everything to a workspace folder.
 - **Exact sources** (no estimates): `web` reads a live page's animations from the browser (CSS, Web Animations,
   Motion, GSAP) with real fonts and colours; `exact` reads Lottie/dotLottie keyframes and Figma prototype transitions.
@@ -32,6 +32,13 @@ deferred, load them with ToolSearch query `framelens` first.
    around each move or transition that matters (sheets a second apart miss 1–3-frame timing). Then complete the
    typography, visual systems, motion vocabulary and "why it works" sections in those files. Re-running `style` only
    refreshes their measured blocks. Add `audio` for music, beats and hits.
+   For the moves that matter, run `track` after `style` (`move: n`, or `start`/`end`; `element: "auto"`, or a box
+   when several things move): it follows the element frame by frame and fits its exact curve per property (x, y,
+   scale, opacity) as a `cubic-bezier`, a spring (stiffness, damping, mass) or steps, with the fit error, duration
+   and delay, in `TRACK.md`. Positions and times are measured; the curve is derived, so quote its error and quality
+   (`exact`, `approximate`, `unreliable`). `export` then uses exact and approximate curves instead of the easing
+   family; unreliable ones (above 3 % error, cut by the window, 5 frames or shorter) are reported only. When `auto`
+   picks the wrong thing or reports few matched frames, pass a box around the element.
 7. **Rebuild** in the user's tool: `export` with `hyperframes`, `remotion`, `css`, `after-effects`, `lottie` or
    `hypit`. It carries structure, timing, colours and eases; put the user's own content in place of the placeholders.
    Never copy the reference's footage, logos or people. After rendering, `compare` the render with the reference and

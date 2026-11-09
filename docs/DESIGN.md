@@ -41,6 +41,7 @@ research and reasoning lives in the plan page; this file is what the code must f
 | `workspace/` | Workspace folder layout, `manifest.json`, cached pass results, `PROGRESS.md` |
 | `router/` | Video type classification and the goal-based plan |
 | `style/` (2.1) | Shots, cuts, palette, typography notes, `STYLE.md`, `motion-spec.json`, `ANALYSIS.md`, `TIMELINE.md` |
+| `track/` (2.1) | Element tracking (normalised cross-correlation, then Lucas–Kanade subpixel refinement with gain and offset, drift checked against the first template) and curve fitting (cubic-bezier, spring, linear, steps by least squares with Nelder–Mead), `TRACK.md`, `tracks.json` |
 | `audio/` (2.2) | Loudness, silences, onsets, tempo and beat grid, cut-on-beat, spectrogram image, SFX labels |
 | `exact/` (2.4) | Lottie, live web pages (WAAPI/GSAP), Figma; Rive `.riv` (`rive.ts` reads the runtime binary format, keys copied from Rive's MIT defs in `rive-defs.ts`) |
 | `export/`, `compare/` (2.3) | Starter projects per renderer; render-vs-reference comparison |
@@ -81,6 +82,7 @@ All new tools take `source` (URL, path or YouTube ID) and return a short text su
 | `frames` | 2.0 | Frames or contact sheets for a range: `at`, `every` (s), `fps`, `every_frame`, `around` (phrase), `columns`, `rows`, `cell`, word labels. Returns sheet paths; inlines at most a few sheets |
 | `boundaries` | 2.0 | Visual-change candidates with scores (not editorial cut labels) |
 | `style` | 2.1 | Cuts, shots, palette, systems; writes STYLE.md, motion-spec.json, ANALYSIS/TIMELINE skeletons |
+| `track` | 2.1 | One element through a window (≤ 15 s, decoded once as grey frames over a pipe, ≤ 64 MB; widened up to twice when the move runs past it); `auto` candidates are paired with the frame whose edges sit on the box and verified by tracking; a faint (faded) element keeps its place instead of being searched for; per-property fit with start, end, delay, error and quality (exports take exact and approximate curves only). Model choice: steps when they fit at least twice as well as any smooth curve; a spring when the value swings back across its target, or overshoots and the spring fits better; linear when within 25 % of the bezier's error; otherwise the bezier. Tracks go to `tracks.json` and `motion-spec.json` (`tracks`, and `track`/`curve` on the style move they refine) |
 | `audio` | 2.2 | Sound analysis and spectrogram |
 | `export`, `compare` | 2.3 | Starter projects; render-vs-reference report |
 | Gemini tools | kept | `summarize_youtube_video`, `ask_about_youtube_video`, `extract_key_moments`, `get_video_transcript`, `list_supported_models` |

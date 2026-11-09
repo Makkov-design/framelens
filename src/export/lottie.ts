@@ -1,5 +1,5 @@
 import type { MotionSpec } from "../style/spec.js";
-import { BEZIER, r3, referenceNotes, scenesFromSpec, write } from "./exporters.js";
+import { moveBezier, moveKeys, r3, referenceNotes, scenesFromSpec, write, type SceneMove } from "./exporters.js";
 
 const r4 = (n: number) => Math.round(n * 10000) / 10000;
 
@@ -31,6 +31,19 @@ function animated(t0: number, t1: number, from: number[], to: number[], b: reado
   };
 }
 
+/**
+ * Keyframes for a tracked spring or steps: one per sample, straight between them (linear handles), or held (`h: 1`)
+ * for steps. `keys` are [frame, progress] pairs; values go from `from` to `to`.
+ */
+function sampledAnimated(keys: [number, number][], hold: boolean, from: number[], to: number[]) {
+  const value = (p: number) => from.map((v, i) => r3(v + (to[i]! - v) * p));
+  const frames = keys.filter((k, i) => i === 0 || k[0] > keys[i - 1]![0]);
+  return {
+    a: 1,
+    k: frames.map(([t, p], i) => (i === frames.length - 1 ? { t, s: value(p) } : hold ? { t, s: value(p), h: 1 } : { t, s: value(p), o: { x: [0], y: [0] }, i: { x: [1], y: [1] } })),
+  };
+}
+
 /** A Bodymovin 5.x document: a solid and a rectangle placeholder per measured shot. */
 export function lottieDocument(spec: MotionSpec) {
   const fps = spec.timebase.fps ?? 30;
@@ -45,17 +58,22 @@ export function lottieDocument(spec: MotionSpec) {
   scenes.forEach((s, n) => {
     const ip = frame(s.start);
     const op = Math.max(ip + 1, frame(s.start + s.duration));
-    const move = s.move ?? { offset: Math.min(0.2, s.duration / 4), seconds: 0.2, easing: "ease-out" as const };
+    const move: SceneMove = s.move ?? { offset: Math.min(0.2, s.duration / 4), seconds: 0.2, easing: "ease-out" };
     const t0 = Math.min(op - 1, ip + frame(move.offset));
-    const t1 = Math.min(op, Math.max(t0 + 1, t0 + frame(move.seconds)));
-    const bezier = BEZIER[move.easing];
+    // A tracked move keeps its measured length past the layer's out point (which still trims it): squeezing it into
+    // the shot would play it faster than measured.
+    const t1 = move.curve ? Math.max(t0 + 1, t0 + frame(move.seconds)) : Math.min(op, Math.max(t0 + 1, t0 + frame(move.seconds)));
+    const bezier = moveBezier(move);
+    const sampled = bezier ? undefined : moveKeys(move, fps);
+    const keys = sampled?.keys.map(([u, p]) => [Math.round(t0 + u * (t1 - t0)), p] as [number, number]);
+    const position = (from: number[], to: number[]) => (bezier ? animated(t0, t1, from, to, bezier) : sampledAnimated(keys!, sampled!.hold, from, to));
     shapes.push({
       ddd: 0,
       ind: n * 2 + 1,
       ty: 4,
       nm: `${s.id} title placeholder`,
       sr: 1,
-      ks: transform(animated(t0, t1, [width / 2, height / 2 + travel, 0], [width / 2, height / 2, 0], bezier), animated(t0, t1, [0], [100], bezier)),
+      ks: transform(position([width / 2, height / 2 + travel, 0], [width / 2, height / 2, 0]), position([0], [100])),
       ao: 0,
       shapes: [
         {
@@ -117,6 +135,7 @@ export function exportLottie(spec: MotionSpec, root: string): string[] {
 - Bodymovin 5.x document at ${spec.timebase.fps ?? 30} fps; times are frames. One solid layer (\`ty: 1\`, \`sc\` colour) per shot with its in and out frame.
 - One shape layer per shot with a rectangle placeholder. Its position and opacity keyframes carry the first move's timing; the easing is written as \`o\` and \`i\` handles, equal to the CSS cubic-bezier(x1, y1, x2, y2) as \`o\` = (x1, y1) and \`i\` = (x2, y2).
 - Layers are listed top-first: placeholders above backgrounds.
+- Moves measured with Frame Lens \`track\` use their fitted curve: a cubic-bezier as the handles above, a spring as a keyframe on every frame with straight handles, steps as held keyframes (\`h: 1\`).
 - Replace the placeholder rectangles with your own shapes or text layers; keep the in and out frames and the easing.
 `,
   });

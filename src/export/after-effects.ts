@@ -1,5 +1,5 @@
 import type { MotionSpec } from "../style/spec.js";
-import { BEZIER, oneLine, r3, referenceNotes, scenesFromSpec, write } from "./exporters.js";
+import { moveBezier, moveKeys, oneLine, r3, referenceNotes, scenesFromSpec, write, type SceneMove } from "./exporters.js";
 
 type Bezier = readonly [number, number, number, number];
 
@@ -52,14 +52,18 @@ export function aeScript(spec: MotionSpec): string {
   const total = r3(spec.range.end - spec.range.start);
   const travel = r3((60 * height) / 1080);
   const scenes = scenesFromSpec(spec).map((s, i) => {
-    const move = s.move ?? { offset: Math.min(0.2, s.duration / 4), seconds: 0.2, easing: "ease-out" as const };
+    const move: SceneMove = s.move ?? { offset: Math.min(0.2, s.duration / 4), seconds: 0.2, easing: "ease-out" };
     const end = r3(s.start + s.duration);
-    let keyEnd = Math.min(end, r3(s.start + move.offset + move.seconds));
+    // A tracked move keeps its measured length even when it runs past the cut (the layer's out point still trims
+    // it); squeezing it into the shot would play it faster than measured. Untracked defaults stay inside the shot.
     let keyStart = r3(s.start + move.offset);
+    let keyEnd = move.curve ? r3(keyStart + move.seconds) : Math.min(end, r3(s.start + move.offset + move.seconds));
     if (keyEnd - keyStart < 1 / fps) keyStart = Math.max(s.start, r3(keyEnd - 1 / fps));
     keyEnd = r3(keyEnd);
     const seconds = Math.max(keyEnd - keyStart, 1 / fps);
-    const bezier = BEZIER[move.easing];
+    const bezier = moveBezier(move);
+    // A spring or steps: a key on every frame (straight between them) or on every jump (held).
+    const sampled = moveKeys({ ...move, seconds }, fps);
     return {
       name: `Shot ${i + 1}`,
       label: `SHOT ${i + 1}`,
@@ -70,9 +74,10 @@ export function aeScript(spec: MotionSpec): string {
       keyStart,
       keyEnd,
       easing: move.easing,
-      bezier,
-      positionEase: bezierToAeEase(bezier, travel, seconds),
-      opacityEase: bezierToAeEase(bezier, 100, seconds),
+      ...(move.track && { track: move.track }),
+      ...(bezier
+        ? { bezier, positionEase: bezierToAeEase(bezier, travel, seconds), opacityEase: bezierToAeEase(bezier, 100, seconds) }
+        : { keys: sampled!.keys.map(([u, p]) => [r3(keyStart + u * seconds), p]), hold: sampled!.hold }),
     };
   });
 
@@ -101,7 +106,9 @@ export function aeScript(spec: MotionSpec): string {
 //   incoming key: influence = (1 - x2) * 100, speed = ((1 - y2) / (1 - x2)) * average speed
 // Average speed is distance / seconds (60 px scaled to the frame height for Position, 100 percent for Opacity).
 // An ease-out therefore leaves the first key fast and arrives at the second with speed 0 and a high incoming influence.
-// The families are starting points derived from whole-picture motion; refine them in the Graph Editor.
+// Moves measured with Frame Lens \`track\` carry their fitted curve: a cubic-bezier becomes the two eased keys above, a
+// spring becomes a key on every frame (\`keys\`, linear between them) and steps become held keys. The other moves use
+// easing families derived from whole-picture motion; refine those in the Graph Editor.
 (function () {
   var FPS = ${fps};
   var WIDTH = ${width};
@@ -122,6 +129,14 @@ export function aeScript(spec: MotionSpec): string {
     prop.setInterpolationTypeAtKey(2, KeyframeInterpolationType.BEZIER, KeyframeInterpolationType.BEZIER);
     prop.setTemporalEaseAtKey(1, [linear], [ease(ease2.outSpeed, ease2.outInfluence)]);
     prop.setTemporalEaseAtKey(2, [ease(ease2.inSpeed, ease2.inInfluence)], [linear]);
+  }
+
+  // A key per sample of a tracked spring (linear between them) or per jump of steps (held).
+  function sampledKeys(prop, keys, hold, value) {
+    var k;
+    for (k = 0; k < keys.length; k++) prop.setValueAtTime(keys[k][0], value(keys[k][1]));
+    var type = hold ? KeyframeInterpolationType.HOLD : KeyframeInterpolationType.LINEAR;
+    for (k = 1; k <= prop.numKeys; k++) prop.setInterpolationTypeAtKey(k, type, type);
   }
 
   var i;
@@ -154,14 +169,18 @@ export function aeScript(spec: MotionSpec): string {
       layer.outPoint = s.end;
 
       var position = layer.property("Position");
-      position.setValueAtTime(s.keyStart, [WIDTH / 2, HEIGHT / 2 + TRAVEL]);
-      position.setValueAtTime(s.keyEnd, [WIDTH / 2, HEIGHT / 2]);
-      keyEase(position, s.positionEase);
-
       var opacity = layer.property("Opacity");
-      opacity.setValueAtTime(s.keyStart, 0);
-      opacity.setValueAtTime(s.keyEnd, 100);
-      keyEase(opacity, s.opacityEase);
+      if (s.keys) {
+        sampledKeys(position, s.keys, s.hold, function (p) { return [WIDTH / 2, HEIGHT / 2 + TRAVEL * (1 - p)]; });
+        sampledKeys(opacity, s.keys, s.hold, function (p) { return Math.max(0, Math.min(100, 100 * p)); });
+      } else {
+        position.setValueAtTime(s.keyStart, [WIDTH / 2, HEIGHT / 2 + TRAVEL]);
+        position.setValueAtTime(s.keyEnd, [WIDTH / 2, HEIGHT / 2]);
+        keyEase(position, s.positionEase);
+        opacity.setValueAtTime(s.keyStart, 0);
+        opacity.setValueAtTime(s.keyEnd, 100);
+        keyEase(opacity, s.opacityEase);
+      }
     }
 
     for (i = 0; i < MARKERS.length; i++) {
