@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Frame Lens: video your AI agent can measure</title>
+<meta name="description" content="Frame Lens is a free, local MCP server that measures cuts, easing, colour and beats in any video or animation and rebuilds them in HyperFrames, Remotion, CSS, After Effects or Lottie.">
+<link rel="canonical" href="https://makkov-design.github.io/framelens/">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Frame Lens: video your AI agent can measure">
+<meta property="og:description" content="Cuts, easing, colour and beats from any video or animation, frame-exact. Free, local, MIT.">
+<meta property="og:url" content="https://makkov-design.github.io/framelens/">
+<meta property="og:image" content="https://makkov-design.github.io/framelens/assets/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#5fd35f">
+<link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://api.fontshare.com">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://api.fontshare.com/v2/css?f[]=panchang@700&f[]=general-sans@400,600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&display=swap">
+<link rel="stylesheet" href="site.css">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Frame Lens","applicationCategory":"DeveloperApplication","operatingSystem":"Windows, macOS, Linux","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"license":"https://opensource.org/licenses/MIT","url":"https://makkov-design.github.io/framelens/","codeRepository":"https://github.com/Makkov-design/framelens","description":"An MCP server that measures cuts, easing, colour and beats in any video or animation for AI agents."}
+</script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="nav">
+  <div class="container nav__row">
+    <a class="wordmark" href="./" aria-label="Frame Lens home">Frame Lens</a>
+    <nav aria-label="Sections">
+      <ul class="nav__links">
+        <li><a href="#goals">Goals</a></li>
+        <li><a href="#sources">Sources</a></li>
+        <li><a href="#export">Export</a></li>
+        <li><a href="#accuracy">Accuracy</a></li>
+        <li><a href="#install">Install</a></li>
+      </ul>
+    </nav>
+    <a class="nav__gh" href="https://github.com/Makkov-design/framelens">GitHub</a>
+  </div>
+</header>
+
+<main id="main">
+
+<section class="hero field" aria-labelledby="hero-h">
+  <div class="container hero__grid">
+    <div class="hero__text">
+      <h1 id="hero-h">Video your agent can measure</h1>
+      <p class="lead">Cuts, easing, colour and beats from any video, to the frame.</p>
+      <div class="actions">
+        <div class="cmd">
+          <code id="cmd-hero">npx -y framelens init</code>
+          <button class="btn" type="button" data-copy="cmd-hero">Copy install</button>
+        </div>
+        <a class="btn btn--quiet" href="https://github.com/Makkov-design/framelens">Star on GitHub</a>
+      </div>
+      <p class="fine">Free, local and MIT. Works in Claude Code, Codex, Cursor and any MCP client.</p>
+    </div>
+
+    <figure class="loupe" data-loupe aria-labelledby="loupe-cap">
+      <div class="loupe__frame" data-slot="loupe" data-kind="product" data-alt="A frame of the analysed video at the scrubbed time">
+        <img src="assets/bbb/f54.webp" width="960" height="540" alt="Frame of the Big Buck Bunny trailer at 26.5 seconds" fetchpriority="high" data-loupe-img>
+      </div>
+      <div class="loupe__ruler" data-ruler aria-hidden="true"></div>
+      <div class="loupe__controls">
+        <button class="btn btn--quiet btn--small" type="button" data-loupe-play aria-pressed="false">Play</button>
+        <label class="visually-hidden" for="scrub">Scrub through the trailer</label>
+        <input id="scrub" type="range" min="0" max="32" step="0.5" value="26.5" data-loupe-range>
+      </div>
+      <dl class="readout" data-readout aria-live="polite">
+        <div><dt>Time</dt><dd class="num" data-r="time">26.50 s, frame 663</dd></div>
+        <div><dt>Shot</dt><dd class="num" data-r="shot">10 of 12, 3.96 s</dd></div>
+        <div><dt>Move</dt><dd class="num" data-r="move">ease-in, 23 frames, cubic-bezier(0.7, 0, 0.84, 0)</dd></div>
+        <div><dt>Palette</dt><dd class="num" data-r="palette">#FCFDFD, #2CA2CF</dd></div>
+      </dl>
+      <figcaption id="loupe-cap">The Big Buck Bunny trailer, read by Frame Lens. Every mark on this ruler is its measurement.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section class="versus" aria-labelledby="versus-h">
+  <div class="container">
+    <h2 id="versus-h">A description says “quick”. Frame Lens says 23 frames.</h2>
+    <div class="versus__grid">
+      <div class="versus__said">
+        <p class="versus__label">Described in words</p>
+        <p class="versus__quote">A quick, smooth move.</p>
+      </div>
+      <dl class="versus__measured">
+        <div><dt>Starts</dt><dd class="num">26.04 s</dd></div>
+        <div><dt>Ends</dt><dd class="num">26.96 s</dd></div>
+        <div><dt>Length</dt><dd class="num">23 frames at 25 fps</dd></div>
+        <div><dt>Curve</dt><dd class="num">cubic-bezier(0.7, 0, 0.84, 0)</dd></div>
+      </dl>
+    </div>
+    <p class="versus__note">Every number says how it was obtained: measured, derived or inferred.</p>
+  </div>
+</section>
+
+<section class="goals well" id="goals" aria-labelledby="goals-h">
+  <div class="container">
+    <h2 id="goals-h">A podcast gets one sheet, a promo gets every frame</h2>
+    <div class="goals__grid">
+    <div class="switch" data-switch>
+      <div class="tabs" role="tablist" aria-label="Goals">
+        <button role="tab" type="button" id="g-style" aria-controls="p-style" aria-selected="true">Style</button>
+        <button role="tab" type="button" id="g-learn" aria-controls="p-learn" aria-selected="false" tabindex="-1">Learn</button>
+        <button role="tab" type="button" id="g-listen" aria-controls="p-listen" aria-selected="false" tabindex="-1">Listen</button>
+        <button role="tab" type="button" id="g-find" aria-controls="p-find" aria-selected="false" tabindex="-1">Find</button>
+        <button role="tab" type="button" id="g-sound" aria-controls="p-sound" aria-selected="false" tabindex="-1">Sound</button>
+      </div>
+      <div class="panel" role="tabpanel" id="p-style" aria-labelledby="g-style">
+        <p class="ask">“Use this as a reference for my product promo.”</p>
+        <ol class="passes">
+          <li><code>boundaries</code> every cut, ten samples a second</li>
+          <li><code>frames</code> one sheet of the whole piece</li>
+          <li><code>frames</code> every frame around each move</li>
+          <li><code>style</code> shots, palette, moves and curves</li>
+          <li><code>export</code> a starter project, then <code>compare</code></li>
+        </ol>
+      </div>
+      <div class="panel" role="tabpanel" id="p-learn" aria-labelledby="g-learn" hidden>
+        <p class="ask">“Turn this tutorial into a step-by-step guide.”</p>
+        <ol class="passes">
+          <li><code>transcript</code> every word with its time</li>
+          <li><code>boundaries</code> each screen change</li>
+          <li><code>frames</code> one frame per screen, with the words said there</li>
+        </ol>
+      </div>
+      <div class="panel" role="tabpanel" id="p-listen" aria-labelledby="g-listen" hidden>
+        <p class="ask">“Summarize this three-hour podcast.”</p>
+        <ol class="passes">
+          <li><code>transcript</code> the words carry the content</li>
+          <li><code>frames</code> one overview sheet, nothing more</li>
+        </ol>
+      </div>
+      <div class="panel" role="tabpanel" id="p-find" aria-labelledby="g-find" hidden>
+        <p class="ask">“Where does he set up DNS?”</p>
+        <ol class="passes">
+          <li><code>transcript</code> find the phrase</li>
+          <li><code>frames</code> around the moment it is said</li>
+        </ol>
+      </div>
+      <div class="panel" role="tabpanel" id="p-sound" aria-labelledby="g-sound" hidden>
+        <p class="ask">“What is the sound design here?”</p>
+        <ol class="passes">
+          <li><code>audio</code> loudness, hits, tempo, beat grid, spectrogram</li>
+          <li><code>boundaries</code> cuts, to check which land on the beat</li>
+        </ol>
+      </div>
+    </div>
+    <figure class="sheet">
+      <ul class="sheet__grid" aria-label="One frame a second from the trailer">
+        <li><img src="assets/bbb/f01.webp" width="960" height="540" alt="" loading="lazy"></li>
+        <li><img src="assets/bbb/f03.webp" width="960" height="540" alt="" loading="lazy"></li>
+        <li><img src="assets/bbb/f05.webp" width="960" height="540" alt="" loading="lazy"></li>
+        <li><img src="assets/bbb/f07.webp" width="960" height="540" alt="" loading="lazy"></li>
+        <li><img src="assets/bbb/f09.webp" width="960" height="540" alt="" loading="lazy"></li>
+        <li><img src="assets/bbb/f11.webp" width="960" height="540" alt="" loading="lazy"></li>
+        <li><img src="assets/bbb/f13.webp" width="960" height="540" alt="" loading="lazy"></li>
+        <li><img src="assets/bbb/f15.webp" width="960" height="540" alt="" loading="lazy"></li>
+        <li><img src="assets/bbb/f17.webp" width="960" height="540" alt="" loading="lazy"></li>
+        <li class="has-cut" title="cut at 9.08 s"><img src="assets/bbb/f19.webp" width="960" height="540" alt="" loading="lazy"></li>
+        <li><img src="assets/bbb/f21.webp" width="960" height="540" alt="" loading="lazy"></li>
+        <li class="has-cut" title="cut at 11.2 s"><img src="assets/bbb/f23.webp" width="960" height="540" alt="" loading="lazy"></li>
+        <li><img src="assets/bbb/f25.webp" width="960" height="540" alt="" loading="lazy"></li>
+        <li class="has-cut" title="cut at 13.2 s"><img src="assets/bbb/f27.webp" width="960" height="540" alt="" loading="lazy"></li>
+        <li class="has-cut" title="cut at 15 s"><img src="assets/bbb/f29.webp" width="960" height="540" alt="" loading="lazy"></li>
+        <li class="has-cut" title="cut at 16 s"><img src="assets/bbb/f31.webp" width="960" height="540" alt="" loading="lazy"></li>
+        <li class="has-cut" title="cut at 16.6 s"><img src="assets/bbb/f33.webp" width="960" height="540" alt="" loading="lazy"></li>
+        <li><img src="assets/bbb/f35.webp" width="960" height="540" alt="" loading="lazy"></li>
+        <li><img src="assets/bbb/f37.webp" width="960" height="540" alt="" loading="lazy"></li>
+        <li><img src="assets/bbb/f39.webp" width="960" height="540" alt="" loading="lazy"></li>
+        <li><img src="assets/bbb/f41.webp" width="960" height="540" alt="" loading="lazy"></li>
+        <li><img src="assets/bbb/f43.webp" width="960" height="540" alt="" loading="lazy"></li>
+        <li><img src="assets/bbb/f45.webp" width="960" height="540" alt="" loading="lazy"></li>
+        <li><img src="assets/bbb/f47.webp" width="960" height="540" alt="" loading="lazy"></li>
+        <li class="has-cut" title="cut at 24.92 s"><img src="assets/bbb/f49.webp" width="960" height="540" alt="" loading="lazy"></li>
+        <li class="has-cut" title="cut at 26 s"><img src="assets/bbb/f51.webp" width="960" height="540" alt="" loading="lazy"></li>
+        <li><img src="assets/bbb/f53.webp" width="960" height="540" alt="" loading="lazy"></li>
+        <li><img src="assets/bbb/f55.webp" width="960" height="540" alt="" loading="lazy"></li>
+        <li><img src="assets/bbb/f57.webp" width="960" height="540" alt="" loading="lazy"></li>
+        <li class="has-cut" title="cut at 29.96 s"><img src="assets/bbb/f59.webp" width="960" height="540" alt="" loading="lazy"></li>
+        <li><img src="assets/bbb/f61.webp" width="960" height="540" alt="" loading="lazy"></li>
+        <li class="has-cut" title="cut at 31.04 s"><img src="assets/bbb/f63.webp" width="960" height="540" alt="" loading="lazy"></li>
+      </ul>
+      <figcaption>The style goal’s first pass: a frame a second, red where a cut falls.</figcaption>
+    </figure>
+    </div>
+  </div>
+</section>
+
+<section class="sources ink" id="sources" aria-labelledby="sources-h">
+  <div class="container">
+    <h2 id="sources-h">Video is measured; Lottie, Rive and websites are read exactly</h2>
+    <table class="readings">
+      <thead><tr><th scope="col">Source</th><th scope="col">How</th><th scope="col">What Frame Lens read</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">The trailer above, a video file</th><td>From pixels</td><td class="num">12 shots, 11 cuts, 25 fps</td></tr>
+        <tr><th scope="row">A live website, makkov-harness</th><td>From the browser</td><td class="num">328 animations, mostly 500 ms on cubic-bezier(0.16, 1, 0.3, 1)</td></tr>
+        <tr><th scope="row">A Lottie file, our export read back</th><td>From keyframes</td><td class="num">y 600 to 540 in 23 frames, cubic-bezier(0.7, 0, 0.84, 0)</td></tr>
+        <tr><th scope="row">Rive files and Figma prototypes</th><td>From the file</td><td>Keyframes and transitions</td></tr>
+        <tr><th scope="row">YouTube and most video sites</th><td>From pixels</td><td>Through a pinned yt-dlp</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="export" id="export" aria-labelledby="export-h">
+  <div class="container">
+    <h2 id="export-h">The same 0.92-second move in five renderers</h2>
+    <div class="export__grid">
+    <div class="export__text">
+      <p>The move at 26.04 s, written for five renderers. Render yours, then <code>compare</code> names what drifted.</p>
+      <figure class="curve">
+        <svg viewBox="0 0 400 280" role="img" aria-labelledby="curve-t"><title id="curve-t">Measured curve cubic-bezier(0.7, 0, 0.84, 0) over 23 frames</title><path class="axis" d="M20.0 260.0 H380.0 M20.0 260.0 V20.0"/><path class="handle" d="M20.0 260.0 L272.0 260.0 M380.0 20.0 L322.4 260.0"/><path class="path" d="M20.0 260.0 C272.0 260.0 322.4 260.0 380.0 20.0"/><circle class="dot" cx="20.0" cy="260.0" r="3.5"/><circle class="dot" cx="35.7" cy="260.0" r="3.5"/><circle class="dot" cx="51.3" cy="260.0" r="3.5"/><circle class="dot" cx="67.0" cy="259.9" r="3.5"/><circle class="dot" cx="82.6" cy="259.8" r="3.5"/><circle class="dot" cx="98.3" cy="259.6" r="3.5"/><circle class="dot" cx="113.9" cy="259.4" r="3.5"/><circle class="dot" cx="129.6" cy="258.9" r="3.5"/><circle class="dot" cx="145.2" cy="258.3" r="3.5"/><circle class="dot" cx="160.9" cy="257.3" r="3.5"/><circle class="dot" cx="176.5" cy="256.1" r="3.5"/><circle class="dot" cx="192.2" cy="254.3" r="3.5"/><circle class="dot" cx="207.8" cy="252.0" r="3.5"/><circle class="dot" cx="223.5" cy="248.8" r="3.5"/><circle class="dot" cx="239.1" cy="244.6" r="3.5"/><circle class="dot" cx="254.8" cy="239.0" r="3.5"/><circle class="dot" cx="270.4" cy="231.4" r="3.5"/><circle class="dot" cx="286.1" cy="221.2" r="3.5"/><circle class="dot" cx="301.7" cy="207.4" r="3.5"/><circle class="dot" cx="317.4" cy="188.4" r="3.5"/><circle class="dot" cx="333.0" cy="162.4" r="3.5"/><circle class="dot" cx="348.7" cy="126.8" r="3.5"/><circle class="dot" cx="364.3" cy="79.6" r="3.5"/><circle class="dot" cx="380.0" cy="20.0" r="3.5"/><circle class="knob" cx="272.0" cy="260.0" r="5"/><circle class="knob" cx="322.4" cy="260.0" r="5"/></svg>
+        <figcaption>Frames 651 to 674, placed on the fitted curve.</figcaption>
+      </figure>
+    </div>
+    <div class="switch code-switch" data-switch>
+      <div class="tabs" role="tablist" aria-label="Export targets">
+        <button role="tab" type="button" id="x-css" aria-controls="c-css" aria-selected="true">CSS</button>
+        <button role="tab" type="button" id="x-rem" aria-controls="c-rem" aria-selected="false" tabindex="-1">Remotion</button>
+        <button role="tab" type="button" id="x-hf" aria-controls="c-hf" aria-selected="false" tabindex="-1">HyperFrames</button>
+        <button role="tab" type="button" id="x-ae" aria-controls="c-ae" aria-selected="false" tabindex="-1">After Effects</button>
+        <button role="tab" type="button" id="x-lot" aria-controls="c-lot" aria-selected="false" tabindex="-1">Lottie</button>
+      </div>
+      <pre class="panel code" role="tabpanel" id="c-css" aria-labelledby="x-css" tabindex="0"><code><span class="c">/* motion.css */</span>
+#shot-10 { background: #FCFDFD;
+  animation: fl-show 3.96s linear 26s; }
+#shot-10 h1 { color: #2CA2CF;
+  animation: fl-enter 0.92s
+    cubic-bezier(0.7, 0, 0.84, 0) 26.04s both; }</code></pre>
+      <pre class="panel code" role="tabpanel" id="c-rem" aria-labelledby="x-rem" tabindex="0" hidden><code><span class="c">// src/timing.ts</span>
+{ id: "shot-10", from: 650,
+  durationInFrames: 99,
+  background: "#FCFDFD", accent: "#2CA2CF",
+  enterAt: 1, enterFrames: 23,
+  bezier: [0.7, 0, 0.84, 0] }</code></pre>
+      <pre class="panel code" role="tabpanel" id="c-hf" aria-labelledby="x-hf" tabindex="0" hidden><code><span class="c">&lt;!-- compositions/shot-10.html --&gt;</span>
+tl.fromTo("#shot-10-title",
+  { opacity: 0, y: 60 },
+  { opacity: 1, y: 0, duration: 0.92,
+    ease: "power3.in" }, 0.04);</code></pre>
+      <pre class="panel code" role="tabpanel" id="c-ae" aria-labelledby="x-ae" tabindex="0" hidden><code><span class="c">// framelens-reference.jsx</span>
+"keyStart": 26.04, "keyEnd": 26.96,
+"bezier": [0.7, 0, 0.84, 0],
+"positionEase": { "outSpeed": 0,
+  "outInfluence": 70,
+  "inSpeed": 407.6087, "inInfluence": 16 }</code></pre>
+      <pre class="panel code" role="tabpanel" id="c-lot" aria-labelledby="x-lot" tabindex="0" hidden><code><span class="c">// reference.json, frame 651 to 674</span>
+"o": { "a": 1, "k": [
+  { "t": 651, "s": [0],
+    "o": { "x": [0.7], "y": [0] },
+    "i": { "x": [0.84], "y": [0] } },
+  { "t": 674, "s": [100] } ] }</code></pre>
+    </div>
+    </div>
+  </div>
+</section>
+
+<section class="accuracy" id="accuracy" aria-labelledby="accuracy-h">
+  <div class="container">
+    <h2 id="accuracy-h">Tested at 24, 30 and 60 fps against known answers</h2>
+    <dl class="figures">
+      <div><dd class="num">33/33</dd><dt>cuts found on the exact frame</dt></div>
+      <div><dd class="num">36/36</dd><dt>easing families named right</dt></div>
+      <div><dd class="num">1.00</dd><dt>frame, the mean error on where a move starts</dt></div>
+    </dl>
+    <p class="accuracy__note">Synthetic clips with known cuts and curves. <a href="https://github.com/Makkov-design/framelens/blob/main/docs/ACCURACY.md">Read the benchmark</a>.</p>
+  </div>
+</section>
+
+<section class="install field" id="install" aria-labelledby="install-h">
+  <div class="container">
+    <div class="install__head">
+      <h2 id="install-h">Point it at a video tonight</h2>
+      <a class="btn btn--quiet" href="https://github.com/Makkov-design/framelens">Star on GitHub</a>
+    </div>
+    <p class="install__intro">Node 20 and ffmpeg on your computer. <code>framelens doctor --prepare</code> checks the rest.</p>
+    <ul class="ways">
+      <li>
+        <h3>This project</h3>
+        <div class="cmd cmd--wide"><code id="cmd-proj">npx -y framelens init</code><button class="btn btn--quiet btn--small" type="button" data-copy="cmd-proj">Copy</button></div>
+        <p class="fine">Adds <code>.mcp.json</code> and the agent skill here.</p>
+      </li>
+      <li>
+        <h3>Claude Code, everywhere</h3>
+        <div class="cmd cmd--wide"><code id="cmd-cc">claude mcp add framelens -s user -- npx -y framelens</code><button class="btn btn--quiet btn--small" type="button" data-copy="cmd-cc">Copy</button></div>
+        <p class="fine">On Windows, <code>cmd /c</code> before <code>npx</code>.</p>
+      </li>
+      <li>
+        <h3>Any MCP client</h3>
+        <pre class="code code--light" tabindex="0"><code>"framelens": {
+  "command": "npx",
+  "args": ["-y", "framelens"] }</code></pre>
+      </li>
+    </ul>
+  </div>
+</section>
+
+</main>
+
+<footer class="foot ink">
+  <div class="container foot__grid">
+    <p class="wordmark wordmark--foot">Frame Lens</p>
+    <ul class="foot__links">
+      <li><a href="https://github.com/Makkov-design/framelens">Source on GitHub</a></li>
+      <li><a href="https://www.npmjs.com/package/framelens">npm package</a></li>
+      <li><a href="https://github.com/Makkov-design/framelens/blob/main/CHANGELOG.md">Changelog</a></li>
+      <li><a href="https://github.com/Makkov-design/framelens/blob/main/docs/DESIGN.md">How it works</a></li>
+      <li><a href="llms.txt">llms.txt for agents</a></li>
+    </ul>
+    <p class="foot__fine">MIT licence, made by Makkov. Trailer frames: Big Buck Bunny, © Blender Foundation, CC BY 3.0, peach.blender.org.</p>
+  </div>
+</footer>
+
+<script src="assets/bbb/reading.js"></script>
+<script src="site.js"></script>
+</body>
+</html>
