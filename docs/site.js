@@ -65,7 +65,8 @@
     return el;
   };
   R.shots.forEach((s) => add('shot', { left: pct(s.start), width: `calc(${pct(s.end - s.start)} - 2px)`, background: s.palette[0] }));
-  R.shots.slice(1).forEach((s) => add('cut', { left: pct(s.start) }));
+  (R.cuts ?? R.shots.slice(1).map((s) => s.start)).forEach((c) => add('cut', { left: pct(c) }));
+  (R.transitions ?? []).forEach((x) => add(`trans trans--${x.via ?? x.kind}`, { left: pct(x.start), width: pct(Math.max(0.2, x.end - x.start)) }));
   R.events.forEach((e) => add('move', { left: pct(e.start), width: pct(Math.max(0.3, e.end - e.start)) }));
   for (let t = 0; t <= maxT; t += 8) {
     const tick = add('tick', { left: pct(t) }, `${t} s`);
@@ -87,8 +88,12 @@
     const shot = R.shots[i] ?? R.shots[R.shots.length - 1];
     out('shot').textContent = `${(i < 0 ? R.shots.length - 1 : i) + 1} of ${R.shots.length}, ${(shot.end - shot.start).toFixed(2)} s`;
     const near = (e) => (t < e.start ? e.start - t : t > e.end ? t - e.end : 0);
+    const trans = (R.transitions ?? []).find((x) => near(x) === 0);
     const move = R.events.filter((e) => near(e) <= 0.25).sort((a, b) => near(a) - near(b))[0];
-    out('move').textContent = move ? `${move.easing}, ${move.frames} frames, ${move.curve}` : 'no move here';
+    const kind = (x) => (x.kind === 'dip' ? `dip through ${x.via}` : x.kind === 'wipe' ? `wipe ${x.direction ?? ''}`.trim() : x.kind);
+    out('move').textContent = trans
+      ? `${kind(trans)}, ${trans.frames} frames, ${trans.start.toFixed(2)} to ${trans.end.toFixed(2)} s`
+      : move ? `move, ${move.easing}, ${move.frames} frames, ${move.curve}` : 'no move or transition here';
     const pal = out('palette');
     pal.classList.remove('num');
     pal.replaceChildren(...shot.palette.map((hex) => {
