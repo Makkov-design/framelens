@@ -103,31 +103,50 @@ All new tools take `source` (URL, path or YouTube ID) and return a short text su
 {
   "spec": "framelens.motion/1",
   "source": { "kind": "youtube", "url": "…", "title": "…" },
-  "timebase": { "fps": 30, "vfr": false, "duration": 45.2, "width": 1080, "height": 1920 },
+  "range": { "start": 0, "end": 45.2 },  // the span that was asked for: input, so the one block without a label
+  "timebase": { "fps": 30, "vfr": false, "duration": 45.2, "width": 1080, "height": 1920, "evidence": "measured" },
   "anchors": {                       // time sources an exporter can re-flow to new words or music
-    "words": [{ "id": "w12", "t": 3.21, "end": 3.48, "text": "faster" }],
-    "beats": [{ "id": "b8", "t": 3.2, "downbeat": true }],
-    "cuts":  [{ "id": "c3", "t": 3.2, "frame": 96, "evidence": "measured" }]
+    "words": [{ "id": "w12", "t": 3.21, "end": 3.48, "text": "faster", "evidence": "measured" }],
+    "beats": [{ "id": "b8", "t": 3.2, "downbeat": true, "evidence": "derived" }],
+    "cuts":  [{ "id": "c3", "t": 3.2, "frame": 96, "score": 0.71, "evidence": "measured" }]
   },
   "palette": [{ "hex": "#0E0F1A", "role": "background", "share": 0.62, "evidence": "measured" }],
   "typography": [{ "role": "caption", "family_guess": "Inter Tight", "weight": 800, "case": "upper", "evidence": "inferred" }],
-  "shots": [{ "id": "s4", "start": 3.2, "end": 4.6, "frames": 42, "anchor": "c3", "role": "B-roll" }],
+  "shots": [                         // measured when both ends are cuts or range ends, derived when one is a gradual transition's
+    { "id": "s4", "start": 3.2, "end": 4.6, "frames": 42, "palette": ["#0E0F1A", "#F2F2F2"], "anchor": "c3", "evidence": "derived" }
+  ],
   "transitions": [                   // how each shot gives way to the next (2.1)
     { "id": "x1", "kind": "cut", "start": 3.2, "end": 3.2, "frames": 0, "at": 3.2, "from": "s3", "to": "s4", "evidence": "measured" },
     { "id": "x2", "kind": "dissolve", "start": 4.2, "end": 5.0, "frames": 24, "at": 4.6, "easing": "linear", "fit": 0.03, "from": "s4", "to": "s5", "evidence": "derived" },
-    { "id": "x3", "kind": "dip", "via": "black", "start": 8.6, "end": 9.16, "frames": 14, "at": 8.88, "hold": { "start": 8.88, "end": 8.92 }, "evidence": "derived" }
+    { "id": "x3", "kind": "dip", "via": "black", "start": 8.6, "end": 9.16, "frames": 14, "at": 8.88, "hold": { "start": 8.88, "end": 8.92, "evidence": "derived" }, "evidence": "derived" }
   ],                                 // kinds: cut, dissolve, fade-in, fade-out, dip (via black|white), wipe (direction)
-  "systems": [{                        // things that live across several shots: captions, boards, sound beds
-    "id": "caption", "role": "Caption", "start": 0, "end": 45.2,
+  "systems": [{                        // things that live across several shots: captions, boards, sound beds (written by the agent)
+    "id": "caption", "role": "Caption", "start": 0, "end": 45.2, "evidence": "inferred",
     "states": [{ "t": 3.21, "anchor": "w12", "change": "word highlight", "evidence": "measured" }]
   }],
   "events": [{
     "t": 3.2, "frame": 96, "anchor": "b8", "target": "s4/title", "kind": "enter",
     "type": "slide-up + fade", "frames": 9, "easing": "cubic-bezier(.2,.8,.2,1)", "evidence": "derived"
   }],
-  "audio": { "tempo_bpm": 120, "cut_on_beat_ratio": 0.82, "sfx": [{ "t": 3.21, "label": "whoosh", "evidence": "inferred" }] }
+  "rhythm": { "cuts": 11, "cutsPerMinute": 14.6, "transitions": 10, "meanShotSeconds": 2.26, "medianShotSeconds": 1.6, "movesPerMinute": 9.3, "evidence": "derived" },
+  "audio": {
+    "tempo_bpm": 120, "cut_on_beat_ratio": 0.82, "integrated_lufs": -14.2,
+    "evidence": { "tempo_bpm": "derived", "cut_on_beat_ratio": "derived", "integrated_lufs": "measured" },  // one label per number where they differ
+    "hits": [{ "t": 3.21, "strength": 0.9, "evidence": "measured" }],
+    "sfx": [{ "t": 3.21, "label": "whoosh", "evidence": "inferred" }]
+  }
 }
 ```
+
+**The evidence rule.** Every number is a field of an object that carries `evidence`, or an element of an array such
+an object holds. `evidence` is one label for all the object's numbers, or an object with a label per numeric field
+where they differ (`audio`). A label covers only its own object, never the objects nested in it (a dip's `hold`
+carries its own), with one exception: a track in `tracks` labels the whole record, its window, element, samples and
+curves (TRACK.md says the positions are measured and the curves derived). `range` is input and has no label.
+`unlabelledNumbers` in `src/style/spec.ts` checks a spec against the rule; a test runs `style` and `audio` on a real
+clip and walks the result. The labels on `timebase`, `words`, `beats`, `shots`, `rhythm`, `audio` and `hold` came in
+2.1.0; specs written earlier lack them, and so, for now, do the `timebase`, `shots` and `rhythm` of specs read from
+web pages (`browser/web.ts`) and from Lottie, Rive and Figma (`exact/spec.ts`).
 
 Roles use production vocabulary: A-roll, B-roll, Caption, Typography, MG, UI, SFX, Music, VO.
 

@@ -114,7 +114,8 @@ export function registerLocalTools(server: McpServer, engine: Engine, logger: Lo
       description:
         "Classifies the video (talking head, screen, motion graphics, music video, live action) and returns the steps that fit the goal: " +
         "listen (podcast, lecture), learn (tutorial to guide), find (a moment), style (replicate motion design), sound (sound design), " +
-        "production (how it was made). Pass `goal`, or the user's request in `request` to infer it. Then run the steps in order.",
+        "production (how it was made). Pass `goal`, or the user's request in `request` to infer it. Then run the steps in order: " +
+        "each step's `args` are ready to pass (with `source`); a step with `then` says what to add first from an earlier step's result.",
       inputSchema: {
         source: sourceInput,
         goal: z.enum(GOALS).optional().describe("The user's goal. Omit to infer it from `request` or the video type."),
@@ -135,7 +136,7 @@ export function registerLocalTools(server: McpServer, engine: Engine, logger: Lo
           "",
           `Goal: **${plan.goal}**${plan.goalInferred ? " (inferred; pass `goal` to override)" : ""}. Video type: **${plan.videoType}** (${plan.reasons.join("; ")}).`,
           "",
-          ...plan.steps.map((s, i) => `${i + 1}. \`${s.tool}\` ${JSON.stringify(s.args)} — ${s.why}`),
+          ...plan.steps.map((s, i) => `${i + 1}. \`${s.tool}\` ${JSON.stringify(s.args)} — ${s.why}${s.then ? `\n   Before running it: ${s.then}.` : ""}`),
           "",
           `Estimate: ${plan.estimate.frames} frames in ${plan.estimate.sheets} sheets, about ${plan.estimate.imageTokens.toLocaleString("en-US")} image tokens if every sheet is opened.`,
           ...plan.notes.map((n) => `Note: ${n}`),
@@ -184,7 +185,8 @@ export function registerLocalTools(server: McpServer, engine: Engine, logger: Lo
       description:
         "Extracts frames and arranges them into labelled contact sheets (time, frame number and the words spoken under each picture). " +
         "Sample with exactly one of: `at` (list of moments), `every` (seconds), `fps`, `every_frame` (every original frame, for motion " +
-        "and transitions), or `around` (a phrase from the transcript). Work like a loupe: an overview first, then dense frames only " +
+        "and transitions), or `around` (a phrase from the transcript; it picks the range and takes `every`, `fps` or `every_frame` " +
+        "with it, 4 fps by default). Work like a loupe: an overview first, then dense frames only " +
         "around the moments that matter. Sheets are written to the workspace; the first ones are shown inline, open the rest by path.",
       inputSchema: {
         source: sourceInput,
@@ -197,8 +199,8 @@ export function registerLocalTools(server: McpServer, engine: Engine, logger: Lo
         around: z.string().max(300).optional().describe("A phrase from the transcript; frames are taken around it."),
         occurrence: z.number().int().min(1).max(100).optional().describe("Which occurrence of `around`."),
         padding: z.number().min(0).max(30).optional().describe("Seconds before and after `around` (default 1.5)."),
-        columns: z.number().int().min(1).max(8).default(4),
-        rows: z.number().int().min(1).max(8).default(4),
+        columns: z.number().int().min(1).max(8).default(4).describe("Frames side by side on each contact sheet (1–8, default 4)."),
+        rows: z.number().int().min(1).max(8).default(4).describe("Rows of frames on each sheet (1–8, default 4); more frames go to further sheets."),
         width: z.number().int().min(64).max(3840).optional().describe("Frame width in pixels (default 320; 240 with 6+ columns)."),
         words: z.boolean().default(true).describe("Put the words spoken at each frame under it."),
         inline: z.number().int().min(0).max(4).optional().describe(`Sheets to show inline (default ${inlineLimit}).`),
@@ -381,7 +383,7 @@ export function registerLocalTools(server: McpServer, engine: Engine, logger: Lo
         "vertical lines are hits, horizontal bands are tones and music beds. Writes audio-*.json and adds beats to motion-spec.json.",
       inputSchema: {
         source: sourceInput,
-        start: time.optional(),
+        start: time.optional().describe("Range start: seconds (12.5) or M:SS(.mmm) (default 0)."),
         end: time.optional().describe("Range end (default the end, at most 10 minutes at a time)."),
       },
       annotations: READ_ONLY,
@@ -501,8 +503,8 @@ export function registerLocalTools(server: McpServer, engine: Engine, logger: Lo
         "(not editorial labels: check them with `frames` every_frame around each). Also reports how dynamic the video is overall.",
       inputSchema: {
         source: sourceInput,
-        start: time.optional(),
-        end: time.optional(),
+        start: time.optional().describe("Range start: seconds (12.5) or M:SS(.mmm) (default 0)."),
+        end: time.optional().describe("Range end (default the end of the video)."),
         rate: z.number().min(0.5).max(60).default(4).describe("Samples per second; 10 or more to time cuts precisely."),
         threshold: z.number().min(0.01).max(1).default(0.3).describe("Score from which a change is listed (0–1)."),
       },

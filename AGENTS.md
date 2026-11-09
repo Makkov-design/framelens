@@ -13,7 +13,7 @@ shots, palette, moves with their exact easing, beats and word-timed transcripts.
 
 | Where | Command |
 |---|---|
-| One project (also Claude Code cloud sessions) | `npx -y framelens init`, then commit `.mcp.json` and `.claude/skills/framelens/` |
+| One project (also Claude Code cloud sessions) | `npx -y framelens init` (pins `framelens@<version>` from npm), then commit `.mcp.json` and `.claude/skills/framelens/` |
 | Claude Code, every project | `claude mcp add framelens --scope user -- npx -y framelens` (Windows: `-- cmd /c npx -y framelens`) |
 | Claude Code plugin (server and skill) | `/plugin marketplace add Makkov-design/framelens`, then `/plugin install framelens@framelens` |
 | Any MCP client | `{"mcpServers": {"framelens": {"command": "npx", "args": ["-y", "framelens"]}}}` (Windows: `"command": "cmd", "args": ["/c", "npx", "-y", "framelens"]`) |
@@ -27,7 +27,7 @@ The Gemini tools need the user's own `GEMINI_API_KEY`. Tool names may be prefixe
 ### Workflow
 
 1. A video (link, file or `inbox`) → `plan` with the user's request in their own words; run the steps it returns in
-   order. A website → `web`. A Lottie, dotLottie, Rive (`.riv`) file or a Figma prototype link → `exact`.
+   order (a step with `then` says what to add from an earlier result first). A website → `web`. A Lottie, dotLottie, Rive (`.riv`) file or a Figma prototype link → `exact`.
 2. Motion reference: `style` → `track` for the moves that matter → `frames` with `every_frame` ±0.5 s around them →
    `export` (`hyperframes`, `remotion`, `css`, `after-effects`, `lottie`, `hypit`) → render → `compare` with the
    reference and fix what it names.
@@ -80,7 +80,7 @@ node scripts/smoke.mjs                    # live end-to-end run of the bundle; u
 
 | Path | Owns |
 |---|---|
-| `src/index.ts` | CLI: no arguments starts the MCP server on stdio; `init`, `doctor [--prepare]`, `login <site>`, `logout`, `--version` |
+| `src/index.ts`, `src/cli.ts` | No arguments starts the MCP server on stdio; `cli.ts` runs the commands `init`, `doctor [--prepare]`, `login <site>`, `logout`, `--version`, `--help` (they print to stdout) |
 | `src/local-tools.ts`, `local-tools-browser.ts`, `local-tools-exact.ts` | Registration of the local tools (`probe`, `plan`, `transcript`, `frames`, `style`, `track`, `audio`, `export`, `compare`, `boundaries`; `web`; `exact`) |
 | `src/server.ts` | The Gemini tools and server wiring |
 | `src/engine.ts` | Orchestration behind every local tool, workspaces, `PROGRESS.md` |
@@ -95,9 +95,12 @@ node scripts/smoke.mjs                    # live end-to-end run of the bundle; u
 ### Rules for changes
 
 - **Evidence labels.** Every number written to `motion-spec.json` carries `evidence`: `measured` (from pixels, audio
-  or the source's own data), `derived` (fitted from measurements) or `inferred` (a model's judgement). A new
-  measurement picks the honest label; never present a fitted or guessed value as measured. Tool text uses the same
-  words.
+  or the source's own data), `derived` (fitted from measurements) or `inferred` (a model's judgement). The rule is
+  exact: the object that holds a number has an `evidence` field, one label for all its numbers or, where they differ,
+  an object with a label per field (`audio`); numbers in an array belong to the object that holds the array; only
+  `range` (input) has none, and a track's label covers what is nested in it. `unlabelledNumbers` in
+  `src/style/spec.ts` checks it, and a test walks a real spec. A new measurement picks the honest label; never
+  present a fitted or guessed value as measured. Tool text uses the same words.
 - **Principle 7, honest access.** Only content the user can see, fetched the way the user can: a file, a public link,
   the user's own opt-in cookies or browser profile, the extension in their browser, their own self-hosted cobalt. No
   bot-check or CAPTCHA evasion, no client impersonation of our own, no public downloader sites, paid scrapers or
@@ -108,6 +111,11 @@ node scripts/smoke.mjs                    # live end-to-end run of the bundle; u
   every tool result keeps the third-party notice.
 - **Results live on disk.** Tools return a short summary plus absolute paths; keep results far below the MCP limit.
 - **No runtime dependencies**, and no new external services: a new network call needs a reason in `docs/DESIGN.md`.
-- Keep the README, `skills/framelens/SKILL.md`, `docs/llms.txt` and `CHANGELOG.md` (`## [Unreleased]`) in step with
-  tool names, parameters and numbers. Never invent metrics: numbers come from the code, tests or the benchmark.
+  Code that the bundle takes from a devDependency is shipped in `dist/framelens.mjs`: when a change bundles a new
+  package, add it to `THIRD_PARTY_NOTICES.md` with its licence.
+- Keep the README, `skills/framelens/SKILL.md` and `docs/llms.txt` in step with tool names, parameters and numbers.
+  Never invent metrics: numbers come from the code, tests or the benchmark.
+- **CHANGELOG.md:** work after a release goes under `## Unreleased` at the top (add the heading when it is not
+  there), in the groups `### Added`, `### Changed` and `### Fixed`, one short entry per change. A release renames the
+  heading to `## <version> — <date>`. A fix to a release that is not tagged yet goes into that release's section.
 - Small, surgical changes in the existing style; tests next to the change in `test/`.

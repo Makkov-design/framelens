@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import type { Boundaries } from "../../src/media/boundaries.js";
 import type { ProbeInfo } from "../../src/media/probe.js";
 import { buildPlan, busiestWindows, classify, denseWindows, inferGoal, loupeBudget, MAX_DENSE_SECONDS, sheetTokens } from "../../src/router/plan.js";
+import { toolShapes } from "../fixtures/tool-shapes.js";
 
 const probe = (duration: number): ProbeInfo => ({ duration, fps: 30, nominalFps: 30, vfr: false, hdr: false, hasVideo: true, hasAudio: true });
 const bounds = (changesPerMinute: number, dynamics: number, times: number[] = []): Boundaries => ({
@@ -50,7 +52,10 @@ describe("router", () => {
     expect(passages.length).toBeLessThanOrEqual(2);
     expect(passages.reduce((sum, s) => sum + (s.args.end as number) - (s.args.start as number), 0)).toBeLessThanOrEqual(45 * 0.25);
     expect(plan.steps.at(-2)!.tool).toBe("style");
-    expect(plan.steps.at(-1)).toMatchObject({ tool: "track", args: { move: 1, element: "auto" } });
+    // Music and no speech reads as a music video: graphics or camera footage, so the agent picks the element.
+    expect(plan.videoType).toBe("music-video");
+    expect(plan.steps.at(-1)).toMatchObject({ tool: "track", args: { move: 1 } });
+    expect(plan.steps.at(-1)!.then).toMatch(/`element`/);
     expect(plan.notes.join(" ")).toMatch(/24 more changes/);
     expect(plan.estimate.imageTokens).toBeLessThan(60_000);
   });
@@ -122,6 +127,87 @@ describe("router", () => {
   it("estimates image tokens with Anthropic's rule", () => {
     expect(sheetTokens(16)).toBe(Math.ceil(1280 / 28) * Math.ceil((4 * 236) / 28));
     expect(sheetTokens(1)).toBe(Math.ceil(320 / 28) * Math.ceil(236 / 28));
+  });
+
+  it("lists only steps whose args the tools accept as they are; what depends on an earlier step goes in `then`", () => {
+    // 2.1.0: learn emitted frames {at: "each boundary + 0.5 s", labels: "words"} and production {at: "middle of each
+    // shot"}: a string `at` fails validation and `labels` is no parameter.
+    const shapes = toolShapes();
+    const learn = buildPlan({ goal: "learn", probe: probe(300), boundaries: bounds(5, 0.03), hasSpeech: true });
+    const production = buildPlan({ goal: "production", probe: probe(120), boundaries: bounds(8, 0.05), hasSpeech: true });
+    const find = buildPlan({ goal: "find", probe: probe(300), boundaries: bounds(5, 0.03), hasSpeech: true });
+    for (const plan of [learn, production, find]) {
+      for (const step of plan.steps) {
+        const parsed = z.object(shapes[step.tool]!).strict().safeParse({ source: "clip.mp4", ...step.args });
+        expect(parsed.success, `${step.tool} ${JSON.stringify(step.args)}`).toBe(true);
+      }
+    }
+    expect(learn.steps.map((s) => s.tool)).toEqual(["transcript", "boundaries", "frames"]);
+    expect(learn.steps[2]!.then).toMatch(/add `at`: 0\.5, then each change time from the boundaries result plus 0\.5 s/);
+    expect(production.steps.at(-1)!.then).toMatch(/middle of each shot/);
+    expect(find.steps.at(-1)!.then).toMatch(/add `around`/);
+  });
+
+  it("fills in the moments when the boundaries or shots are already in the workspace", () => {
+    const known = (rate: number, threshold: number) => (rate === 2 && threshold === 0.25 ? { ...bounds(5, 0.03, [12, 40.1, 299.8]), rate, threshold } : undefined);
+    const learn = buildPlan({ goal: "learn", probe: probe(300), boundaries: bounds(5, 0.03), hasSpeech: true, known: { boundaries: known } });
+    expect(learn.steps.map((s) => s.tool)).toEqual(["transcript", "frames"]);
+    expect(learn.steps[1]!.args.at).toEqual([0.5, 12.5, 40.6, 300]);
+    expect(learn.steps[1]!.then).toBeUndefined();
+
+    const shots = [{ start: 0, end: 4 }, { start: 4, end: 9 }, { start: 9, end: 10 }];
+    const production = buildPlan({ goal: "production", probe: probe(10), boundaries: bounds(8, 0.05), hasSpeech: true, known: { shots } });
+    expect(production.steps.map((s) => s.tool)).toEqual(["transcript", "frames"]);
+    expect(production.steps[1]!.args.at).toEqual([2, 6.5, 9.5]);
+    // Without shots, boundaries run with the production step's own settings do the same.
+    const fromBoundaries = buildPlan({ goal: "production", probe: probe(10), boundaries: bounds(8, 0.05), hasSpeech: true, known: { boundaries: (r, t) => (r === 4 && t === 0.3 ? bounds(8, 0.05, [4, 9]) : undefined) } });
+    expect(fromBoundaries.steps.at(-1)!.args.at).toEqual([2, 6.5, 9.5]);
+  });
+
+  it("does not start with transcript for a source without sound", () => {
+    // The demo film has no audio track: 2.1.0 still put `transcript` first for every goal but style.
+    const silent = { ...probe(28), hasAudio: false };
+    for (const goal of ["learn", "listen", "find", "production", "sound", "style"] as const) {
+      const plan = buildPlan({ goal, probe: silent, boundaries: bounds(20, 0.1), hasSpeech: false });
+      expect(plan.steps.map((s) => s.tool), goal).not.toContain("transcript");
+      expect(plan.steps.map((s) => s.tool), goal).not.toContain("audio");
+      expect(plan.notes.join(" "), goal).toMatch(/no sound/);
+    }
+    expect(buildPlan({ goal: "find", probe: silent, boundaries: bounds(20, 0.1), hasSpeech: false }).steps.some((s) => s.args.around)).toBe(false);
+  });
+
+  it("offers element auto only for graphic and UI footage; in camera footage it asks for a box", () => {
+    const moves = [{ start: 2, end: 3, frames: 30 }];
+    const graphics = buildPlan({ goal: "style", probe: probe(30), boundaries: bounds(40, 0.2, [5]), hasSpeech: true, moves });
+    expect(graphics.videoType).toBe("motion-graphics");
+    expect(graphics.steps.at(-1)).toMatchObject({ tool: "track", args: { move: 1, element: "auto" } });
+    const camera = buildPlan({ goal: "style", probe: probe(30), boundaries: bounds(13, 0.06, [5]), hasSpeech: true, moves });
+    expect(camera.videoType).toBe("live-action");
+    const track = camera.steps.at(-1)!;
+    expect(track).toMatchObject({ tool: "track", args: { move: 1 } });
+    expect(track.args.element).toBeUndefined();
+    expect(track.then).toMatch(/add `element`: a box \{x, y, w, h\}/);
+  });
+
+  it("asks for a box for a move where style measured the whole picture changing, and puts element moves first", () => {
+    // The trailer: move 8 changes 66 % of the picture (a character fills the frame); `auto` has nothing to pick there.
+    const moves = [
+      { start: 2, end: 3, frames: 30, area: 0.04, element: "auto" as const },
+      { start: 5, end: 6, frames: 40, area: 0.66, element: "box" as const },
+      ...Array.from({ length: 6 }, (_, i) => ({ start: 8 + i, end: 8.5 + i, frames: 12, area: 0.05, element: "auto" as const })),
+    ];
+    const plan = buildPlan({ goal: "style", probe: probe(30), boundaries: bounds(40, 0.2, [5]), hasSpeech: true, moves });
+    expect(plan.videoType).toBe("motion-graphics");
+    const tracks = plan.steps.filter((s) => s.tool === "track");
+    // Six steps at most: the six element moves come before the longer whole-picture one.
+    expect(tracks.map((s) => s.args.move)).toEqual([1, 3, 4, 5, 6, 7]);
+    expect(tracks.every((s) => s.args.element === "auto")).toBe(true);
+    const few = buildPlan({ goal: "style", probe: probe(30), boundaries: bounds(40, 0.2, [5]), hasSpeech: true, moves: moves.slice(0, 2) });
+    const whole = few.steps.find((s) => s.tool === "track" && s.args.move === 2)!;
+    expect(whole.args.element).toBeUndefined();
+    expect(whole.why).toMatch(/whole picture changes here \(66% of it\)/);
+    expect(whole.then).toMatch(/add `element`: a box \{x, y, w, h\} around the part to follow, with `at`/);
+    expect(few.steps.find((s) => s.tool === "track" && s.args.move === 1)!.args.element).toBe("auto");
   });
 
   it("picks non-overlapping busy windows", () => {

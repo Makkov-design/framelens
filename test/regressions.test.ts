@@ -8,7 +8,10 @@ const sourceFiles = readdirSync(join(root, "src")).filter((f) => f.endsWith(".ts
 
 describe("regressions", () => {
   it("never writes to stdout, which carries the MCP protocol", () => {
-    for (const file of sourceFiles) {
+    // The command-line commands (`framelens doctor`, `--help`, …) print to stdout like any CLI; they never run inside
+    // the server, which starts only when there is no command (checked in regressions-2-1-release.test.ts).
+    const commands = new Set(["cli.ts", "doctor.ts"]);
+    for (const file of sourceFiles.filter((f) => !commands.has(f.replace(/\\/g, "/")))) {
       const code = readFileSync(join(root, "src", file), "utf8");
       expect(code, file).not.toMatch(/console\.(log|info|debug|warn|error)\(|process\.stdout/);
     }

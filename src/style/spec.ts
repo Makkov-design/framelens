@@ -17,10 +17,52 @@ export type SpecTransition = Transition & {
   /** The shot before and after it (a fade at the very start or end has only one). */
   from?: string;
   to?: string;
+  /** A dip's hold carries its own label, like every object with numbers in the spec. */
+  hold?: { start: number; end: number; evidence?: Evidence };
   evidence: Evidence;
 };
 
 export type Evidence = "measured" | "derived" | "inferred";
+
+const EVIDENCE = new Set<unknown>(["measured", "derived", "inferred"]);
+
+/**
+ * The evidence rule of motion-spec.json: every number is a field of an object that carries `evidence`, or an element
+ * of an array that such an object holds. `evidence` is one label for all the object's numbers, or an object mapping
+ * each numeric field to its label. `range` (the span that was asked for) is input, not a reading. Inside `tracks`,
+ * a track's label covers the window, element, samples and curves nested in it (TRACK.md says which of those are
+ * measured and which derived). Returns the JSON path of every number that breaks the rule.
+ */
+export function unlabelledNumbers(spec: unknown): string[] {
+  const bad: string[] = [];
+  const labelled = (holder: Record<string, unknown> | undefined, key: string): boolean => {
+    const label = holder?.evidence;
+    return EVIDENCE.has(label !== null && typeof label === "object" ? (label as Record<string, unknown>)[key] : label);
+  };
+  // `holder` is the object the value is a field of (for an array item, the object that holds the array), `key` that field.
+  const walk = (value: unknown, path: string, holder: Record<string, unknown> | undefined, key: string): void => {
+    if (typeof value === "number") {
+      if (!labelled(holder, key)) bad.push(path);
+    } else if (Array.isArray(value)) {
+      value.forEach((item, i) => walk(item, `${path}[${i}]`, holder, key));
+    } else if (value !== null && typeof value === "object") {
+      const object = value as Record<string, unknown>;
+      for (const [k, v] of Object.entries(object)) if (k !== "evidence") walk(v, `${path}.${k}`, object, k);
+    }
+  };
+  for (const [key, value] of Object.entries((spec ?? {}) as Record<string, unknown>)) {
+    if (key === "range") continue;
+    if (key === "tracks" && Array.isArray(value)) {
+      value.forEach((track, i) => {
+        const own = track !== null && typeof track === "object" && EVIDENCE.has((track as Record<string, unknown>).evidence);
+        if (!own) walk(track, `tracks[${i}]`, undefined, key);
+      });
+      continue;
+    }
+    walk(value, key, undefined, key);
+  }
+  return bad;
+}
 
 export interface Shot {
   id: string;
@@ -35,12 +77,20 @@ export interface MotionSpec {
   spec: "framelens.motion/1";
   generatedBy: string;
   source: { kind: string; url?: string; title?: string; input: string };
+  /** The span that was analyzed, as asked for: input, so it carries no evidence label. */
   range: { start: number; end: number };
-  /** `evidence`: one label, or one per field (a web page's 60 fps is Frame Lens's choice, its viewport is read). */
+  /**
+   * Evidence labels: every number is a field of an object with `evidence` (see `unlabelledNumbers`). The labels added
+   * in 2.1 (timebase, words, beats, shots, rhythm, audio) are optional in the type because older specs may lack them.
+   * `timebase.evidence` is one label, or one per field: a web page's viewport is read, its 60 fps is Frame Lens's own
+   * choice (`inferred`).
+   */
   timebase: { fps?: number; vfr: boolean; duration: number; width?: number; height?: number; evidence?: Evidence | Partial<Record<"fps" | "duration" | "width" | "height", Evidence>> };
   anchors: {
-    words: { id: string; t: number; end: number; text: string }[];
-    beats: { id: string; t: number; downbeat?: boolean }[];
+    /** Word times from the captions (the source's own data). */
+    words: { id: string; t: number; end: number; text: string; evidence?: Evidence }[];
+    /** The beat grid fitted to the onsets (`derived`). */
+    beats: { id: string; t: number; downbeat?: boolean; evidence?: Evidence }[];
     cuts: { id: string; t: number; frame?: number; score: number; evidence: Evidence }[];
   };
   /** Abrupt changes that are not cuts or part of a transition: fast motion and flashes. */
@@ -53,8 +103,12 @@ export interface MotionSpec {
   transitions?: SpecTransition[];
   palette: (Swatch & { role?: string; evidence: Evidence })[];
   typography: { role: string; family_guess?: string; weight?: number; case?: string; evidence: Evidence }[];
+  /**
+   * Shots between cuts and gradual transitions: `measured` when both ends are cuts or the ends of the range, `derived`
+   * when an end is a dissolve's, fade's or wipe's derived boundary. Their colours are measured either way.
+   */
   shots: (Omit<Shot, "palette"> & { palette: string[]; evidence?: Evidence })[];
-  systems: { id: string; role: string; start: number; end: number; states: unknown[] }[];
+  systems: { id: string; role: string; start: number; end: number; states: unknown[]; evidence?: Evidence }[];
   events: (MotionEvent & {
     kind: "move";
     anchor?: string;
@@ -65,6 +119,7 @@ export interface MotionSpec {
   })[];
   /** Elements followed frame by frame with `track`, with the curve fitted to each property. */
   tracks?: TrackedMove[];
+  /** Counts and rates computed from the cuts, shots and moves (`derived`). */
   rhythm: {
     cuts: number;
     cutsPerMinute: number;
@@ -83,6 +138,8 @@ export interface MotionSpec {
     hits?: { t: number; strength: number; evidence: Evidence }[];
     /** Named sound effects (whoosh, riser, click), added by the agent or a tagger. */
     sfx: unknown[];
+    /** A label per number: tempo and cuts on the beat are derived, loudness is measured. */
+    evidence?: Record<string, Evidence>;
   };
 }
 
@@ -184,7 +241,7 @@ export function buildSpec(input: {
   };
   const transitions: SpecTransition[] = [
     ...cuts.map((c) => ({ kind: "cut" as const, start: c.t, end: c.t, frames: 0, at: c.t, evidence: "measured" as const })),
-    ...gradual.map((x) => ({ ...x, evidence: "derived" as const })),
+    ...gradual.map((x) => ({ ...x, ...(x.hold && { hold: { ...x.hold, evidence: "derived" as const } }), evidence: "derived" as const })),
   ]
     .sort((a, b) => a.at - b.at)
     .map((x, i) => {
@@ -195,7 +252,9 @@ export function buildSpec(input: {
     });
   const words = (input.transcript?.words ?? [])
     .filter((w) => w.t >= range.start && w.t <= range.end)
-    .map((w, i) => ({ id: `w${i + 1}`, t: w.t, end: w.end, text: w.text }));
+    .map((w, i) => ({ id: `w${i + 1}`, t: w.t, end: w.end, text: w.text, evidence: "measured" as const }));
+  // A shot that starts or ends at a gradual transition's boundary has a derived edge; cuts and the range ends are measured.
+  const derivedEdge = (t: number) => gradual.some((x) => Math.abs(x.at - t) < frameTime / 2);
   const minutes = (range.end - range.start) / 60 || 1;
   const lengths = shots.map((s) => s.end - s.start);
   const nearestWord = (t: number) => words.find((w) => w.t <= t + 0.08 && w.end >= t - 0.08)?.id;
@@ -215,6 +274,8 @@ export function buildSpec(input: {
       duration: probe.duration,
       ...(probe.width && { width: probe.width }),
       ...(probe.height && { height: probe.height }),
+      // Read from the file by ffprobe.
+      evidence: "measured",
     },
     anchors: { words, beats: [], cuts },
     changes: input.changes
@@ -223,7 +284,7 @@ export function buildSpec(input: {
     transitions,
     palette: input.overall.map((s) => ({ ...s, evidence: "measured" as const })),
     typography: [],
-    shots: shots.map((s) => ({ ...s, palette: s.palette.slice(0, 4).map((p) => p.hex) })),
+    shots: shots.map((s) => ({ ...s, palette: s.palette.slice(0, 4).map((p) => p.hex), evidence: derivedEdge(s.start) || derivedEdge(s.end) ? ("derived" as const) : ("measured" as const) })),
     systems: [],
     events: events.map((e) => {
       const anchor = nearestWord(e.start) ?? cuts.find((c) => Math.abs(c.t - e.start) < 0.1)?.id;
@@ -236,6 +297,7 @@ export function buildSpec(input: {
       meanShotSeconds: r2(lengths.reduce((s, l) => s + l, 0) / (lengths.length || 1)),
       medianShotSeconds: r2(median(lengths)),
       movesPerMinute: r2(events.length / minutes),
+      evidence: "derived",
     },
     audio: { sfx: [] },
   };
