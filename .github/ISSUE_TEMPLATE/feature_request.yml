@@ -1,0 +1,33 @@
+name: Feature request
+description: A new source, measurement, export target or workflow.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Frame Lens measures and reads video and animation. It does not generate footage, voices or variants, and it
+        only reaches content the way the user can. The principles are in
+        [docs/DESIGN.md](https://github.com/Makkov-design/framelens/blob/main/docs/DESIGN.md).
+  - type: textarea
+    id: problem
+    attributes:
+      label: What you are trying to do
+      description: The task and the source, in your words. What does the agent do today, and where does it fall short?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would help
+      description: The tool, argument or output you have in mind, and what it should report.
+    validations:
+      required: true
+  - type: textarea
+    id: example
+    attributes:
+      label: An example source
+      description: A public link or a small file that shows the case.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you use instead today

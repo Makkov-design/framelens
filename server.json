@@ -1,0 +1,59 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.Makkov-design/framelens",
+  "title": "Frame Lens",
+  "description": "Eyes and ears for AI agents: measured cuts, easing, palette, beats and transcripts from any video.",
+  "websiteUrl": "https://makkov-design.github.io/framelens/",
+  "repository": {
+    "url": "https://github.com/Makkov-design/framelens",
+    "source": "github"
+  },
+  "icons": [
+    {
+      "src": "https://raw.githubusercontent.com/Makkov-design/framelens/main/docs/assets/icon.svg",
+      "mimeType": "image/svg+xml"
+    }
+  ],
+  "version": "2.0.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "framelens",
+      "version": "2.0.0",
+      "runtimeHint": "npx",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "GEMINI_API_KEY",
+          "description": "Optional. Google Gemini API key, only for the Gemini YouTube tools; the local tools need no key.",
+          "isRequired": false,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "GEMINI_MODEL_NAME",
+          "description": "Optional. Gemini model for the Gemini tools.",
+          "isRequired": false,
+          "format": "string",
+          "default": "gemini-flash-lite-latest"
+        },
+        {
+          "name": "FRAMELENS_WORKSPACE",
+          "description": "Optional. Folder for results; defaults to .framelens in the working folder (or ~/.framelens).",
+          "isRequired": false,
+          "format": "filepath"
+        },
+        {
+          "name": "FRAMELENS_AUTO_INSTALL",
+          "description": "Optional. Set to 0 to stop the automatic, hash-checked download of a missing ffmpeg or yt-dlp.",
+          "isRequired": false,
+          "format": "string",
+          "choices": ["0", "1"]
+        }
+      ]
+    }
+  ]
+}

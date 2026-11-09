@@ -1,0 +1,61 @@
+{
+  "tts_provider": null,
+  "voice_id": null,
+  "bgm": null,
+  "bgm_pending": false,
+  "bgm_provider": null,
+  "bgm_pid": null,
+  "bgm_log": null,
+  "bgm_mode": null,
+  "bgm_target_duration_s": null,
+  "bgm_seed_duration_s": null,
+  "bgm_loop_count": null,
+  "voices": [],
+  "sfx": [
+    {
+      "id": "cut",
+      "name": "clock tick",
+      "file": "assets/sfx/clock-tick.mp3",
+      "source": "openverse",
+      "duration_s": 5.915,
+      "license": "cc0",
+      "credit": "\"Clock ticking\" by olver is marked with CC0 1.0. To view the terms, visit https://creativecommons.org/publicdomain/zero/1.0/.",
+      "offset_s": 0,
+      "volume": 0.35
+    },
+    {
+      "id": "cut",
+      "name": "pen click",
+      "file": "assets/sfx/pen-click.mp3",
+      "source": "openverse",
+      "duration_s": 1.726,
+      "license": "by",
+      "credit": "\"Pen Click\" by andersmmg is licensed under CC BY 4.0. To view a copy of this license, visit https://creativecommons.org/licenses/by/4.0/.",
+      "offset_s": 0,
+      "volume": 0.35
+    },
+    {
+      "id": "type",
+      "name": "mechanical keyboard tap",
+      "file": "assets/sfx/mechanical-keyboard-tap.mp3",
+      "source": "openverse",
+      "duration_s": 1.28,
+      "license": "cc0",
+      "credit": "\"MECH-KEYBOARD-01.wav\" by newagesoup is marked with CC0 1.0. To view the terms, visit https://creativecommons.org/publicdomain/zero/1.0/.",
+      "offset_s": 0,
+      "volume": 0.35
+    },
+    {
+      "id": "swatch",
+      "name": "wooden block tap",
+      "file": "assets/sfx/wooden-block-tap.mp3",
+      "source": "openverse",
+      "duration_s": 0.06,
+      "license": "by",
+      "credit": "\"Woodblock.wav\" by kwahmah_02 is licensed under CC BY 3.0. To view a copy of this license, visit https://creativecommons.org/licenses/by/3.0/.",
+      "offset_s": 0,
+      "volume": 0.35
+    }
+  ],
+  "total_duration_s": 0
+}

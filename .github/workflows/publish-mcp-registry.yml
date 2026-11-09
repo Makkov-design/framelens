@@ -1,0 +1,63 @@
+name: Publish to MCP Registry
+
+# Run by hand (Actions tab > "Publish to MCP Registry" > Run workflow) after `npm publish` of the same version.
+# Logs in with GitHub OIDC, which grants the io.github.Makkov-design/* namespace: no token or secret is needed.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # GitHub OIDC login to the registry
+    env:
+      MCP_PUBLISHER_VERSION: v1.8.8
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: server.json matches package.json and the published npm package
+        run: |
+          set -euo pipefail
+          name=$(node -p 'require("./server.json").name')
+          version=$(node -p 'require("./server.json").version')
+          test "$name" = "$(node -p 'require("./package.json").mcpName')"
+          test "$version" = "$(node -p 'require("./package.json").version')"
+          published=$(npm view "framelens@$version" mcpName)
+          if [ "$published" != "$name" ]; then
+            echo "framelens@$version on npm has mcpName '$published', expected '$name'. Publish that version to npm first."
+            exit 1
+          fi
+          echo "Publishing $name $version"
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Download and verify mcp-publisher
+        run: |
+          set -euo pipefail
+          archive="mcp-publisher_linux_amd64.tar.gz"
+          base_url="https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}"
+          curl --fail --location --silent --show-error --output "$archive" "$base_url/$archive"
+          curl --fail --location --silent --show-error --output "$archive.sigstore.json" "$base_url/$archive.sigstore.json"
+          cosign verify-blob \
+            --bundle "$archive.sigstore.json" \
+            --certificate-identity "https://github.com/modelcontextprotocol/registry/.github/workflows/release.yml@refs/tags/${MCP_PUBLISHER_VERSION}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "$archive"
+          tar xzf "$archive" mcp-publisher
+          rm -f "$archive" "$archive.sigstore.json"
+
+      - name: Validate server.json
+        run: ./mcp-publisher validate
+
+      - name: Log in to the MCP Registry
+        run: ./mcp-publisher login github-oidc
+
+      - name: Publish
+        run: ./mcp-publisher publish
