@@ -331,12 +331,13 @@ export function registerLocalTools(server: McpServer, engine: Engine, logger: Lo
             : "No property went from one resting value to another in this window: widen it, or pass a box around the element.",
           ...track.properties.map(
             (p) =>
-              `- ${p.property}${p.property === track.primary ? " (primary)" : ""}: ${p.from} → ${p.to}, ${p.start.toFixed(3)}–${p.end.toFixed(3)} s (${p.frames} frames, delay ${p.delay.toFixed(3)} s), ${curveLabel(p.curve)}, error ${(p.rmse * 100).toFixed(2)} % of the travel. ${p.reason}.`,
+              `- ${p.property}${p.property === track.primary ? " (primary)" : ""}: ${p.from} → ${p.to}, ${p.start.toFixed(3)}–${p.end.toFixed(3)} s (${p.frames} frames, delay ${p.delay.toFixed(3)} s), ${curveLabel(p.curve)}, error ${(p.rmse * 100).toFixed(2)} % of the travel, ${p.quality}${p.quality === "unreliable" ? " (not exported)" : ""}. ${p.reason}.`,
           ),
+          ...(track.notes ?? []),
           ...track.unfitted.map((u) => `- ${u.property}: ${u.reason}.`),
           "",
           `Files: ${Object.values(files).map((f) => ws.display(f)).join(", ")}.`,
-          "Positions and times are measured; curves are derived (fitted) with the error shown. `export` now uses these curves for this move.",
+          "Positions and times are measured; curves are derived (fitted) with the error shown. `export` uses exact and approximate curves for this move; unreliable ones stay in TRACK.md.",
         ];
         return {
           content: [{ type: "text", text: lines.join("\n") }],

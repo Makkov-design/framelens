@@ -1,6 +1,6 @@
 import type { MotionSpec } from "../style/spec.js";
 import { cssEasing, curveFamily, safeCurve } from "./curve.js";
-import { primaryCurve, type TrackedMove } from "./run.js";
+import { exportable, primaryCurve, type TrackedMove } from "./run.js";
 
 /** Overlap of two time spans as a share of the shorter one. */
 function overlap(a: { start: number; end: number }, b: { start: number; end: number }): number {
@@ -9,9 +9,13 @@ function overlap(a: { start: number; end: number }, b: { start: number; end: num
   return shared / shorter;
 }
 
-/** The style move a track refines: the one it names, else the one it overlaps most (at least half). */
+/**
+ * The style move a track refines: the one it overlaps most (at least half), preferring the one it names. A stored
+ * number alone is not enough: re-running `style` on another range renumbers the moves.
+ */
 export function matchEvent(spec: Pick<MotionSpec, "events">, track: Pick<TrackedMove, "start" | "end" | "move">): number | undefined {
-  if (track.move && spec.events[track.move - 1]) return track.move - 1;
+  const named = track.move ? spec.events[track.move - 1] : undefined;
+  if (named && overlap(named, track) >= 0.5) return track.move! - 1;
   let best: { index: number; share: number } | undefined;
   spec.events.forEach((e, index) => {
     const share = overlap(e, track);
@@ -32,7 +36,8 @@ export function linkTracks(spec: MotionSpec, tracks: TrackedMove[]): MotionSpec 
   }
   for (const track of tracks) {
     const primary = primaryCurve(track);
-    const curve = primary && safeCurve(primary.curve);
+    // Only curves good enough to export reach the style moves (and through them every exporter).
+    const curve = exportable(primary) ? safeCurve(primary!.curve) : undefined;
     if (!curve) continue;
     const index = matchEvent(spec, track);
     if (index === undefined) continue;

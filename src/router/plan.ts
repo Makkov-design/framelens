@@ -97,6 +97,10 @@ function addTrackSteps(steps: PlanStep[], notes: string[], moves: { start: numbe
     steps.push({ tool: "track", args: { move: 1, element: "auto" }, why: "after style: the exact curve (cubic-bezier or spring) of each move that matters; repeat with move 2, 3, …" });
     return;
   }
+  if (!moves.length) {
+    notes.push("style found no moves to track; pass start and end to `track` around a move you can see.");
+    return;
+  }
   const open = moves.map((m, i) => ({ ...m, number: i + 1 })).filter((m) => !m.tracked);
   const chosen = [...open].sort((a, b) => b.frames - a.frames || a.start - b.start).slice(0, MAX_TRACK_STEPS).sort((a, b) => a.start - b.start);
   for (const m of chosen) {

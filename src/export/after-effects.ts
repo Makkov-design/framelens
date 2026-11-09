@@ -54,8 +54,10 @@ export function aeScript(spec: MotionSpec): string {
   const scenes = scenesFromSpec(spec).map((s, i) => {
     const move: SceneMove = s.move ?? { offset: Math.min(0.2, s.duration / 4), seconds: 0.2, easing: "ease-out" };
     const end = r3(s.start + s.duration);
-    let keyEnd = Math.min(end, r3(s.start + move.offset + move.seconds));
+    // A tracked move keeps its measured length even when it runs past the cut (the layer's out point still trims
+    // it); squeezing it into the shot would play it faster than measured. Untracked defaults stay inside the shot.
     let keyStart = r3(s.start + move.offset);
+    let keyEnd = move.curve ? r3(keyStart + move.seconds) : Math.min(end, r3(s.start + move.offset + move.seconds));
     if (keyEnd - keyStart < 1 / fps) keyStart = Math.max(s.start, r3(keyEnd - 1 / fps));
     keyEnd = r3(keyEnd);
     const seconds = Math.max(keyEnd - keyStart, 1 / fps);

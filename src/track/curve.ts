@@ -102,10 +102,41 @@ export function curveAt(curve: Curve, u: number): number {
 
 const n4 = (x: number) => String(Math.round(x * 10000) / 10000);
 
-/** Points of a spring for CSS linear() or a piecewise-linear ease: about one per frame, at most 60. */
-export function springPoints(curve: Extract<Curve, { kind: "spring" }>, fps = 60): number[] {
-  const count = Math.min(60, Math.max(12, Math.round(curve.duration * fps)));
-  return Array.from({ length: count + 1 }, (_, i) => (i === count ? 1 : Math.round(curveAt(curve, i / count) * 10000) / 10000));
+/** How far straight segments between a spring's points may stray from the spring, as a share of the travel. */
+export const SPRING_TOLERANCE = 0.005;
+
+/**
+ * Points [progress through the move, value] of a spring for CSS linear() or a piecewise-linear ease: as few as keep
+ * straight segments within SPRING_TOLERANCE of the spring (dense where it turns, sparse where it settles).
+ */
+export function springPoints(curve: Extract<Curve, { kind: "spring" }>, tolerance = SPRING_TOLERANCE): [number, number][] {
+  const n = 2000;
+  const u = Array.from({ length: n + 1 }, (_, i) => i / n);
+  const v = u.map((x) => curveAt(curve, x));
+  const keep = new Uint8Array(n + 1);
+  keep[0] = 1;
+  keep[n] = 1;
+  // Douglas–Peucker on the dense samples.
+  const stack: [number, number][] = [[0, n]];
+  while (stack.length) {
+    const [a, b] = stack.pop()!;
+    let worst = -1;
+    let at = -1;
+    for (let i = a + 1; i < b; i++) {
+      const line = v[a]! + ((v[b]! - v[a]!) * (u[i]! - u[a]!)) / (u[b]! - u[a]!);
+      const d = Math.abs(v[i]! - line);
+      if (d > worst) {
+        worst = d;
+        at = i;
+      }
+    }
+    if (worst > tolerance * 0.8 && at > 0) {
+      keep[at] = 1;
+      stack.push([a, at], [at, b]);
+    }
+  }
+  const r5 = (x: number) => Math.round(x * 100000) / 100000;
+  return u.flatMap((x, i) => (keep[i] ? [[r5(x), i === n ? 1 : r5(v[i]!)] as [number, number]] : []));
 }
 
 /** The curve as a CSS easing function: cubic-bezier(), linear() for springs, steps() or linear. */
@@ -113,7 +144,8 @@ export function cssEasing(curve: Curve): string {
   if (curve.kind === "bezier") return `cubic-bezier(${curve.bezier.map(n4).join(", ")})`;
   if (curve.kind === "linear") return "linear";
   if (curve.kind === "steps") return `steps(${curve.steps}, end)`;
-  return `linear(${springPoints(curve).map(n4).join(", ")})`;
+  const pct = (x: number) => `${Math.round(x * 100000) / 1000}%`;
+  return `linear(${springPoints(curve).map(([x, y], i, all) => (i === 0 || i === all.length - 1 ? n4(y) : `${n4(y)} ${pct(x)}`)).join(", ")})`;
 }
 
 /** Short human label: "cubic-bezier(…)", "spring(stiffness 170, damping 26, mass 1)", "steps(4)", "linear". */

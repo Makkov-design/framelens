@@ -4,7 +4,7 @@ import type { EasingFamily } from "../style/motion.js";
 import type { MotionSpec } from "../style/spec.js";
 import { oneLine, safeHex } from "../text.js";
 import { cssEasing, curveAt, curveFamily, curveLabel, safeCurve, springPoints, type Curve } from "../track/curve.js";
-import { primaryCurve } from "../track/run.js";
+import { exportable, primaryCurve } from "../track/run.js";
 import { exportAfterEffects } from "./after-effects.js";
 import { exportHypit } from "./hypit.js";
 import { exportLottie } from "./lottie.js";
@@ -80,7 +80,7 @@ export function moveKeys(move: Pick<SceneMove, "seconds" | "curve">, fps: number
 function trackedMove(spec: MotionSpec, shot: { start: number; end: number }, fps: number): SceneMove | undefined {
   for (const track of spec.tracks ?? []) {
     const p = track && Array.isArray(track.properties) ? primaryCurve(track) : undefined;
-    const curve = p && safeCurve(p.curve);
+    const curve = exportable(p) ? safeCurve(p!.curve) : undefined;
     if (!p || !curve || !Number.isFinite(p.start) || !Number.isFinite(p.seconds)) continue;
     if (p.start < shot.start || p.start >= shot.end) continue;
     return {
@@ -160,8 +160,8 @@ function tracksNote(spec: MotionSpec): string {
   if (!tracked.length) return "Easing families are derived from whole-picture motion; they are a family to start from, not a fitted curve. Run Frame Lens `track` on a move for its exact curve.";
   const list = tracked.slice(0, 12).map((t) => {
     const p = primaryCurve(t);
-    const curve = p && safeCurve(p.curve);
-    return `${String(t.id).replace(/[^A-Za-z0-9_-]/g, "")} at ${Number(t.start).toFixed(3)} s: ${curve ? curveLabel(curve) : "no curve"}`;
+    const curve = exportable(p) ? safeCurve(p!.curve) : undefined;
+    return `${String(t.id).replace(/[^A-Za-z0-9_-]/g, "")} at ${Number(t.start).toFixed(3)} s: ${curve ? curveLabel(curve) : `not exported (${p ? `${p.quality}, error ${(p.rmse * 100).toFixed(1)} %` : "no curve"})`}`;
   });
   return `Moves tracked with \`track\` use their fitted curves (${list.join("; ")}); the other moves use a derived easing family.`;
 }
@@ -177,8 +177,10 @@ const GSAP_HELPERS = `    // Frame Lens eases: an exact CSS cubic-bezier, a spri
     };
     const flPoints = (p) => (u) => {
       if (u <= 0 || u >= 1) return u <= 0 ? 0 : 1;
-      const x = u * (p.length - 1), i = Math.floor(x);
-      return p[i] + (p[i + 1] - p[i]) * (x - i);
+      let i = 1;
+      while (i < p.length - 1 && p[i][0] < u) i++;
+      const [x0, y0] = p[i - 1], [x1, y1] = p[i];
+      return y0 + ((y1 - y0) * (u - x0)) / (x1 - x0 || 1);
     };
     const flSteps = (n) => (u) => (u >= 1 ? 1 : Math.floor(u * n) / n);
 `;
@@ -190,7 +192,7 @@ function gsapEase(move: SceneMove): { ease: string; helpers: boolean } {
   if (c.kind === "linear") return { ease: '"none"', helpers: false };
   if (c.kind === "bezier") return { ease: `flBezier(${c.bezier.join(", ")})`, helpers: true };
   if (c.kind === "steps") return { ease: `flSteps(${c.steps})`, helpers: true };
-  return { ease: `flPoints([${springPoints(c).join(", ")}])`, helpers: true };
+  return { ease: `flPoints(${JSON.stringify(springPoints(c))})`, helpers: true };
 }
 
 export function exportHyperframes(spec: MotionSpec, root: string): string[] {

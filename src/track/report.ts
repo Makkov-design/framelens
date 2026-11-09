@@ -10,8 +10,8 @@ function progressSeries(track: TrackedMove, p: TrackedProperty) {
   const key = p.property;
   const span = p.to - p.from || 1;
   return track.samples
-    .filter((s) => key === "opacity" || !s.lost)
-    .map((s) => ({ t: s.t, measured: ((s[key] as number) - p.from) / span, fitted: curveAt(p.curve, (s.t - p.start) / Math.max(1e-6, p.end - p.start)) }));
+    .filter((s) => (key === "opacity" ? s.opacity !== null : !s.lost))
+    .map((s) => ({ t: s.t, measured: (((s[key] as number | null) ?? 0) - p.from) / span, fitted: curveAt(p.curve, (s.t - p.start) / Math.max(1e-6, p.end - p.start)) }));
 }
 
 /** A small text plot: `o` measured samples, `·` the fitted curve, `O` where they meet. */
@@ -81,7 +81,7 @@ export function trackMarkdown(tracks: TrackedMove[], svgName: (t: TrackedMove) =
   const sections = tracks.map((t) => {
     const rows = t.properties.map(
       (p) =>
-        `| ${p.property}${p.property === t.primary ? " (primary)" : ""} | ${s3(p.from)} → ${s3(p.to)} ${UNITS[p.property]} | ${s3(p.start)}–${s3(p.end)} s | ${p.frames} (${s3(p.seconds)} s) | ${s3(p.delay)} s | \`${curveLabel(p.curve)}\` | ${pct(p.rmse)} (max ${pct(p.maxError)}) |`,
+        `| ${p.property}${p.property === t.primary ? " (primary)" : ""} | ${s3(p.from)} → ${s3(p.to)} ${UNITS[p.property]} | ${s3(p.start)}–${s3(p.end)} s | ${p.frames} (${s3(p.seconds)} s) | ${s3(p.delay)} s | \`${curveLabel(p.curve)}\` | ${pct(p.rmse)} (max ${pct(p.maxError)}) | ${p.quality}${p.quality === "unreliable" ? " (not exported)" : ""} |`,
     );
     const plots = t.properties.map((p) => `**${p.property}** (${p.reason}):\n\n\`\`\`text\n${asciiCurve(t, p)}\n\`\`\``);
     return [
@@ -90,9 +90,10 @@ export function trackMarkdown(tracks: TrackedMove[], svgName: (t: TrackedMove) =
       `Window ${s3(t.window.start)}–${s3(t.window.end)} s at ${t.fps} fps. Element ${t.element.auto ? "found automatically" : "given"}: box ${t.element.box.w}×${t.element.box.h} px at (${t.element.box.x}, ${t.element.box.y}) at ${s3(t.element.at)} s. The move lasts ${t.frames} frames (${s3(t.seconds)} s) and starts ${s3(t.delay)} s into the window.`,
       "",
       ...(rows.length
-        ? ["| Property | Change | Time | Frames | Delay | Curve | Fit error |", "|---|---|---|---|---|---|---|", ...rows]
+        ? ["| Property | Change | Time | Frames | Delay | Curve | Fit error | Quality |", "|---|---|---|---|---|---|---|---|", ...rows]
         : ["No property moved from one resting value to another in this window."]),
       ...(t.unfitted.length ? ["", ...t.unfitted.map((u) => `- ${u.property}: ${u.reason}.`)] : []),
+      ...(t.notes?.length ? ["", ...t.notes.map((n) => `- ${n}`)] : []),
       "",
       ...plots,
       "",
@@ -104,7 +105,10 @@ export function trackMarkdown(tracks: TrackedMove[], svgName: (t: TrackedMove) =
 
 Each move below was followed frame by frame (template matching with subpixel refinement) and its timing fitted:
 positions and times are measured, the curves are derived from them with the stated fit error (a fraction of the
-travel). \`o\` marks a measured frame, \`·\` the fitted curve. Exports use these curves instead of easing families.
+travel). \`o\` marks a measured frame, \`·\` the fitted curve. Quality: \`exact\` within 1 % of the travel (or the
+sample noise), \`approximate\` within 3 %, \`unreliable\` above that, cut by the window, or too short (5 frames or
+fewer) to tell curves apart. Exports use exact and approximate curves instead of easing families; unreliable ones
+are reported here only.
 
 {{measured}}
 

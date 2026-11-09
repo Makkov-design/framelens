@@ -74,7 +74,24 @@ export interface PropertyFit {
   noise: number;
   /** Why the chosen model won. */
   reason: string;
+  /**
+   * The window cuts the move: no resting samples before its start ("start") or after its end ("end"). The curve then
+   * describes only the part seen, and its error says nothing about the whole move.
+   */
+  cut?: "start" | "end" | "both";
+  /** False when the move is too short (5 frames or fewer) to tell one curve from another. */
+  identifiable: boolean;
+  /**
+   * `exact`: error within 1 % of the travel (or within the sample noise); `approximate`: within 3 %; `unreliable`:
+   * larger, cut by the window, or too short to identify. Exports use only exact and approximate curves.
+   */
+  quality: "exact" | "approximate" | "unreliable";
 }
+
+/** The largest fit error (fraction of the travel) a curve may have to be exported. */
+export const EXPORT_MAX_ERROR = 0.03;
+/** Moves this short or shorter (frames) fit almost any curve: their shape cannot be identified. */
+export const MIN_IDENTIFIABLE_FRAMES = 5;
 
 const median = (xs: number[]): number => {
   if (!xs.length) return 0;
@@ -82,11 +99,21 @@ const median = (xs: number[]): number => {
   return s.length % 2 ? s[(s.length - 1) / 2]! : (s[s.length / 2 - 1]! + s[s.length / 2]!) / 2;
 };
 
-/** Sample noise from second differences: smooth motion barely moves them, noise does (σ·√6 per difference). */
+/**
+ * Sample noise from second differences (σ·√6 per difference). Smooth motion barely moves them, but fast or springy
+ * motion does: prefer `restNoise` once the resting samples are known.
+ */
 export function noiseLevel(v: number[]): number {
   const d2: number[] = [];
   for (let i = 1; i < v.length - 1; i++) d2.push(Math.abs(v[i + 1]! - 2 * v[i]! + v[i - 1]!));
   return (1.4826 * median(d2)) / Math.sqrt(6);
+}
+
+/** Sample noise from the resting samples alone (σ·√2 per first difference), or undefined with fewer than 3. */
+export function restNoise(rest: number[][]): number | undefined {
+  const d: number[] = [];
+  for (const part of rest) for (let i = 1; i < part.length; i++) d.push(Math.abs(part[i]! - part[i - 1]!));
+  return d.length >= 3 ? (1.4826 * median(d)) / Math.SQRT2 : undefined;
 }
 
 const BEZIER_STARTS: Bezier[] = [
@@ -109,7 +136,8 @@ const out01 = (x: number) => (x < 0 ? -x : x > 1 ? x - 1 : 0);
  * Fits one property's move: finds where it rests before and after, then fits a cubic-bezier, a spring, a straight
  * line and steps over the samples with the start and length of the move as free parameters, and picks one:
  * - steps when they explain the samples at least twice as well as any smooth curve;
- * - a spring when the value swings back across its target more than once, or overshoots and the spring fits better;
+ * - a spring when the value swings back across its target at least once (and the spring fits no worse than 1.5× the
+ *   bezier's error), or overshoots and the spring fits better;
  * - linear when it is within 25 % (plus 0.2 % of the travel) of the bezier's error;
  * - otherwise the cubic-bezier.
  * Returns undefined when the property does not go from one resting value to another (flat, or too few samples).
@@ -120,14 +148,14 @@ export function fitProperty(times: number[], values: number[], fps: number, opti
   const f = pairs.map(([t]) => t * fps);
   const v = pairs.map(([, x]) => x);
   const n = v.length;
-  const sigma = noiseLevel(v);
+  let sigma = noiseLevel(v);
   const head = Math.min(3, Math.max(1, Math.floor(n / 6)));
   let v0 = median(v.slice(0, head));
   let v1 = median(v.slice(n - head));
   const travel = Math.abs(v1 - v0);
   const minTravel = Math.max(options.minTravel ?? 0, 6 * sigma, 1e-9);
   if (travel < minTravel) return undefined;
-  const threshold = Math.max(0.01 * travel, 4 * sigma);
+  let threshold = Math.max(0.01 * travel, 4 * sigma);
   const findEdges = () => {
     const first = v.findIndex((x) => Math.abs(x - v0) > threshold);
     // A jump between two frames has no sample in between: the move is that one frame.
@@ -138,8 +166,18 @@ export function fitProperty(times: number[], values: number[], fps: number, opti
   if (onset < 0) return undefined;
   if (onset > 0) v0 = median(v.slice(0, onset));
   if (offset < n - 1) v1 = median(v.slice(offset + 1));
+  // Noise from the resting samples only: second differences read a fast spring as noise.
+  const quiet = restNoise([v.slice(0, onset), v.slice(offset + 1)]);
+  if (quiet !== undefined) {
+    sigma = quiet;
+    threshold = Math.max(0.01 * Math.abs(v1 - v0), 4 * sigma);
+    [onset, offset] = findEdges();
+    if (onset < 0) return undefined;
+    if (onset > 0) v0 = median(v.slice(0, onset));
+    if (offset < n - 1) v1 = median(v.slice(offset + 1));
+  }
   const delta = v1 - v0;
-  if (Math.abs(delta) < minTravel) return undefined;
+  if (Math.abs(delta) < Math.max(options.minTravel ?? 0, 6 * sigma, 1e-9)) return undefined;
   [onset, offset] = findEdges();
   if (onset < 0) return undefined;
   const lo = Math.max(0, onset - 6);
@@ -280,6 +318,16 @@ export function fitProperty(times: number[], values: number[], fps: number, opti
   }
   let maxError = 0;
   for (let i = 0; i < m; i++) maxError = Math.max(maxError, Math.abs(curveAt(curve, (fs[i]! - start) / length) - ps[i]!));
+  // The move must be seen resting on both sides, else the window cuts it and the fit only describes a part.
+  const before = f.filter((x) => x < start - 0.5).length;
+  const after = f.filter((x) => x > start + length + 0.5).length;
+  const cutStart = before < 2 || onset < 2;
+  const cutEnd = after < 2 || offset > n - 3;
+  const cut = cutStart && cutEnd ? "both" : cutStart ? "start" : cutEnd ? "end" : undefined;
+  const identifiable = curve.kind === "spring" ? true : length > MIN_IDENTIFIABLE_FRAMES;
+  if (cut) reason = `the window cuts the move at its ${cut === "both" ? "start and end" : cut}, so the curve describes only the part seen`;
+  else if (!identifiable) reason = `the move lasts only ${round(length, 1)} frames: too short to tell one curve from another`;
+  const quality = cut || !identifiable || error > EXPORT_MAX_ERROR ? "unreliable" : error <= Math.max(0.01, 3 * (sigma / Math.abs(delta))) ? "exact" : "approximate";
   return {
     from: round(v0, 4),
     to: round(v1, 4),
@@ -295,6 +343,9 @@ export function fitProperty(times: number[], values: number[], fps: number, opti
     oscillations,
     noise: round(noise),
     reason,
+    ...(cut && { cut }),
+    identifiable,
+    quality,
   };
 }
 

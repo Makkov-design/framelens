@@ -60,7 +60,9 @@ export function lottieDocument(spec: MotionSpec) {
     const op = Math.max(ip + 1, frame(s.start + s.duration));
     const move: SceneMove = s.move ?? { offset: Math.min(0.2, s.duration / 4), seconds: 0.2, easing: "ease-out" };
     const t0 = Math.min(op - 1, ip + frame(move.offset));
-    const t1 = Math.min(op, Math.max(t0 + 1, t0 + frame(move.seconds)));
+    // A tracked move keeps its measured length past the layer's out point (which still trims it): squeezing it into
+    // the shot would play it faster than measured.
+    const t1 = move.curve ? Math.max(t0 + 1, t0 + frame(move.seconds)) : Math.min(op, Math.max(t0 + 1, t0 + frame(move.seconds)));
     const bezier = moveBezier(move);
     const sampled = bezier ? undefined : moveKeys(move, fps);
     const keys = sampled?.keys.map(([u, p]) => [Math.round(t0 + u * (t1 - t0)), p] as [number, number]);

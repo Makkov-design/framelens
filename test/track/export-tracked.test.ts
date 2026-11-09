@@ -37,6 +37,8 @@ function track(id: string, start: number, seconds: number, curve: Curve): Tracke
         oscillations: 0,
         noise: 0.0005,
         reason: "test",
+        identifiable: true,
+        quality: "exact",
         delay: 0,
         css: "",
         evidence: "derived",
@@ -144,7 +146,7 @@ describe("exporters with tracked curves", () => {
     expect(one).toContain("ease: flBezier(0.7, 0.1, 0.2, 0.95)");
     expect(one).toContain("const flBezier");
     const two = readFileSync(join(out, "compositions", "shot-2.html"), "utf8");
-    expect(two).toMatch(/ease: flPoints\(\[0, [\d.]+/);
+    expect(two).toMatch(/ease: flPoints\(\[\[0,0\],\[/);
     // The helpers are valid JavaScript and the eases behave.
     const helpers = /\/\/ Frame Lens eases[^\n]*\n([\s\S]*?)\n\s*const tl/.exec(one)![1]!;
     const make = new Function(`${helpers}\nreturn { flBezier, flPoints, flSteps };`)() as { flBezier: (...b: number[]) => (u: number) => number; flSteps: (n: number) => (u: number) => number };

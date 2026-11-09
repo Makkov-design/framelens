@@ -36,6 +36,22 @@ import { trackMarkdown, trackSvg } from "./track/report.js";
 import { trackWindow, type TrackedMove } from "./track/run.js";
 import type { Box } from "./track/tracker.js";
 
+/** A box given in fractions of the frame (every value ≤ 1) in source pixels. */
+function toSourceBox(b: Box, probe: ProbeInfo): Box {
+  const fraction = [b.x, b.y, b.w, b.h].every((v) => v >= 0 && v <= 1);
+  const sx = fraction ? (probe.width ?? 1) : 1;
+  const sy = fraction ? (probe.height ?? 1) : 1;
+  return { x: b.x * sx, y: b.y * sy, w: b.w * sx, h: b.h * sy };
+}
+
+/** Intersection over union of two boxes. */
+function boxOverlap(a: Box, b: Box): number {
+  const ix = Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x));
+  const iy = Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
+  const shared = ix * iy;
+  return shared / (a.w * a.h + b.w * b.h - shared || 1);
+}
+
 /** The style pass reads every frame; longer references are analyzed in parts. */
 export const MAX_STYLE_SECONDS = 180;
 /** Audio analysis decodes the whole range into memory. */
@@ -214,7 +230,7 @@ export class Engine {
     const moves = source.ws.readJson<MotionSpec>("motion-spec.json")?.events.map((e) => ({ start: e.start, end: e.end, frames: e.frames, tracked: Boolean(e.track) }));
     const plan = buildPlan({
       probe: source.probe,
-      ...(moves?.length && { moves }),
+      ...(moves && { moves }),
       hasSpeech: Boolean(transcript?.segments.length),
       ...(boundaries && { boundaries }),
       ...(options.goal && { goal: options.goal }),
@@ -317,8 +333,15 @@ export class Engine {
       note = `Window from style move ${move} (${event.start.toFixed(3)}–${event.end.toFixed(3)} s).`;
     }
     const tracks = ws.readJson<TrackedMove[]>("tracks.json") ?? [];
-    const same = (t: TrackedMove) =>
-      Math.abs(t.window.start - start!) < 0.01 && Math.abs(t.window.end - end!) < 0.01 && (options.box ? !t.element.auto : t.element.auto);
+    // A track is the same as an earlier one when it asks for the same window and the same element: another box in
+    // the same window is another element (a stagger), and keeps its own track.
+    const wanted = options.box && toSourceBox(options.box, probe);
+    const same = (t: TrackedMove) => {
+      const asked = t.requested ?? t.window;
+      if (Math.abs(asked.start - start!) >= 0.01 || Math.abs(asked.end - end!) >= 0.01) return false;
+      if (!wanted) return t.element.auto;
+      return !t.element.auto && boxOverlap(t.element.box, wanted) > 0.5;
+    };
     const previous = tracks.find(same);
     const id = previous?.id ?? `t${tracks.reduce((n, t) => Math.max(n, Number(t.id.slice(1)) || 0), 0) + 1}`;
     const track = await trackWindow(record.mediaPath, probe, this.options.tools, {

@@ -44,7 +44,12 @@ export function decodeGray(
     let pendingBytes = 0;
     let stderr = "";
     let tooMany = false;
-    const timer = setTimeout(() => child.kill("SIGKILL"), options.timeoutMs ?? 5 * 60_000);
+    let timedOut = false;
+    const timeoutMs = options.timeoutMs ?? 5 * 60_000;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGKILL");
+    }, timeoutMs);
     child.stdout.on("data", (chunk: Buffer) => {
       pending.push(chunk);
       pendingBytes += chunk.length;
@@ -74,9 +79,14 @@ export function decodeGray(
         reject(new InvalidInputError(`The window has more than ${options.maxFrames} frames; track a shorter window (start/end).`));
         return;
       }
-      if (code !== 0 && !frames.length) {
+      // A window cut short would be fitted as if it were whole: a timeout or a failure part-way is an error.
+      if (timedOut) {
+        reject(new Error(`ffmpeg timed out after ${(timeoutMs / 1000).toFixed(1)} s decoding ${range.start}–${range.end} s (${frames.length} frames read); track a shorter window.`));
+        return;
+      }
+      if (code !== 0) {
         const tail = stderr.trim().split("\n").filter((l) => !l.includes("Parsed_showinfo")).slice(-6).join("\n");
-        reject(new Error(`ffmpeg failed: ${tail || `exit code ${code}`}`));
+        reject(new Error(`ffmpeg failed after ${frames.length} frames: ${tail || `exit code ${code}`}`));
         return;
       }
       const times = parseShowinfo(stderr);
