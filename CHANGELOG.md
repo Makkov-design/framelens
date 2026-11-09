@@ -1,5 +1,19 @@
 # Changelog
 
+## [Unreleased]
+
+- `track`: follows one element through a window at the full frame rate (found automatically as the biggest moving
+  region, or from a box) with subpixel template matching, and fits the exact timing of each property that moves
+  (x, y, scale, opacity): a `cubic-bezier`, a damped spring (stiffness, damping, mass; also duration and bounce),
+  linear or steps, with the fit error, duration in frames and seconds, and the delay. Writes `TRACK.md` with a plot
+  per property, an SVG of the curves and `tracks.json`, and adds the move to `motion-spec.json` (positions and times
+  `measured`, the curve `derived`). `plan` with the style goal suggests `track` for the moves `style` found.
+- `export` uses a tracked curve wherever one exists: CSS `cubic-bezier()` / `linear()` for springs / `steps()`,
+  Remotion `Easing.bezier` or `spring({config})`, exact GSAP eases in HyperFrames, After Effects keyframe speed and
+  influence (a key per frame for springs, held keys for steps), and Lottie handles.
+- The accuracy benchmark adds rendered moves with known beziers and springs: see
+  [docs/ACCURACY.md](docs/ACCURACY.md).
+
 ## 2.0.0 — 2026-11-09
 
 **ytlens is now Frame Lens** (`framelens`): eyes and ears for AI agents for any video or animation. It measures

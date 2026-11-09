@@ -2,7 +2,7 @@ import { InvalidInputError } from "../errors.js";
 import type { MediaTools } from "../media/exec.js";
 import type { ProbeInfo } from "../media/probe.js";
 import type { Evidence } from "../style/spec.js";
-import { cssEasing, curveFamily, type Curve } from "./curve.js";
+import { cssEasing } from "./curve.js";
 import { decodeGray, workSize } from "./decode.js";
 import { fitProperty, type PropertyFit } from "./fit.js";
 import { autoBox, trackElement, type Box } from "./tracker.js";
@@ -169,8 +169,4 @@ export async function trackWindow(source: string, probe: ProbeInfo, tools: Media
 /** The curve that stands for a tracked move: its primary property's. */
 export function primaryCurve(track: Pick<TrackedMove, "primary" | "properties">): TrackedProperty | undefined {
   return track.properties.find((p) => p.property === track.primary) ?? track.properties[0];
-}
-
-export function trackFamily(curve: Curve) {
-  return curveFamily(curve);
 }

@@ -41,6 +41,7 @@ the goal from the request and lists the steps with an estimate of how many image
 | `frames` | Frames and contact sheets with time, frame number and spoken words under each picture. `at`, `every`, `fps`, `every_frame` (real timestamps, for transitions), or `around` a phrase |
 | `boundaries` | Where the picture changes abruptly, scored, plus how dynamic the video is |
 | `style` | Cuts told apart from fast motion and flashes, shots with palettes, moves with their easing family; writes `motion-spec.json`, `STYLE.md`, `TIMELINE.md`, `ANALYSIS.md` |
+| `track` | Follows one element (found automatically or from a box) frame by frame and fits the exact curve of each property that moves (x, y, scale, opacity): `cubic-bezier`, spring (stiffness, damping, mass), linear or steps, with fit error, duration in frames and delay; writes `TRACK.md` and adds the move to `motion-spec.json`, so `export` uses the exact curve |
 | `audio` | Loudness (LUFS), silences, onsets, tempo and beats, cuts on the beat, spectrogram |
 | `export` | Starter project from the motion spec for `hyperframes`, `remotion`, `css`, `after-effects` (ExtendScript), `lottie`, or a `hypit` handoff: structure, timing, colours and eases carried over, content left to you |
 | `compare` | Your render against the reference: duration, cuts matched within 3 frames, palette distance, picture similarity, worst moments side by side |

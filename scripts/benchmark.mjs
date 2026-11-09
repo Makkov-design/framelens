@@ -1,12 +1,17 @@
 // Accuracy benchmark: renders videos with known cuts, move timings and easing curves, runs Frame Lens `style` on
-// them through the built bundle, and reports how close the measurements are. Writes docs/ACCURACY.md.
+// them through the built bundle, and reports how close the measurements are. Then renders a square moving with known
+// cubic-beziers and springs (clean, noisy, on a busy background) and checks the curves `track` fits. Writes
+// docs/ACCURACY.md.
 // Usage: node scripts/benchmark.mjs   (needs ffmpeg on PATH and `npm run bundle` first)
+//        node scripts/benchmark.mjs --track-only   (only the `track` clips; prints, writes nothing)
 import { execFileSync, spawn } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { bezierAt, clipFrames, encode, springAt } from "./synth.mjs";
 
+const TRACK_ONLY = process.argv.includes("--track-only");
 const repo = fileURLToPath(new URL("..", import.meta.url));
 const work = mkdtempSync(join(tmpdir(), "framelens-bench-"));
 const EASINGS = {
@@ -62,12 +67,39 @@ function startServer(cwd) {
   return { child, pending };
 }
 
+// Known curves for `track`. Each clip: 0.4 s of rest, the move, then rest until it has settled.
+const TRACK_CURVES = [
+  { name: "ease", kind: "bezier", bezier: [0.25, 0.1, 0.25, 1] },
+  { name: "ease-in-out", kind: "bezier", bezier: [0.42, 0, 0.58, 1] },
+  { name: "custom", kind: "bezier", bezier: [0.7, 0.1, 0.2, 0.95] },
+  { name: "overshoot (back-out)", kind: "bezier", bezier: [0.34, 1.56, 0.64, 1] },
+  { name: "spring 170/12 (bouncy)", kind: "spring", stiffness: 170, damping: 12 },
+  { name: "spring 100/10 (Remotion default)", kind: "spring", stiffness: 100, damping: 10 },
+];
+const TRACK_CONDITIONS = [
+  { name: "clean", noise: 0, busy: false },
+  { name: "noise σ=4", noise: 4, busy: false },
+  { name: "busy background + noise σ=3", noise: 3, busy: true },
+];
+const MOVE_SECONDS = 0.5; // bezier moves
+const REST = 0.4;
+
+async function trackClip(file, fps, curve, condition) {
+  const startFrame = Math.round(REST * fps);
+  const moveFrames = Math.round(MOVE_SECONDS * fps);
+  const seconds = curve.kind === "spring" ? 2 : REST + MOVE_SECONDS + 0.5;
+  const progress = curve.kind === "spring" ? (i) => springAt(curve.stiffness, curve.damping, (i - startFrame) / fps) : (i) => bezierAt(curve.bezier, (i - startFrame) / moveFrames);
+  await encode(file, clipFrames({ total: Math.round(seconds * fps), progress, from: [120, 180], to: [500, 180], size: 70, busy: condition.busy, noise: condition.noise, seed: fps }), { fps, timeoutMs: 120_000 });
+  return { startFrame, moveFrames, seconds };
+}
+
 const rows = [];
 const cutErrors = [];
+const trackRows = [];
 const server = startServer(work);
 let id = 1;
 try {
-  for (const fps of FPS_LIST) {
+  for (const fps of TRACK_ONLY ? [] : FPS_LIST) {
     const clips = [];
     let k = 0;
     for (const frames of DURATIONS) {
@@ -103,6 +135,32 @@ try {
       });
     }
   }
+
+  for (const fps of FPS_LIST) {
+    for (const condition of TRACK_CONDITIONS) {
+      for (const curve of TRACK_CURVES) {
+        const file = join(work, `t-${fps}-${condition.noise}-${condition.busy ? "busy" : "plain"}-${curve.name.replace(/\W+/g, "_")}.mp4`);
+        const truth = await trackClip(file, fps, curve, condition);
+        const result = await call(server, id++, "track", { source: file, start: 0, end: truth.seconds });
+        const track = result?.structuredContent?.track;
+        const x = track?.properties?.find((p) => p.property === "x");
+        const row = { fps, condition: condition.name, curve: curve.name, expected: curve.kind, kind: x?.curve.kind ?? "none", startError: x ? (x.start * fps - truth.startFrame) : null };
+        if (x && curve.kind === "bezier") {
+          row.durationError = x.frames - truth.moveFrames;
+          row.controlError = x.curve.kind === "bezier" ? Math.max(...x.curve.bezier.map((c, i) => Math.abs(c - curve.bezier[i]))) : null;
+          row.fitted = x.curve.kind === "bezier" ? `cubic-bezier(${x.curve.bezier.join(", ")})` : x.curve.kind;
+        }
+        if (x && curve.kind === "spring") {
+          row.stiffnessError = x.curve.kind === "spring" ? Math.abs(x.curve.stiffness - curve.stiffness) / curve.stiffness : null;
+          row.dampingError = x.curve.kind === "spring" ? Math.abs(x.curve.damping - curve.damping) / curve.damping : null;
+          row.fitted = x.curve.kind === "spring" ? `stiffness ${x.curve.stiffness}, damping ${x.curve.damping}` : x.curve.kind;
+        }
+        row.rmse = x?.rmse ?? null;
+        trackRows.push(row);
+        console.error(`track ${fps} fps, ${condition.name}, ${curve.name}: ${row.fitted ?? row.kind}`);
+      }
+    }
+  }
 } finally {
   // The server's working folder is the temp folder: wait for it to exit before removing it.
   const exited = new Promise((r) => server.child.once("exit", r));
@@ -121,6 +179,20 @@ const exactCuts = cutErrors.filter((c) => c.error === 0).length;
 const withinOne = cutErrors.filter((c) => c.error !== null && Math.abs(c.error) <= 1).length;
 const meanStart = found.reduce((s, r) => s + Math.abs(r.startError), 0) / (found.length || 1);
 const meanDuration = found.reduce((s, r) => s + Math.abs(r.measuredFrames - r.frames), 0) / (found.length || 1);
+
+const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : NaN);
+const max = (xs) => (xs.length ? Math.max(...xs) : NaN);
+const f2 = (n) => (Number.isFinite(n) ? n.toFixed(2) : "—");
+const f3 = (n) => (Number.isFinite(n) ? n.toFixed(3) : "—");
+const pct = (n) => (Number.isFinite(n) ? `${(n * 100).toFixed(1)} %` : "—");
+const trackSummary = TRACK_CONDITIONS.map((c) => {
+  const all = trackRows.filter((r) => r.condition === c.name);
+  const bez = all.filter((r) => r.expected === "bezier" && r.kind === "bezier");
+  const spr = all.filter((r) => r.expected === "spring" && r.kind === "spring");
+  const timed = all.filter((r) => r.startError !== null);
+  const durations = all.filter((r) => r.durationError !== undefined && r.durationError !== null).map((r) => Math.abs(r.durationError));
+  return `| ${c.name} | ${all.filter((r) => r.kind === r.expected).length} of ${all.length} | ${f3(mean(bez.map((r) => r.controlError)))} / ${f3(max(bez.map((r) => r.controlError)))} | ${f2(mean(durations))} / ${f2(max(durations))} | ${f2(mean(timed.map((r) => Math.abs(r.startError))))} / ${f2(max(timed.map((r) => Math.abs(r.startError))))} | ${pct(mean(spr.map((r) => r.stiffnessError)))} / ${pct(mean(spr.map((r) => r.dampingError)))} |`;
+});
 
 const md = `# Accuracy
 
@@ -141,7 +213,7 @@ web pages and Figma are read exactly from their data and need no benchmark.
 Almost all of the start and duration error comes from long moves with a slow end: the first frames of a 30-frame
 ease-in (or the last of an ease-out) move the box by less than a pixel at analysis resolution, so the measured move
 begins a few frames late or ends early. Short moves and cuts are exact. The easing family is read from where the
-movement's weight sits; the exact curve of an important move is best refined with \`frames\` every_frame.
+movement's weight sits; the exact curve of an important move is measured with \`track\` (below).
 
 <details><summary>Every move</summary>
 
@@ -150,6 +222,36 @@ movement's weight sits; the exact curve of an important move is best refined wit
 ${rows.map((r) => `| ${r.fps} | ${r.frames} | ${r.easing} | ${r.found ? "yes" : "no"} | ${r.startError ?? "—"} | ${r.measuredFrames ?? "—"} | ${r.family} |`).join("\n")}
 
 </details>
+
+## Tracked curves (\`track\`)
+
+A 70×70 px square on a 640×360 frame travels 380 px with a known timing curve: four cubic-beziers (CSS \`ease\`,
+\`ease-in-out\`, a custom \`cubic-bezier(0.7, 0.1, 0.2, 0.95)\` and an overshooting back-out) over ${MOVE_SECONDS} s, and two
+damped springs (stiffness/damping 170/12 and 100/10, mass 1), at 24, 30 and 60 fps. Frames are rendered with
+antialiasing and encoded as H.264: clean, with pixel noise, and over a busy textured background with noise. \`track\`
+finds the square on its own (\`element: auto\`) and fits its x curve. ${trackRows.length} clips.
+
+| Condition | Model chosen right | Bezier control points, mean / max error | Duration error, mean / max (frames) | Start error, mean / max (frames) | Spring stiffness / damping, mean error |
+|---|---|---|---|---|---|
+${trackSummary.join("\n")}
+
+Durations and control points are compared for the beziers; a spring is defined by its stiffness and damping, so those
+are compared instead (its length on the timeline is the time it takes to settle within 0.5 % of the travel). Targets
+for clean renders: duration within one frame, control points within 0.05.
+
+Limits: these renders are a sharp-edged square without motion blur, moving in a straight line over a static
+background. Real footage adds motion blur, rotation, occlusion, a moving camera and elements that change shape; the
+tracker follows position, size and brightness only, and the fit error it reports for each property is the honest
+measure of how well the curve explains that footage.
+
+<details><summary>Every tracked clip</summary>
+
+| fps | condition | curve | chosen | fitted | control error | duration error (frames) | start error (frames) | fit error |
+|---|---|---|---|---|---|---|---|---|
+${trackRows.map((r) => `| ${r.fps} | ${r.condition} | ${r.curve} | ${r.kind} | ${r.fitted ?? "—"} | ${f3(r.controlError ?? NaN)} | ${f2(r.durationError ?? NaN)} | ${f2(r.startError ?? NaN)} | ${pct(r.rmse ?? NaN)} |`).join("\n")}
+
+</details>
 `;
-writeFileSync(join(repo, "docs", "ACCURACY.md"), md);
+if (!TRACK_ONLY) writeFileSync(join(repo, "docs", "ACCURACY.md"), md);
 console.log(md.split("<details>")[0]);
+console.log(["| Condition | Model | Control mean / max | Duration mean / max | Start mean / max | Spring k / c |", "|---|---|---|---|---|---|", ...trackSummary].join("\n"));

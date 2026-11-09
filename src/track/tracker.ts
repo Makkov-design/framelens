@@ -157,8 +157,10 @@ function ncc(t: Template, frame: Pixels, w: number, h: number, cx: number, cy: n
 
 function gridSearch(t: Template, frame: Pixels, w: number, h: number, px: number, py: number, s: number, radius: number, step: number) {
   let best = { x: px, y: py, score: -2 };
-  for (let oy = -radius; oy <= radius; oy += step) {
-    for (let ox = -radius; ox <= radius; ox += step) {
+  // Offsets are whole multiples of the step, so the predicted position itself is always one of the candidates.
+  const reach = Math.floor(radius / step) * step;
+  for (let oy = -reach; oy <= reach; oy += step) {
+    for (let ox = -reach; ox <= reach; ox += step) {
       const x = px + ox;
       const y = py + oy;
       if (x < -w * 0.25 || x > w * 1.25 || y < -h * 0.25 || y > h * 1.25) continue;
@@ -354,16 +356,21 @@ function trackPass(video: GrayFrames, box: Box, index: number, minScore: number,
       const speed = Math.hypot(vx, vy);
       const radius = Math.min(64, Math.ceil(3 + 0.75 * speed));
       let best = gridSearch(coarse, frame, w, h, px, py, ps, radius, radius > 10 ? 2 : 1);
-      if (best.score < 0.6) {
-        // Lost or a sudden start: look much further, coarsely, with the refreshed and the original look.
-        const wide = Math.min(Math.max(w, h), Math.max(48, Math.ceil(3 * speed)));
-        const step = Math.max(2, Math.round(wide / 16));
+      let reach = 2;
+      if (best.score < 0.85) {
+        // Not clearly found (lost, or a sudden start that jumps far in one frame): search the whole frame coarsely,
+        // in steps of an eighth of the element, with the refreshed and the original look.
+        const step = Math.max(2, Math.round((Math.min(box.w, box.h) * s) / 8));
+        const wide = Math.max(w, h);
         for (const [t, scale] of [[coarse, ps], [originalCoarse, 1]] as const) {
-          const far = gridSearch(t, frame, w, h, px, py, scale, wide, step);
-          if (far.score > best.score) best = far;
+          const far = gridSearch(t, frame, w, h, w / 2, h / 2, scale, wide, step);
+          if (far.score > best.score + 0.02) {
+            best = far;
+            reach = step;
+          }
         }
       }
-      const near = gridSearch(current, frame, w, h, best.x, best.y, ps, 2, 1);
+      const near = gridSearch(current, frame, w, h, best.x, best.y, ps, reach, 1);
       // Prefer the original template when it still matches: no drift.
       const anchored = ncc(original, frame, w, h, near.x, near.y, ps);
       const template = anchored >= Math.max(minScore, near.score - 0.1) ? original : current;
@@ -425,10 +432,11 @@ export function autoBox(video: GrayFrames): { box: Box; index: number } | undefi
   diffs.sort((a, b) => a - b);
   const threshold = Math.max(18, 5 * 1.4826 * (diffs[Math.floor(diffs.length / 2)] ?? 0));
 
-  let best: { box: Box; index: number; area: number } | undefined;
+  const largest: { box: Box; index: number; area: number }[] = [];
   const mask = new Uint8Array(gw * gh);
   const queue = new Int32Array(gw * gh);
   for (const index of picks) {
+    let best: { box: Box; index: number; area: number } | undefined;
     const data = frames[index]!.data;
     for (let k = 0; k < gw * gh; k++) mask[k] = Math.abs(data[Math.floor(k / gw) * stride * w + (k % gw) * stride]! - background[k]!) > threshold ? 1 : 0;
     for (let start = 0; start < gw * gh; start++) {
@@ -465,6 +473,12 @@ export function autoBox(video: GrayFrames): { box: Box; index: number } | undefi
         best = { index, area, box: { x: x0 * stride, y: y0 * stride, w: (x1 - x0 + 1) * stride, h: (y1 - y0 + 1) * stride } };
       }
     }
+    if (best) largest.push(best);
   }
-  return best && { box: best.box, index: best.index };
+  if (!largest.length) return undefined;
+  // The earliest frame where the element is (nearly) at its fullest: usually at rest before the move, so tracking
+  // starts from a still, sharp picture rather than the middle of a fast move.
+  const most = Math.max(...largest.map((b) => b.area));
+  const best = largest.find((b) => b.area >= 0.85 * most)!;
+  return { box: best.box, index: best.index };
 }
