@@ -90,7 +90,8 @@ export async function framePixels(source: string, t: number, probe: ProbeInfo, t
   const base = "scale=64:36:flags=area,format=rgb24";
   const hdr = "zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=hable,zscale=t=bt709:m=bt709:r=tv,";
   const run = (filters: string) =>
-    tools.exec(tools.ffmpeg, ["-hide_banner", "-nostdin", "-v", "error", "-y", "-ss", String(t), "-i", source, "-frames:v", "1", "-vf", filters, "-f", "rawvideo", out]);
+    // The first video stream, as the probe and the style pass read it.
+    tools.exec(tools.ffmpeg, ["-hide_banner", "-nostdin", "-v", "error", "-y", "-ss", String(t), "-i", source, "-map", "0:v:0", "-frames:v", "1", "-vf", filters, "-f", "rawvideo", out]);
   try {
     if (probe.hdr) {
       try {

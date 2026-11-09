@@ -41,6 +41,14 @@
   around the strongest changes are joined when they overlap or touch, capped by duration and at 2 s each, and the
   estimate counts frames and tokens per sheet layout. On the 33 s trailer: 284 frames and about 23,000 image tokens,
   down from 606 frames and 63,043.
+- ffmpeg numbers in scientific notation are read whole: signalstats prints tiny averages as `6.94444e-05`, which
+  2.0 read as 6.94, so a still frame with a few changed pixels became a false cut (six on Frame Lens's own demo) and
+  moves on flat graphics looked stronger. Fixed in every ffmpeg log Frame Lens parses (energy, scene scores, frame
+  times, SSIM, loudness, silences).
+- A 2–3 frame shot between two cuts is no longer taken for a flash: a flash returns to the picture it left, a short
+  shot does not, and `style` now compares those frames. Montage cuts are found (the benchmark adds a montage of 2- and
+  3-frame shots with flashes in it). A cut inside part of the frame only is still judged on the whole frame (a limit,
+  in ACCURACY.md).
 - `export` animates only what was measured: titles move where a move or tracked curve was measured, dissolves are
   cross-fades and fades and dips go through black or white (CSS keyframes, HyperFrames tweens, Remotion opacity,
   After Effects and Lottie opacity keys; a wipe is a clip-path edge where the target has one). Shots without a measured

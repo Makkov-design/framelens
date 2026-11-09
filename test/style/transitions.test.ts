@@ -21,7 +21,8 @@ function texture(seed: number, shift = 0): Picture {
       const u = x + shift;
       for (let c = 0; c < 3; c++) {
         const wave = 128 + 70 * Math.sin(u / (3 + seed + c)) * Math.cos(y / (4 + ((seed * 3 + c) % 5)));
-        const block = ((Math.floor(u / 8) + Math.floor(y / 6) + seed + c) % 3) * 25 - 25;
+        // Blocks on a grid of their own per seed: two pictures do not share their edges.
+        const block = ((Math.floor((u + seed * 3) / (5 + seed)) + Math.floor((y + seed) / (4 + (seed % 3))) + seed + c) % 3) * 25 - 25;
         out[(y * W + x) * 3 + c] = Math.max(0, Math.min(255, wave + block));
       }
     }
@@ -82,7 +83,8 @@ describe("transitions from frames", () => {
     const found = detectTransitions(frames(pics, 0.5), FPS);
     expect(found.map((x) => [x.kind, x.via, x.at])).toEqual([
       ["fade-in", "black", t(0)],
-      ["fade-out", "white", t(19)],
+      // White to the end: the fade belongs to the last shot (its boundary is the last frame, which splits nothing).
+      ["fade-out", "white", t(24)],
     ]);
   });
 

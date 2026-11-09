@@ -264,12 +264,19 @@ export class Engine {
     const { transcript } = await this.transcript(source);
     const { boundaries } = await this.boundaries(input, { start, end, rate: 10, threshold: 0.3 });
     const fps = probe.fps ?? probe.nominalFps ?? 30;
-    const { energy, frames } = await motionProfile(record.mediaPath, this.options.tools, range);
+    const { energy, frames, skipped } = await motionProfile(record.mediaPath, this.options.tools, range, {
+      hdr: probe.hdr,
+      expectedFrames: Math.ceil((end - start) * fps * 1.05) + 30,
+    });
+    if (skipped) notes.push("This range is too long to keep every frame in memory: transitions were not looked for and shot colours come from a few frames each; analyze it in parts (start/end) for those.");
     ws.writeJson(`energy-${start.toFixed(2)}-${end.toFixed(2)}.json`, energy);
-    const classified = classifyChanges(boundaries.candidates, energy, fps, 1 / boundaries.rate);
+    // The frames tell a flash (the picture comes back) from a 2–3 frame shot between two cuts.
+    const classified = classifyChanges(boundaries.candidates, energy, fps, 1 / boundaries.rate, frames);
     // Isolated per-frame spikes catch the cuts the sampled score missed (similar-looking shots).
-    const extra = energySpikeCuts(energy)
-      .filter((s) => !classified.some((c) => Math.abs(c.t - s.t) <= 2 / fps))
+    // A classified change sits on its peak frame: only a spike on that same frame is the same change (a 2-frame shot
+    // puts two real cuts two frames apart).
+    const extra = energySpikeCuts(energy, 6, frames)
+      .filter((s) => !classified.some((c) => Math.abs(c.t - s.t) < 0.5 / fps))
       .map((s) => ({ ...s, kind: "cut" as const }));
     const changes = [...classified, ...extra].sort((a, b) => a.t - b.t);
     const cutTimes = changes.filter((c) => c.kind === "cut").map((c) => c.t);
@@ -278,15 +285,18 @@ export class Engine {
     // found again without their frames, and the shots split at them.
     const transitions = detectTransitions(frames, fps, { cuts: cutTimes, windows: motionEvents(energy, cutTimes, fps) });
     const events = visibleMoves(motionEvents(energy, cutTimes, fps, { exclude: transitions }), frames);
-    const edges = [...cutTimes, ...transitions.map((x) => x.at)].sort((a, b) => a - b);
+    // A fade in from the first frame or out to the last one belongs to its shot: it starts no new one.
+    const firstFrame = frames.times[0] ?? start;
+    const lastFrame = frames.times.at(-1) ?? end;
+    const edges = [...cutTimes, ...transitions.map((x) => x.at).filter((t) => t > firstFrame + 0.5 / fps && t < lastFrame - 0.5 / fps)].sort((a, b) => a - b);
 
     const tmp = ws.ensure("frames", "palette");
     const shots: Shot[] = [];
     for (const [i, s] of shotsFromCuts(edges, range, fps).entries()) {
       // Colours over the shot's own frames, not one frame from its middle (which may be halfway through a dissolve):
-      // the decoded frames, or for HDR a few tone-mapped ones.
+      // the decoded frames (tone-mapped for HDR in the same pass), or a few seeks when the range was too long to keep them.
       const parts: Uint8Array[] = [];
-      if (!probe.hdr) for (const t of paletteTimes(s, transitions, fps, 24)) parts.push(frameAt(frames, t));
+      if (frames.times.length) for (const t of paletteTimes(s, transitions, fps, 24)) parts.push(frameAt(frames, t));
       else {
         for (const t of paletteTimes(s, transitions, fps)) {
           const pixels = await framePixels(record.mediaPath, t, probe, this.options.tools, tmp);

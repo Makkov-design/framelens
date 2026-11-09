@@ -50,6 +50,19 @@ describe.skipIf(!tools || !existsSync(clip))("style on the Big Buck Bunny traile
     for (const x of gradual) expect(x.evidence).toBe("derived");
   });
 
+  it("finds the opening title's fade from white and the end card's fade to white, without splitting those shots", () => {
+    const gradual = spec.transitions!.filter((x) => x.kind !== "cut");
+    const opening = gradual.find((x) => x.kind === "fade-in" && x.via === "white");
+    expect(opening).toBeDefined();
+    expect(opening!.start).toBe(0);
+    expect(near(opening!.end, 0.84, 2)).toBe(true);
+    const ending = gradual.find((x) => x.kind === "fade-out" && x.via === "white");
+    expect(ending).toBeDefined();
+    expect(near(ending!.start, 32.04, 1)).toBe(true);
+    // Neither starts a shot: 20 shots, as with the dissolves, dips and cuts alone.
+    expect(spec.shots).toHaveLength(20);
+  });
+
   it("splits the shots at them, so the title cards are shots of their own, white", () => {
     const starts = spec.shots.map((s) => s.start);
     for (const t of [3.92, 6.76, 18.88, 19.88, 20.88, 21.88, 22.88]) expect(starts.some((s) => near(s, t))).toBe(true);

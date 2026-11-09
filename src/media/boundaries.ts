@@ -26,9 +26,9 @@ export function parseSceneScores(text: string): ChangeSample[] {
   const samples: ChangeSample[] = [];
   let t: number | undefined;
   for (const line of text.split("\n")) {
-    const time = /pts_time:\s*(-?[\d.]+)/.exec(line);
+    const time = /pts_time:\s*(-?[\d.]+(?:[eE][-+]?\d+)?)/.exec(line);
     if (time) t = Number(time[1]);
-    const score = /lavfi\.scene_score=([\d.]+)/.exec(line);
+    const score = /lavfi\.scene_score=([\d.]+(?:[eE][-+]?\d+)?)/.exec(line);
     if (score && t !== undefined) {
       samples.push({ t, score: Number(score[1]) });
       t = undefined;

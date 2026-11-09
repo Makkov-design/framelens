@@ -184,5 +184,6 @@ describe.skipIf(!tools)("style on a real video", () => {
     const style = readFileSync(files.style!, "utf8");
     expect(style).toContain("Flat colour cards, hard cuts.");
     expect(style.match(/## Measured/g)).toHaveLength(1);
-  });
+    // Two style passes on a real file: a few seconds, more on a busy machine.
+  }, 30_000);
 });

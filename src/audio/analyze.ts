@@ -43,14 +43,14 @@ export function parseLoudnessLog(stderr: string, offset: number): Pick<AudioAnal
   let integratedLufs: number | undefined;
   let inSummary = false;
   for (const line of stderr.split("\n")) {
-    const m = /\bt:\s*([\d.]+)\s+TARGET:.*?M:\s*(-?[\d.]+|-inf)/.exec(line);
+    const m = /\bt:\s*([\d.]+(?:[eE][-+]?\d+)?)\s+TARGET:.*?M:\s*(-?[\d.]+(?:[eE][-+]?\d+)?|-inf)/.exec(line);
     if (m && m[2] !== "-inf") loudness.push({ t: Math.round((Number(m[1]) + offset) * 1000) / 1000, lufs: Number(m[2]) });
     if (/Summary:/.test(line)) inSummary = true;
-    const integrated = /^\s*I:\s*(-?[\d.]+) LUFS/.exec(line);
+    const integrated = /^\s*I:\s*(-?[\d.]+(?:[eE][-+]?\d+)?) LUFS/.exec(line);
     if (inSummary && integrated) integratedLufs = Number(integrated[1]);
-    const ss = /silence_start:\s*(-?[\d.]+)/.exec(line);
+    const ss = /silence_start:\s*(-?[\d.]+(?:[eE][-+]?\d+)?)/.exec(line);
     if (ss) silenceStart = Math.max(0, Number(ss[1])) + offset;
-    const se = /silence_end:\s*([\d.]+)/.exec(line);
+    const se = /silence_end:\s*([\d.]+(?:[eE][-+]?\d+)?)/.exec(line);
     if (se && silenceStart !== undefined) {
       silences.push({ start: Math.round(silenceStart * 1000) / 1000, end: Math.round((Number(se[1]) + offset) * 1000) / 1000 });
       silenceStart = undefined;

@@ -4,13 +4,13 @@
 // (clean, noisy, on a busy background) and checks the curves `track` fits. Writes docs/ACCURACY.md.
 // Usage: node scripts/benchmark.mjs   (needs ffmpeg on PATH and `npm run bundle` first)
 //        node scripts/benchmark.mjs --track-only   (only the `track` clips; prints, writes nothing)
-//        node scripts/benchmark.mjs --transitions-only   (only the transition clips; prints, writes nothing)
+//        node scripts/benchmark.mjs --transitions-only   (only the montage and transition clips; prints, writes nothing)
 import { execFileSync, spawn } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { bezierAt, clipFrames, encode, springAt } from "./synth.mjs";
+import { bezierAt, busyBackground, clipFrames, encode, springAt } from "./synth.mjs";
 
 const TRACK_ONLY = process.argv.includes("--track-only");
 const TRANSITIONS_ONLY = process.argv.includes("--transitions-only");
@@ -85,6 +85,42 @@ function transitionClip(file, fps, frames, t, pictures) {
     "-map", "[v]", ...encode,
   ], { timeout: 60_000 });
   return { start: LEAD, end: outEnd + half, at: [LEAD + half, outEnd] };
+}
+
+/**
+ * A montage: a 1 s shot, then shots of 2, 3, 2, 3 and 2 frames, then a 1 s shot with a 2-frame white flash in it and a
+ * 1 s shot with a 3-frame black flash in it. Every shot is its own textured picture. Returns the frames of the cuts
+ * (where a new shot starts) and of the flashes (which are not cuts).
+ */
+async function montageClip(file, fps) {
+  // Each shot: blocks of its own over waves of its own, at its own brightness.
+  const picture = (seed) => {
+    const bg = busyBackground(640, 360, seed);
+    const offset = ((seed * 37) % 90) - 45;
+    return Uint8Array.from(bg, (v, i) => {
+      const x = i % 640;
+      const y = Math.floor(i / 640);
+      const wave = 128 + 80 * Math.sin((x * ((seed % 3) + 1)) / 23 + seed) * Math.cos(y / (9 + seed));
+      return Math.max(0, Math.min(255, Math.round((v + wave) / 2 + offset)));
+    });
+  };
+  const flat = (v) => new Uint8Array(640 * 360).fill(v);
+  const half = Math.round(fps / 2);
+  const seven = picture(7);
+  const eight = picture(8);
+  const plan = [
+    [picture(1), fps], [picture(2), 2], [picture(3), 3], [picture(4), 2], [picture(5), 3], [picture(6), 2],
+    [seven, half], [flat(250), 2], [seven, half], [eight, half], [flat(5), 3], [eight, half],
+  ];
+  const startOf = (i) => plan.slice(0, i).reduce((s, p) => s + p[1], 0);
+  // New shots start at entries 1–6 and 9; entries 7 and 10 are flashes inside a shot.
+  const cuts = [1, 2, 3, 4, 5, 6, 9].map(startOf);
+  const flashes = [7, 10].map(startOf);
+  function* frames() {
+    for (const [frame, n] of plan) for (let k = 0; k < n; k++) yield frame;
+  }
+  await encode(file, frames(), { fps, timeoutMs: 120_000 });
+  return { cuts, flashes };
 }
 
 function call(server, id, name, args) {
@@ -217,6 +253,7 @@ const trackRows = [];
 const varietyRows = [];
 const transitionRows = [];
 const falseTransitions = [];
+const montageRows = [];
 const server = startServer(work);
 let id = 1;
 try {
@@ -257,6 +294,24 @@ try {
         family: move?.easing ?? "—",
       });
     }
+  }
+
+  for (const fps of TRACK_ONLY ? [] : FPS_LIST) {
+    const file = join(work, `montage-${fps}.mp4`);
+    const truth = await montageClip(file, fps);
+    const result = await call(server, id++, "style", { source: file });
+    const spec = JSON.parse(readFileSync(result.structuredContent.files.spec, "utf8"));
+    const found = spec.anchors.cuts.map((c) => Math.round(c.t * fps));
+    const row = {
+      fps,
+      cuts: truth.cuts.length,
+      exact: truth.cuts.filter((f) => found.includes(f)).length,
+      withinOne: truth.cuts.filter((f) => found.some((g) => Math.abs(g - f) <= 1)).length,
+      flashCuts: found.filter((g) => truth.flashes.some((f) => g >= f && g <= f + 3)).length,
+      extra: found.filter((g) => !truth.cuts.some((f) => Math.abs(g - f) <= 1) && !truth.flashes.some((f) => g >= f && g <= f + 3)).length,
+    };
+    montageRows.push(row);
+    console.error(`montage ${fps} fps: ${row.exact} of ${row.cuts} cuts exact, ${row.flashCuts} flash frames read as cuts, ${row.extra} other extra cuts`);
   }
 
   for (const fps of TRACK_ONLY ? [] : FPS_LIST) {
@@ -348,6 +403,27 @@ const trackSummary = TRACK_CONDITIONS.map((c) => {
   return `| ${c.name} | ${all.filter((r) => r.kind === r.expected).length} of ${all.length} | ${pct(mean(all.filter((r) => r.shapeError !== undefined).map((r) => r.shapeError)))} / ${pct(max(all.filter((r) => r.shapeError !== undefined).map((r) => r.shapeError)))} | ${f3(mean(bez.map((r) => r.controlError)))} / ${f3(max(bez.map((r) => r.controlError)))} | ${f2(mean(durations))} / ${f2(max(durations))} | ${f2(mean(timed.map((r) => Math.abs(r.startError))))} / ${f2(max(timed.map((r) => Math.abs(r.startError))))} | ${pct(mean(spr.map((r) => r.stiffnessError)))} / ${pct(mean(spr.map((r) => r.dampingError)))} |`;
 });
 
+/** Short shots: cuts around 2–3 frame shots, and flashes that are not cuts. */
+function montageMarkdown() {
+  return `### Short shots and flashes
+
+A montage of textured pictures at 24, 30 and 60 fps: a 1 s shot, then shots of 2, 3, 2, 3 and 2 frames, then a shot
+with a 2-frame white flash in it and one with a 3-frame black flash (the picture comes back after each flash). Two cuts
+three frames apart look like a flash in the per-frame change alone; the frames tell them apart (after a flash the
+picture is the one before it, after a short shot it is a new one).
+
+| fps | Cuts on the exact frame | Within one frame | Flash frames read as cuts | Other extra cuts |
+|---|---|---|---|---|
+${montageRows.map((r) => `| ${r.fps} | ${r.exact} of ${r.cuts} | ${r.withinOne} of ${r.cuts} | ${r.flashCuts} | ${r.extra} |`).join("\n")}
+
+Limit: a cut inside part of the frame only (a picture-in-picture or a loupe that changes its image while the rest
+stays) is judged on the whole frame. Between two similar pictures in a third of the frame (white card to white card
+in Frame Lens's own demo) the whole-frame change is 2 on a 0–255 scale and the cut is not found, although the cell of
+a 4×4 grid that holds it changes by 10 against about 1 on the frames around it. A per-region check over the 64×36
+frames is cheap, but it would also fire on text and interface changes inside one region (a slide's next bullet, a
+screen recording's new window), so it is not used to find cuts.`;
+}
+
 /** The transitions section of ACCURACY.md: a summary per picture kind and transition, then every clip. */
 function transitionsMarkdown() {
   const abs = (xs) => xs.filter((v) => v !== null).map((v) => Math.abs(v));
@@ -413,6 +489,8 @@ Almost all of the start and duration error comes from long moves with a slow end
 ease-in (or the last of an ease-out) move the box by less than a pixel at analysis resolution, so the measured move
 begins a few frames late or ends early. Short moves and cuts are exact. The easing family is read from where the
 movement's weight sits; the exact curve of an important move is measured with \`track\` (below).
+
+${montageMarkdown()}
 
 <details><summary>Every move</summary>
 
@@ -480,6 +558,7 @@ ${[...trackRows, ...varietyRows].map((r) => `| ${r.fps} | ${r.condition} | ${r.c
 </details>
 `;
 if (TRANSITIONS_ONLY) {
+  console.log(montageMarkdown());
   console.log(transitionsMarkdown().split("<details>")[0]);
   process.exit(0);
 }
