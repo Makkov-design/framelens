@@ -139,7 +139,7 @@ says so. To check your machine ahead of time: `npx -y framelens doctor --prepare
 | `audio` | Loudness (LUFS), silences, onsets, tempo and beats, cuts on the beat, spectrogram |
 | `export` | Starter project from the motion spec (see [Exports](#exports)) |
 | `compare` | Your render against the reference: duration, cuts matched within 3 frames, palette distance, picture similarity, the least similar moments side by side |
-| `web` | A live page's animations read exactly from the browser (CSS, Web Animations, Motion, GSAP), scroll-triggered ones too, plus real fonts and colours (needs Chrome or Edge and Node 22+). Also takes a reading the [browser extension](#browser-extension) saved |
+| `web` | A live page's animations read exactly from the browser (CSS, Web Animations, Motion, GSAP), scroll-triggered ones too, plus real fonts and colours (needs Chrome or Edge and Node 22+). They are recorded from the first frame, so page-load animations that end before the page is read are caught too. Also takes a reading the [browser extension](#browser-extension) saved |
 | `exact` | Lottie / dotLottie, Rive (`.riv`: artboards, timelines, curves, state machines) and Figma prototype transitions, read from the source's own data |
 
 **Gemini** (YouTube links, your own `GEMINI_API_KEY`, work in cloud sessions without ffmpeg):
@@ -187,7 +187,8 @@ Platforms' terms may forbid automated downloading: analyze videos you are allowe
 
 `export` turns a reference's `motion-spec.json` into a starter project; `exact` takes the same `export` option. It
 carries structure, cut times, colours and move timing (the exact tracked curve where there is one) and leaves the
-content to you: never the reference's footage, logos or people.
+content to you: never the reference's footage, logos or people. Every move tracked in a shot is exported, each further
+one as its own element at the tracked element's place with its own curve.
 
 | Target | You get |
 |---|---|

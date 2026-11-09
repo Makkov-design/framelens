@@ -60,7 +60,8 @@ export function registerExactTools(server: McpServer, engine: Engine, logger: Lo
         "cubic-bezier curve, duration and values, the palette, fonts and text, and lists what could not be evaluated (expressions). Writes " +
         "motion-spec.json and STYLE.md (plus RIVE.md with artboards, animations and state machines for Rive) to the workspace in the same shape as `style`, so the move data can feed the exporters. Figma links need FIGMA_TOKEN " +
         "(a read-only personal access token). In Claude Code the official Figma MCP tool get_motion_context can also be used: pass its " +
-        "output here as `figma_json` and no token is needed. Pass `export` to also write a starter project (hyperframes, remotion or css).",
+        `output here as \`figma_json\` and no token is needed. Pass \`export\` to also write a starter project (${EXPORT_TARGETS.join(", ")}). ` +
+        "A video or GIF has no animation data to read: measure it with `plan` or `style` instead.",
       inputSchema: {
         source: z.string().min(1).max(4000).optional().describe("Path or http(s) link to a Lottie .json/.lottie or a Rive .riv file, or a figma.com link with node-id."),
         figma_json: z.union([z.string().max(8_000_000), z.record(z.string(), z.unknown())]).optional().describe("Figma JSON: a /v1/files/:key/nodes response or get_motion_context output. Use instead of `source`."),

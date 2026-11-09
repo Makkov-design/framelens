@@ -189,6 +189,27 @@ describe("router", () => {
     expect(track.then).toMatch(/add `element`: a box \{x, y, w, h\}/);
   });
 
+  it("asks for a box for a move where style measured the whole picture changing, and puts element moves first", () => {
+    // The trailer: move 8 changes 66 % of the picture (a character fills the frame); `auto` has nothing to pick there.
+    const moves = [
+      { start: 2, end: 3, frames: 30, area: 0.04, element: "auto" as const },
+      { start: 5, end: 6, frames: 40, area: 0.66, element: "box" as const },
+      ...Array.from({ length: 6 }, (_, i) => ({ start: 8 + i, end: 8.5 + i, frames: 12, area: 0.05, element: "auto" as const })),
+    ];
+    const plan = buildPlan({ goal: "style", probe: probe(30), boundaries: bounds(40, 0.2, [5]), hasSpeech: true, moves });
+    expect(plan.videoType).toBe("motion-graphics");
+    const tracks = plan.steps.filter((s) => s.tool === "track");
+    // Six steps at most: the six element moves come before the longer whole-picture one.
+    expect(tracks.map((s) => s.args.move)).toEqual([1, 3, 4, 5, 6, 7]);
+    expect(tracks.every((s) => s.args.element === "auto")).toBe(true);
+    const few = buildPlan({ goal: "style", probe: probe(30), boundaries: bounds(40, 0.2, [5]), hasSpeech: true, moves: moves.slice(0, 2) });
+    const whole = few.steps.find((s) => s.tool === "track" && s.args.move === 2)!;
+    expect(whole.args.element).toBeUndefined();
+    expect(whole.why).toMatch(/whole picture changes here \(66% of it\)/);
+    expect(whole.then).toMatch(/add `element`: a box \{x, y, w, h\} around the part to follow, with `at`/);
+    expect(few.steps.find((s) => s.tool === "track" && s.args.move === 1)!.args.element).toBe("auto");
+  });
+
   it("picks non-overlapping busy windows", () => {
     const windows = busiestWindows(bounds(30, 0.2, [1, 1.5, 2, 2.5, 20, 30, 30.5]), 40, 8, 3);
     expect(windows[0]).toEqual({ start: 0, end: 8 });

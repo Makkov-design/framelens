@@ -55,6 +55,7 @@ export function lottieDocument(spec: MotionSpec) {
 
   const shapes: object[] = [];
   const solids: object[] = [];
+  const extras: object[][] = [];
   const veils: object[] = [];
   const still = (value: number[]) => ({ a: 0, k: value.length === 1 ? value[0] : value });
   scenes.forEach((s, n) => {
@@ -63,9 +64,8 @@ export function lottieDocument(spec: MotionSpec) {
     const op = Math.max(ip + 1, frame(s.show.end));
     // A dissolve (derived; a wipe is drawn as a dissolve here): the incoming scene's opacity ramps up over it.
     const revealed = s.reveal && animated(frame(s.reveal.start), Math.max(frame(s.reveal.start) + 1, frame(s.reveal.start + s.reveal.seconds)), [0], [100], BEZIER[s.reveal.easing]);
-    const move: SceneMove | undefined = s.move;
-    let ks: ReturnType<typeof transform>;
-    if (move) {
+    /** A layer centred at (x, y) that enters with a move: it fades in and rises `travel`. */
+    const entering = (move: SceneMove, x: number, y: number) => {
       const shotEnd = Math.max(ip + 1, frame(s.start + s.duration));
       const t0 = Math.min(shotEnd - 1, frame(s.start) + frame(move.offset));
       // A tracked move keeps its measured length past the layer's out point (which still trims it): squeezing it into
@@ -75,7 +75,38 @@ export function lottieDocument(spec: MotionSpec) {
       const sampled = bezier ? undefined : moveKeys(move, fps);
       const keys = sampled?.keys.map(([u, p]) => [Math.round(t0 + u * (t1 - t0)), p] as [number, number]);
       const position = (from: number[], to: number[]) => (bezier ? animated(t0, t1, from, to, bezier) : sampledAnimated(keys!, sampled!.hold, from, to));
-      ks = transform(position([width / 2, height / 2 + travel, 0], [width / 2, height / 2, 0]), position([0], [100]));
+      return transform(position([x, y + travel, 0], [x, y, 0]), position([0], [100]));
+    };
+    // Every further move tracked in the shot: an outlined placeholder at the tracked element's place and size.
+    extras.push(
+      (s.elements ?? []).map((el) => ({
+        ddd: 0,
+        ty: 4,
+        nm: `${el.id} tracked ${el.track} placeholder`,
+        sr: 1,
+        ks: entering(el, r3(el.box.x + el.box.w / 2), r3(el.box.y + el.box.h / 2)),
+        ao: 0,
+        shapes: [
+          {
+            ty: "gr",
+            nm: "Placeholder",
+            it: [
+              { ty: "rc", nm: "Rectangle", d: 1, p: { a: 0, k: [0, 0] }, s: { a: 0, k: [el.box.w, el.box.h] }, r: { a: 0, k: 0 } },
+              { ty: "st", nm: "Accent", c: { a: 0, k: [...rgb(s.accent), 1] }, o: { a: 0, k: 100 }, w: { a: 0, k: Math.max(2, Math.round(height / 270)) }, lc: 2, lj: 2 },
+              { ty: "tr", p: { a: 0, k: [0, 0] }, a: { a: 0, k: [0, 0] }, s: { a: 0, k: [100, 100] }, r: { a: 0, k: 0 }, o: { a: 0, k: 100 } },
+            ],
+          },
+        ],
+        ip,
+        op,
+        st: 0,
+        bm: 0,
+      })),
+    );
+    const move: SceneMove | undefined = s.move;
+    let ks: ReturnType<typeof transform>;
+    if (move) {
+      ks = entering(move, width / 2, height / 2);
     } else {
       // No move found: the placeholder holds still, coming in only with its scene.
       ks = transform(still([width / 2, height / 2, 0]), revealed ?? still([100]));
@@ -156,8 +187,8 @@ export function lottieDocument(spec: MotionSpec) {
     ddd: 0,
     assets: [],
     // Lottie draws the first layer on top: fades over everything, later scenes over earlier ones (a dissolve brings
-    // the incoming scene in over the outgoing one), each scene's placeholder over its background.
-    layers: [...veils, ...shapes.map((shape, n) => [shape, solids[n]!]).reverse().flat()].map((layer, i) => ({ ...layer, ind: i + 1 })),
+    // the incoming scene in over the outgoing one), each scene's tracked placeholders and title over its background.
+    layers: [...veils, ...shapes.map((shape, n) => [...extras[n]!, shape, solids[n]!]).reverse().flat()].map((layer, i) => ({ ...layer, ind: i + 1 })),
     markers: [],
   };
 }
@@ -172,7 +203,7 @@ export function exportLottie(spec: MotionSpec, root: string): string[] {
 - One shape layer per shot with a rectangle placeholder. Where \`style\` found a move in the shot, its position and opacity keyframes carry that move's timing; the easing (a derived family, or a fitted curve when tracked) is written as \`o\` and \`i\` handles, equal to the CSS cubic-bezier(x1, y1, x2, y2) as \`o\` = (x1, y1) and \`i\` = (x2, y2). Without a move the placeholder holds still.
 - Transitions (derived from the frames): a dissolve is an opacity ramp on the incoming shot's layers, which start with the dissolve and sit above the outgoing shot; a fade or dip is a black or white solid over the shot whose opacity covers or clears it. A wipe is drawn as a dissolve of the same length (its direction is in motion-spec.json); add a mask for its edge.
 - Layers are listed top-first: fades, then later shots above earlier ones, each placeholder above its background.
-- Moves measured with Frame Lens \`track\` use their fitted curve: a cubic-bezier as the handles above, a spring as a keyframe on every frame with straight handles, steps as held keyframes (\`h: 1\`).
+- Moves measured with Frame Lens \`track\` use their fitted curve: a cubic-bezier as the handles above, a spring as a keyframe on every frame with straight handles, steps as held keyframes (\`h: 1\`). Every further move tracked in a shot gets its own outlined placeholder layer (named after its track) at the tracked element's place and size, with its own keyframes.
 - Replace the placeholder rectangles with your own shapes or text layers; keep the in and out frames and the easing.
 `,
   });

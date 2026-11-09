@@ -117,4 +117,52 @@ describe.skipIf(!tools)("local tools over MCP", () => {
     const missing = await call("probe", { source: join(dir, "nope.mp4") });
     expect(missing.isError).toBe(true);
   });
+
+  // Found before the 2.1.0 tag.
+  it("style numbers its moves for track and says what to run next", async () => {
+    const result = await call("style", { source: video });
+    expect(result.isError).toBeFalsy();
+    const events = (result.structuredContent as { events: unknown[] }).events;
+    if (events.length) expect(text(result)).toMatch(/^- move 1: /m);
+    expect(text(result)).toMatch(/^Next: .*`track`/m);
+  });
+
+  it("returns the spectrogram as a JPEG preview and keeps the PNG on disk", async () => {
+    const result = await call("audio", { source: video });
+    expect(result.isError).toBeFalsy();
+    const image = result.content.find((c) => c.type === "image") as { mimeType: string; data: string };
+    expect(image.mimeType).toBe("image/jpeg");
+    const png = (result.structuredContent as { files: { spectrogram: string } }).files.spectrogram;
+    expect(png).toMatch(/\.png$/);
+    expect(existsSync(png)).toBe(true);
+  });
+
+  it("lists every export target in the exact tool's description", async () => {
+    const exact = (await client.listTools()).tools.find((t) => t.name === "exact")!;
+    for (const target of ["hyperframes", "remotion", "css", "after-effects", "lottie", "hypit"]) expect(exact.description).toContain(target);
+  });
+
+  it("web: names animations that were over before the reading and says when no fonts were read", async () => {
+    const file = join(dir, "page.framelens.json");
+    writeFileSync(
+      file,
+      JSON.stringify({
+        framelens: "framelens.page-reading/1",
+        url: "https://example.test/",
+        title: "No text",
+        viewport: { width: 1440, height: 900 },
+        scrollHeight: 900,
+        animations: [{ kind: "css-animation", name: "rise", target: "div.b", delay: 100, duration: 650, iterations: 1, easing: "linear", keyframes: [], properties: ["transform"], scrollY: 0, ended: true }],
+        fonts: [],
+        colors: [{ hex: "#101418", area: 100 }],
+        gsap: false,
+      }),
+    );
+    const result = await call("web", { url: file });
+    expect(result.isError).toBeFalsy();
+    expect(text(result)).toContain("1 of them over before the page was read");
+    expect(text(result)).toMatch(/after the page had loaded: animations that had already ended by then are not in this reading/);
+    expect(text(result)).toContain("Fonts: none read");
+    expect(text(result)).not.toMatch(/Fonts: \./);
+  });
 });

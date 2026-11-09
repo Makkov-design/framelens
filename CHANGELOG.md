@@ -103,11 +103,14 @@ https://makkov-design.github.io/framelens/
   shots are already in the workspace, and otherwise a `then` that says what to add from the `boundaries` result
   (before: `at: "each boundary + 0.5 s"` and a `labels` parameter that does not exist). A source without sound gets
   no `transcript` step. `track` steps offer `element: "auto"` for graphics and UI footage and ask for a box in camera
-  footage, where the biggest moving region is often the camera.
+  footage, where the biggest moving region is often the camera, and for any move where `style` measured the whole
+  picture changing (those come after moves of one element).
 - Every number in a video's `motion-spec.json` carries an evidence label on the object that holds it: `timebase` and
   words measured, beats derived, shots measured (derived when an end is a gradual transition), `rhythm` derived, a
   dip's `hold` derived, and `audio` one label per field (tempo and cuts on the beat derived, loudness measured). The
-  rule is in docs/DESIGN.md, and a test walks a real spec for numbers without one.
+  rule is in docs/DESIGN.md, and a test walks a real spec for numbers without one. Specs from `web` and `exact`
+  follow it too: the source's own values are `measured` (a page's keyframes and scroll positions included), counts
+  and rates `derived`, and a page's 60 fps, Frame Lens's own choice, `inferred`.
 - `compare` finds a render shifted as a whole and says so first ("the render is 5 frames early") instead of calling
   every cut missing and every cut extra, and its text and side-by-side sheet name the same least similar moments.
 - `doctor` and the other commands print to stdout (only the server keeps stdout for MCP); `doctor` lists
@@ -141,6 +144,26 @@ https://makkov-design.github.io/framelens/
   link that cannot be fetched leaves no empty `yt-<id>` folder behind.
 - Every local tool parameter has a description (`audio.start`, `boundaries.start` and `end`, `frames.columns` and
   `rows` had none).
+- `web` records page-load motion from the first frame: a recorder added before the page's own scripts keeps every CSS
+  animation, CSS transition and Web Animation as it starts, so motion that is over before the page is read (a 650 ms
+  entrance, a transition toggled on load) is in the reading, marked as over, and in the opening film. The result says
+  what can still be missed (GSAP tweens finished before the reading, motion drawn by scripts) and, for a reading from
+  the extension, that ended animations are not in it. A page without headings or text says so instead of "Fonts: .".
+- `export` writes every tracked move of a shot, not only the first: each further one gets its own element at the
+  tracked element's place (CSS, Remotion, HyperFrames, After Effects, Lottie) with its own curve, spring included, and
+  Hypit's TIMELINE.md lists them. On Frame Lens's own demo the spring at 12.8 s now reaches every target. A move
+  tracked twice (an automatic pick, then a box) is exported once, as its best-graded and newest track; REFERENCE.md
+  names the one left out.
+- `track` with `move: n` keeps its window inside the move's shot and never widens it past a cut (the trailer's move 1
+  was read across the cuts at 13.20 and 13.88 s). `style` measures how much of the picture each move changes (`area`);
+  when the whole picture moves (a camera or character move) `track` says so and asks for a box instead of "Nothing
+  moves", the automatic pick never returns the whole frame or half of it, and a window given by hand that crosses a
+  cut says which. `style` numbers its moves for `track move: n` (STYLE.md too) and its next step names `track`.
+- `exact` on a video or GIF (MP4, MOV, WebM, MKV, AVI, GIF, FLV, MPEG, found by their first bytes) says it is one and
+  points to `plan` or `style`, instead of a JSON parser error; its description lists all six export targets; colours
+  within 0.01 in OKLab (#FFFFFF, #FEFFFF, #FEFEFE) are one palette entry.
+- `audio` returns its spectrogram as a JPEG preview (about 65 KB for the 33 s trailer instead of a 548 KB PNG); the
+  full PNG stays on disk.
 
 ## 2.0.0 — 2026-11-09
 

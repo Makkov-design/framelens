@@ -773,11 +773,16 @@ export function detectTransitions(frames: PictureFrames, fps: number, options: T
   return out;
 }
 
+/** A move changing at least this share of the picture is the whole picture moving (a camera or character move). */
+export const WHOLE_PICTURE_AREA = 0.5;
+
 /**
  * Moves whose picture never gets away from where it started (compression noise or grain on a still shot that happens
  * to score above the threshold) are left out: some frame of a real move differs visibly from the move's first frame.
+ * Each move kept gets `area`: the share of the picture (0–1) that some frame of the move changes visibly from its
+ * first frame. An element moving on a still background changes a small share; a camera move nearly all of it.
  */
-export function visibleMoves<T extends { start: number; end: number }>(events: T[], frames: PictureFrames, minimum = 0.004): T[] {
+export function visibleMoves<T extends { start: number; end: number }>(events: T[], frames: PictureFrames, minimum = 0.004): (T & { area?: number })[] {
   const fr = new Frames(frames);
   const n = fr.count;
   if (n < 2 || frames.data.length < n * fr.size) return events;
@@ -786,12 +791,31 @@ export function visibleMoves<T extends { start: number; end: number }>(events: T
     for (let k = 0; k < n; k++) if (Math.abs(fr.time(k) - t) < Math.abs(fr.time(best) - t)) best = k;
     return best;
   };
-  return events.filter((e) => {
+  const out: (T & { area?: number })[] = [];
+  for (const e of events) {
     const a = index(e.start);
     const b = index(e.end);
-    if (b <= a) return true;
+    if (b <= a) {
+      out.push(e);
+      continue;
+    }
     let most = 0;
     for (let k = a + 1; k <= b; k++) most = Math.max(most, fr.difference(a, k));
-    return most >= minimum;
-  });
+    if (most < minimum) continue;
+    // Pixels some frame of the move changes by more than compression noise (an eighth of the range in a channel).
+    const first = fr.frame(a);
+    const changed = new Uint8Array(fr.pixels);
+    for (let k = a + 1; k <= b; k++) {
+      const x = fr.frame(k);
+      for (let p = 0; p < fr.pixels; p++) {
+        if (changed[p]) continue;
+        const i = p * 3;
+        if (Math.abs(x[i]! - first[i]!) > 32 || Math.abs(x[i + 1]! - first[i + 1]!) > 32 || Math.abs(x[i + 2]! - first[i + 2]!) > 32) changed[p] = 1;
+      }
+    }
+    let count = 0;
+    for (const c of changed) count += c;
+    out.push({ ...e, area: Math.round((count / fr.pixels) * 100) / 100 });
+  }
+  return out;
 }

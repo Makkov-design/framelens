@@ -5,7 +5,7 @@ import type { Evidence } from "../style/spec.js";
 import { cssEasing } from "./curve.js";
 import { decodeGray, workSize } from "./decode.js";
 import { EXPORT_MAX_ERROR, fitProperty, type PropertyFit } from "./fit.js";
-import { autoBox, trackElement, type Box } from "./tracker.js";
+import { findElement, trackElement, type Box } from "./tracker.js";
 
 export const TRACK_PROPERTIES = ["x", "y", "scale", "opacity"] as const;
 export type TrackProperty = (typeof TRACK_PROPERTIES)[number];
@@ -52,6 +52,8 @@ export interface TrackedMove {
   notes?: string[];
   /** The style move this track refines, as its 1-based number in `events`. */
   move?: number;
+  /** When the track was made (ISO time): of two tracks of one move, the newer wins at equal grade. */
+  measuredAt?: string;
   evidence: Evidence;
   fps: number;
 }
@@ -65,7 +67,16 @@ export interface TrackRequest {
   at?: number;
   id: string;
   move?: number;
+  /**
+   * The shot the window belongs to, in source seconds: a window widened because the move ran past its edge stays
+   * inside it, since frames across a cut are another picture.
+   */
+  limits?: { start: number; end: number };
 }
+
+/** What `track` says when the whole picture moves, so the automatic pick has no element against a still background. */
+export const WHOLE_PICTURE =
+  "The whole picture moves here (a camera or character move): pass a box around the element to track, as `element` {x, y, w, h} at time `at`.";
 
 const r = (x: number, d = 3) => Math.round(x * 10 ** d) / 10 ** d;
 
@@ -79,6 +90,9 @@ const EXTEND_BY = 1;
  * reported as cut instead of fitted.
  */
 export async function trackWindow(source: string, probe: ProbeInfo, tools: MediaTools, request: TrackRequest): Promise<TrackedMove> {
+  // The window never grows past the shot it belongs to (when known) or the video.
+  const lo = Math.max(0, request.limits?.start ?? 0);
+  const hi = Math.min(probe.duration, request.limits?.end ?? probe.duration);
   let start = Math.max(0, request.start);
   let end = Math.min(probe.duration, request.end);
   const at = request.at ?? start;
@@ -88,12 +102,19 @@ export async function trackWindow(source: string, probe: ProbeInfo, tools: Media
     const cutStart = move.cut.some((c) => c.cut !== "end");
     const cutEnd = move.cut.some((c) => c.cut !== "start");
     const fps = move.fps;
-    const canEarlier = cutStart && start > 0.5 / fps && !request.box;
-    const canLater = cutEnd && end < probe.duration - 0.5 / fps;
+    const canEarlier = cutStart && start > lo + 0.5 / fps && !request.box;
+    const canLater = cutEnd && end < hi - 0.5 / fps;
     const room = MAX_TRACK_SECONDS - (end - start);
     if (attempt >= MAX_EXTENSIONS || (!canEarlier && !canLater) || room <= 0.1) {
       for (const c of move.cut) {
-        move.unfitted.push({ property: c.property, reason: `the window cuts the move at its ${c.cut === "both" ? "start and end" : c.cut} (still moving at ${c.cut === "start" ? start.toFixed(3) : end.toFixed(3)} s): pass a wider start/end` });
+        // At the shot's own edge the move runs into a cut or transition: a wider window would read another picture.
+        const atShotEdge = request.limits && (c.cut === "start" ? start <= lo + 0.5 / fps : c.cut === "end" ? end >= hi - 1 / fps : start <= lo + 0.5 / fps && end >= hi - 1 / fps);
+        move.unfitted.push({
+          property: c.property,
+          reason: atShotEdge
+            ? `the move runs past its shot (still moving at ${c.cut === "start" ? start.toFixed(3) : end.toFixed(3)} s, where the shot ${c.cut === "start" ? "starts" : "ends"}), so it is not seen whole and not fitted`
+            : `the window cuts the move at its ${c.cut === "both" ? "start and end" : c.cut} (still moving at ${c.cut === "start" ? start.toFixed(3) : end.toFixed(3)} s): pass a wider start/end`,
+        });
       }
       if (notes.length) move.notes = notes;
       move.requested = { start: r(request.start, 4), end: r(request.end, 4) };
@@ -102,8 +123,8 @@ export async function trackWindow(source: string, probe: ProbeInfo, tools: Media
     }
     const grow = Math.min(EXTEND_BY, room / (canEarlier && canLater ? 2 : 1));
     const before = `${start.toFixed(2)}–${end.toFixed(2)} s`;
-    if (canEarlier) start = Math.max(0, start - grow);
-    if (canLater) end = Math.min(probe.duration, end + grow);
+    if (canEarlier) start = Math.max(lo, start - grow);
+    if (canLater) end = Math.min(hi, end + grow);
     notes.push(`The move ran past the window ${before}; widened to ${start.toFixed(2)}–${end.toFixed(2)} s.`);
   }
 }
@@ -140,7 +161,8 @@ async function trackOnce(
     if (box.x + box.w <= 0 || box.y + box.h <= 0 || box.x >= size.width || box.y >= size.height) throw new InvalidInputError("The element box is outside the frame.");
     index = video.frames.reduce((best, f, i) => (Math.abs(f.t - request.at) < Math.abs(video.frames[best]!.t - request.at) ? i : best), 0);
   } else {
-    const found = await autoBox(video);
+    const { found, wholePicture } = await findElement(video);
+    if (wholePicture) throw new InvalidInputError(WHOLE_PICTURE);
     if (!found) throw new InvalidInputError("Nothing moves in this window, so there is no element to pick automatically. Pass a box or another window.");
     ({ box, index } = found);
     auto = true;

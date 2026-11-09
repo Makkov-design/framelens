@@ -11,7 +11,8 @@ Frame Lens gives you eyes and ears for a video or an animation. It has three eng
   `boundaries`, `style`, `track`, `audio`, `export`, `compare`. They measure real frame times, cuts, palette, motion and sound,
   and write everything to a workspace folder.
 - **Exact sources** (no estimates): `web` reads a live page's animations from the browser (CSS, Web Animations,
-  Motion, GSAP) with real fonts and colours; `exact` reads Lottie/dotLottie and Rive keyframes and Figma prototype
+  Motion, GSAP) with real fonts and colours, recorded from the first frame so page-load animations that are already
+  over are caught too; `exact` reads Lottie/dotLottie and Rive keyframes and Figma prototype
   transitions.
 - **Gemini tools** (YouTube links, need `GEMINI_API_KEY`, work in cloud sessions): `summarize_youtube_video`,
   `extract_key_moments`, `ask_about_youtube_video`, `get_video_transcript`, `list_supported_models`.
@@ -46,7 +47,8 @@ deferred, load them with ToolSearch query `framelens` first.
    picks the wrong thing or reports few matched frames, pass a box around the element.
 7. **Rebuild** in the user's tool: `export` with `hyperframes`, `remotion`, `css`, `after-effects`, `lottie` or
    `hypit`. It carries structure, timing, colours, eases and the dissolves and fades `style` derived; only the moves
-   it found animate (other titles hold still, and REFERENCE.md lists the defaults). Put the user's own content in place of the placeholders.
+   it found animate (other titles hold still, and REFERENCE.md lists the defaults). Every move tracked in a shot is
+   exported, each further one as its own element with its own curve. Put the user's own content in place of the placeholders.
    Never copy the reference's footage, logos or people. After rendering, `compare` the render with the reference and
    fix what it names.
 8. **Without ffmpeg or in a cloud session**: use the Gemini tools for YouTube links, and say that timing and colours

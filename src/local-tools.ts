@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { spectrogramPreview } from "./audio/analyze.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
@@ -11,6 +12,7 @@ import { GOALS } from "./router/plan.js";
 import { collectSetupNotes, setupNotesOf } from "./tools/setup.js";
 import { curveLabel } from "./track/curve.js";
 import { transitionName } from "./style/spec.js";
+import { WHOLE_PICTURE_AREA } from "./style/transitions.js";
 
 /** Seconds with decimals (12.48), or M:SS(.mmm) / H:MM:SS(.mmm). */
 export function parseTime(value: string | number): number {
@@ -285,10 +287,16 @@ export function registerLocalTools(server: McpServer, engine: Engine, logger: Lo
           `Palette: ${spec.palette.map((p) => `${p.hex} ${(p.share * 100).toFixed(0)}%`).join(", ")}.`,
           `Easing families (derived): ${[...families.entries()].map(([k, v]) => `${v} ${k}`).join(", ") || "no moves found"}.`,
           ...gradual.slice(0, 12).map((x) => `- ${transitionName(x)} ${x.start.toFixed(3)}–${x.end.toFixed(3)} s, ${x.frames} frames, shot boundary at ${x.at.toFixed(3)} s (derived)`),
-          ...spec.events.slice(0, 12).map((e) => `- move ${e.start.toFixed(3)}–${e.end.toFixed(3)} s, ${e.frames} frames, ${e.easing}${e.suggestion ? ` (start from ${e.suggestion})` : ""}`),
+          ...spec.events.slice(0, 12).map(
+            (e, i) =>
+              `- move ${i + 1}: ${e.start.toFixed(3)}–${e.end.toFixed(3)} s, ${e.frames} frames, ${e.easing}${e.track ? ` (tracked ${e.track}: ${e.curve})` : e.suggestion ? ` (start from ${e.suggestion})` : ""}${typeof e.area === "number" && e.area >= WHOLE_PICTURE_AREA ? `; the whole picture changes (${Math.round(e.area * 100)}% of it): track it with a box` : ""}`,
+          ),
+          ...(spec.events.length > 12 ? [`- … ${spec.events.length - 12} more moves in motion-spec.json (numbered in order).`] : []),
           "",
           `Files: ${Object.values(files).map((f) => ws.display(f)).join(", ")}.`,
-          "Next: frames every_frame around the moves that matter, then fill typography, systems and why-it-works in STYLE.md and ANALYSIS.md.",
+          spec.events.length
+            ? "Next: `track` with `move: n` for the exact curve of each move that matters (`element: \"auto\"`, or a box when several things move or the whole picture does), `frames` every_frame around them, then fill typography, systems and why-it-works in STYLE.md and ANALYSIS.md."
+            : "Next: `frames` every_frame where something moves (pass start and end to `track` around a move you can see), then fill typography, systems and why-it-works in STYLE.md and ANALYSIS.md.",
         ].join("\n");
         return {
           content: [{ type: "text", text }],
@@ -347,7 +355,7 @@ export function registerLocalTools(server: McpServer, engine: Engine, logger: Lo
           `${track.id}: element ${track.element.auto ? "found automatically" : "from the box"} (${track.element.box.w}×${track.element.box.h} px at ${track.element.box.x}, ${track.element.box.y}), ${track.samples.length} frames at ${track.fps} fps${lost ? `, ${lost} too faint or hidden to match` : ""}.`,
           track.properties.length
             ? `Move ${track.start.toFixed(3)}–${track.end.toFixed(3)} s: ${track.frames} frames, starts ${track.delay.toFixed(3)} s into the window.`
-            : "No property went from one resting value to another in this window: widen it, or pass a box around the element.",
+            : "No property went from one resting value to another in this window. When the element changes shape as it moves (a character animation) or the whole picture moves, pass a box around a part that moves as one; otherwise widen the window (it does not grow past its shot's cuts).",
           ...track.properties.map(
             (p) =>
               `- ${p.property}${p.property === track.primary ? " (primary)" : ""}: ${p.from} → ${p.to}, ${p.start.toFixed(3)}–${p.end.toFixed(3)} s (${p.frames} frames, delay ${p.delay.toFixed(3)} s), ${curveLabel(p.curve)}, error ${(p.rmse * 100).toFixed(2)} % of the travel, ${p.quality}${p.quality === "unreliable" ? " (not exported)" : ""}. ${p.reason}.`,
@@ -388,6 +396,9 @@ export function registerLocalTools(server: McpServer, engine: Engine, logger: Lo
         });
         const ws = source.ws;
         const strong = analysis.onsets.filter((o) => o.strength >= 0.5);
+        // The result carries the small JPEG preview; the full PNG stays on disk (named in Files).
+        const preview = spectrogramPreview(files.spectrogram!);
+        const picture = existsSync(preview) ? { file: preview, mimeType: "image/jpeg" } : { file: files.spectrogram!, mimeType: "image/png" };
         const text = [
           sourceLine(source),
           "",
@@ -405,7 +416,7 @@ export function registerLocalTools(server: McpServer, engine: Engine, logger: Lo
         return {
           content: [
             { type: "text", text },
-            { type: "image", data: readFileSync(files.spectrogram!).toString("base64"), mimeType: "image/png" },
+            { type: "image", data: readFileSync(picture.file).toString("base64"), mimeType: picture.mimeType },
           ],
           structuredContent: { workspace: ws.dir, files, analysis: { ...analysis, loudness: analysis.loudness.length }, cut_on_beat_ratio: cutOnBeat ?? null },
         };

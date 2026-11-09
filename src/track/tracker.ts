@@ -642,8 +642,27 @@ function iou(a: Box, b: Box): number {
  * sit on its outline, and the candidates are then tracked: the one followed best wins.
  */
 export async function autoBox(video: GrayFrames): Promise<{ box: Box; index: number } | undefined> {
+  return (await findElement(video)).found;
+}
+
+/** Grey levels a pixel can differ from the background by noise and compression alone. */
+const NOISE_FLOOR = 18;
+
+/**
+ * A region this large is the whole picture changing (a camera move, a character filling the frame, a fade), not an
+ * element on a still background: most of the frame's cells, or a box around nearly all of it.
+ */
+function wholePicture(region: { box: Box; area: number }, w: number, h: number, cells: number): boolean {
+  return region.area >= 0.6 * cells || (region.box.w >= 0.9 * w && region.box.h >= 0.9 * h);
+}
+
+/**
+ * `autoBox`, saying why nothing was picked: `wholePicture` when the whole picture moves in most of the window, so
+ * there is no element against a still background to pick (pass a box). The whole frame is never returned as the element.
+ */
+export async function findElement(video: GrayFrames): Promise<{ found?: { box: Box; index: number }; wholePicture: boolean }> {
   const { width: w, height: h, frames } = video;
-  if (frames.length < 2) return undefined;
+  if (frames.length < 2) return { wholePicture: false };
   const stride = Math.max(1, Math.round(Math.max(w, h) / 320));
   const gw = Math.floor(w / stride);
   const gh = Math.floor(h / stride);
@@ -657,20 +676,36 @@ export async function autoBox(video: GrayFrames): Promise<{ box: Box; index: num
     column.sort();
     background[gy * gw + gx] = count % 2 ? column[(count - 1) / 2]! : (column[count / 2 - 1]! + column[count / 2]!) / 2;
   }
-  // Threshold from how much ordinary pixels differ from the background (noise, compression).
-  const diffs: number[] = [];
-  const probe = frames[picks[0]!]!.data;
-  for (let k = 0; k < gw * gh; k += 7) diffs.push(Math.abs(probe[Math.floor(k / gw) * stride * w + (k % gw) * stride]! - background[k]!));
-  diffs.sort((a, b) => a - b);
-  const threshold = Math.max(18, 5 * 1.4826 * (diffs[Math.floor(diffs.length / 2)] ?? 0));
+  // Threshold from how much ordinary pixels differ from the background (noise, compression), read on the frame most
+  // like the background of a few: one frame unlike all the others (another shot, a flash) would raise it so far that
+  // nothing seemed to move.
+  let noise = Infinity;
+  for (const pick of [...new Set([picks[0]!, picks[Math.floor(picks.length / 2)]!, picks.at(-1)!])]) {
+    const diffs: number[] = [];
+    const probe = frames[pick]!.data;
+    for (let k = 0; k < gw * gh; k += 7) diffs.push(Math.abs(probe[Math.floor(k / gw) * stride * w + (k % gw) * stride]! - background[k]!));
+    diffs.sort((a, b) => a - b);
+    noise = Math.min(noise, diffs[Math.floor(diffs.length / 2)] ?? 0);
+  }
+  const threshold = Math.max(NOISE_FLOOR, 5 * 1.4826 * (Number.isFinite(noise) ? noise : 0));
 
   const regions: { box: Box; area: number }[] = [];
   const mask = new Uint8Array(gw * gh);
   const queue = new Int32Array(gw * gh);
+  // Sampled frames where something differs from the background, and where most of the picture does.
+  let moving = 0;
+  let wide = 0;
   for (const index of picks) {
     let best: { box: Box; area: number } | undefined;
     const data = frames[index]!.data;
-    for (let k = 0; k < gw * gh; k++) mask[k] = Math.abs(data[Math.floor(k / gw) * stride * w + (k % gw) * stride]! - background[k]!) > threshold ? 1 : 0;
+    // Cells that differ by more than ordinary noise ever does (the threshold's floor): when the whole picture moves,
+    // the noise estimate itself is high, so the region threshold alone would see only a few patches.
+    let ones = 0;
+    for (let k = 0; k < gw * gh; k++) {
+      const diff = Math.abs(data[Math.floor(k / gw) * stride * w + (k % gw) * stride]! - background[k]!);
+      mask[k] = diff > threshold ? 1 : 0;
+      if (diff > NOISE_FLOOR) ones++;
+    }
     for (let start = 0; start < gw * gh; start++) {
       if (mask[start] !== 1) continue;
       let head = 0;
@@ -702,14 +737,23 @@ export async function autoBox(video: GrayFrames): Promise<{ box: Box; index: num
       }
       if (tail >= 12 && (!best || tail > best.area)) best = { area: tail, box: { x: x0 * stride, y: y0 * stride, w: (x1 - x0 + 1) * stride, h: (y1 - y0 + 1) * stride } };
     }
+    if (ones >= 12) moving++;
+    // Most of the picture differs here (a camera move, another shot): no element of its own on this frame.
+    if (ones >= 0.4 * gw * gh || (best && wholePicture(best, w, h, gw * gh))) {
+      wide++;
+      continue;
+    }
     if (best) regions.push(best);
   }
-  if (!regions.length) return undefined;
+  // The whole picture moving on most of the sampled frames: no element stands out against a still background.
+  if (moving && wide * 2 >= moving) return { wholePicture: true };
+  if (!regions.length) return { wholePicture: wide > 0 };
+  const parts = regions;
 
   // Pair each distinct box with the frame where it holds the element: the strongest edges on its outline.
   const candidates: { box: Box; index: number; energy: number }[] = [];
-  const most = Math.max(...regions.map((r) => r.area));
-  for (const r of regions.filter((r) => r.area >= 0.3 * most)) {
+  const most = Math.max(...parts.map((r) => r.area));
+  for (const r of parts.filter((r) => r.area >= 0.3 * most)) {
     let index = picks[0]!;
     let energy = -1;
     for (const k of picks) {
@@ -723,9 +767,14 @@ export async function autoBox(video: GrayFrames): Promise<{ box: Box; index: num
     if (candidates.some((c) => c.index === index && iou(c.box, r.box) > 0.6)) continue;
     candidates.push({ box: r.box, index, energy });
   }
-  if (!candidates.length) return undefined;
+  if (!candidates.length) return { wholePicture: wide > 0 };
   candidates.sort((a, b) => b.energy - a.energy);
-  const tried = candidates.slice(0, 4).map((c) => ({ ...c, box: tighten(frames, picks, w, h, c.box, c.index, threshold) }));
+  const tried = candidates
+    .slice(0, 4)
+    .map((c) => ({ ...c, box: tighten(frames, picks, w, h, c.box, c.index, threshold) }))
+    // Half the frame or more is a character filling it or the picture itself, never an element to follow by its place.
+    .filter((c) => !(c.box.w * c.box.h >= 0.5 * w * h || (c.box.w >= 0.9 * w && c.box.h >= 0.9 * h)));
+  if (!tried.length) return { wholePicture: true };
   let winner = tried[0]!;
   if (tried.length > 1) {
     let value = -1;
@@ -739,7 +788,7 @@ export async function autoBox(video: GrayFrames): Promise<{ box: Box; index: num
       if (q.value >= 0.97) break;
     }
   }
-  return { box: winner.box, index: winner.index };
+  return { found: { box: winner.box, index: winner.index }, wholePicture: false };
 }
 
 /**

@@ -1,5 +1,5 @@
 import { rgbToOklab } from "../style/palette.js";
-import { styleMarkdown, writeWithMeasuredBlock, type MotionSpec } from "../style/spec.js";
+import { styleMarkdown, writeWithMeasuredBlock, type Evidence, type MotionSpec } from "../style/spec.js";
 import { mdText } from "../text.js";
 import type { Workspace } from "../workspace/workspace.js";
 import { bezierPeak } from "./easing.js";
@@ -11,8 +11,9 @@ export type ExactSpec = MotionSpec & {
     kind: ExactAnalysis["kind"];
     unknowns: string[];
     fonts: string[];
-    texts: ExactAnalysis["texts"];
+    texts: (ExactAnalysis["texts"][number] & { evidence: Evidence })[];
     layers: number;
+    evidence: Evidence;
   };
 };
 
@@ -56,12 +57,14 @@ export function buildExactSpec(a: ExactAnalysis, version: string): ExactSpec {
     generatedBy: `framelens ${version} (exact ${a.kind})`,
     source: { kind: a.kind, input: a.input, ...(a.url && { url: a.url }), title: a.title },
     range: { start: a.start, end: a.end },
-    timebase: { fps, vfr: false, duration: r2(a.end - a.start), ...(a.width && { width: a.width }), ...(a.height && { height: a.height }) },
+    // Frame rate, size and length are the file's own values.
+    timebase: { fps, vfr: false, duration: r2(a.end - a.start), ...(a.width && { width: a.width }), ...(a.height && { height: a.height }), evidence: "measured" },
     anchors: { words: [], beats: [], cuts: [] },
     changes: [],
     palette: a.palette.map((p) => ({ ...swatch(p.hex, p.share), evidence: "measured" as const })),
     typography: [...typography.values()],
-    shots: a.shots.map((s) => ({ id: s.id, start: s.start, end: s.end, frames: Math.max(1, Math.round((s.end - s.start) * fps)), palette: s.palette })),
+    // Compositions, markers or animations of the file: their times are the file's own.
+    shots: a.shots.map((s) => ({ id: s.id, start: s.start, end: s.end, frames: Math.max(1, Math.round((s.end - s.start) * fps)), palette: s.palette, evidence: "measured" as const })),
     systems: [],
     events: a.moves.map((m) => ({
       start: m.start,
@@ -87,9 +90,11 @@ export function buildExactSpec(a: ExactAnalysis, version: string): ExactSpec {
       meanShotSeconds: r2(lengths.reduce((s, l) => s + l, 0) / (lengths.length || 1)),
       medianShotSeconds: r2(median),
       movesPerMinute: r2(a.moves.length / minutes),
+      // Counts and rates computed from the shots and moves.
+      evidence: "derived",
     },
     audio: { sfx: [] },
-    exact: { kind: a.kind, unknowns: a.unknowns, fonts: a.fonts, texts: a.texts, layers: a.layerCount },
+    exact: { kind: a.kind, unknowns: a.unknowns, fonts: a.fonts, texts: a.texts.map((t) => ({ ...t, evidence: "measured" as const })), layers: a.layerCount, evidence: "measured" },
   };
 }
 

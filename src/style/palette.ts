@@ -41,6 +41,36 @@ export function oklabToHex([L, a, b]: Lab): string {
 
 const dist2 = (p: Lab, q: Lab) => (p[0] - q[0]) ** 2 + (p[1] - q[1]) ** 2 + (p[2] - q[2]) ** 2;
 
+/** OKLab distance under which two colours are the same one written twice (#FFFFFF, #FEFFFF, #FEFEFE). */
+export const SAME_COLOUR = 0.01;
+
+const hexLab = (hex: string): Lab | undefined => {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+  if (!m) return undefined;
+  const n = parseInt(m[1]!, 16);
+  return rgbToOklab((n >> 16) & 255, (n >> 8) & 255, n & 255);
+};
+
+/**
+ * Colours read from a file's own values (Lottie, Rive, Figma) with the near-identical ones merged: within
+ * `distance` in OKLab they are one colour, kept as the one with the largest share, with the shares added.
+ */
+export function mergeNearColours<T extends { hex: string; share: number }>(list: T[], distance = SAME_COLOUR): T[] {
+  const kept: { colour: T; lab?: Lab }[] = [];
+  for (const colour of [...list].sort((a, b) => b.share - a.share)) {
+    const lab = hexLab(colour.hex);
+    const same = lab && kept.find((k) => k.lab && dist2(k.lab, lab) <= distance * distance);
+    if (same) same.colour = { ...same.colour, share: Math.round((same.colour.share + colour.share) * 1000) / 1000 };
+    else kept.push({ colour: { ...colour }, ...(lab && { lab }) });
+  }
+  return kept.map((k) => k.colour);
+}
+
+/** A list of colours with the near-identical ones dropped (the first of each stays). */
+export function distinctColours(hexes: string[], distance = SAME_COLOUR): string[] {
+  return mergeNearColours(hexes.map((hex, i) => ({ hex, share: hexes.length - i })), distance).map((c) => c.hex);
+}
+
 /**
  * Dominant colours of packed RGB pixels. Deterministic: seeds are the most frequent colour, then the pixel
  * farthest from all seeds so far (k-means++ without randomness). Near-identical clusters are merged.

@@ -19,6 +19,11 @@ export interface PageAnimation {
   properties: string[];
   scrollY: number;
   scrollTriggered?: boolean;
+  /**
+   * No longer running when the page was read (finished, cancelled or its element removed): known only from the
+   * recorder `web` starts before the page loads, read as the animation started.
+   */
+  ended?: boolean;
 }
 
 export interface PageReading {
@@ -32,12 +37,11 @@ export interface PageReading {
   gsap: boolean;
 }
 
-/**
- * Runs in the page. Reads every animation the browser knows about (document.getAnimations covers CSS animations,
- * transitions and WAAPI, including Motion's hardware-accelerated ones), GSAP tweens when `window.gsap` is exposed,
- * the computed type of headings and text, and the colours on screen weighted by area.
- */
-export const PAGE_SCRIPT = `(() => {
+/** Where the recorder keeps what it saw, on the page's window (a symbol, so it never clashes with the page's names). */
+const RECORDER_KEY = `Symbol.for("framelens.recorder")`;
+
+/** Page-side helpers shared by the recorder and the reader: element paths and one animation described. */
+const DESCRIBE = `
   const short = (el) => {
     if (!el || !el.tagName) return "?";
     let s = el.tagName.toLowerCase();
@@ -66,7 +70,7 @@ export const PAGE_SCRIPT = `(() => {
       return fallback;
     }
   };
-  const animations = safe(() => [...document.getAnimations()].slice(0, 500), []).map((a) => safe(() => {
+  const describe = (a, scrollY) => safe(() => {
     const effect = a.effect;
     const timing = effect && effect.getComputedTiming ? effect.getComputedTiming() : {};
     const frames = effect && effect.getKeyframes ? effect.getKeyframes() : [];
@@ -87,9 +91,92 @@ export const PAGE_SCRIPT = `(() => {
         return o;
       }),
       properties: props.slice(0, 12),
-      scrollY: Math.round(window.scrollY),
+      scrollY,
     };
-  }, null)).filter(Boolean);
+  }, null);
+`;
+
+/**
+ * Runs before any of the page's own scripts (`web` adds it with Page.addScriptToEvaluateOnNewDocument): keeps every
+ * animation that starts while the page loads and scrolls, so one that has ended by the time the page is read still
+ * counts. It sees CSS animations (animationstart), CSS transitions (transitionrun, transitionstart), Web Animations
+ * (Element.animate and Animation.play) and, for the first 10 s, every frame's document.getAnimations(). Each one is
+ * described as it starts. The browser's own functions are kept before the page can replace them. It changes nothing
+ * on the page and sends nothing anywhere.
+ */
+export const RECORDER_SCRIPT = `(() => {
+  const KEY = ${RECORDER_KEY};
+  if (window[KEY]) return;
+  ${DESCRIBE}
+  const docAnimations = Document.prototype.getAnimations;
+  const elementAnimations = Element.prototype.getAnimations;
+  const scroll = () => safe(() => Math.round(window.scrollY || 0), 0);
+  const entries = [];
+  const known = new WeakSet();
+  const add = (a) => {
+    if (!a || typeof a !== "object" || known.has(a) || entries.length >= 1000) return;
+    known.add(a);
+    const reading = describe(a, scroll());
+    if (reading) entries.push({ animation: a, reading });
+  };
+  const fromElement = (el) => safe(() => {
+    if (el && typeof elementAnimations === "function") for (const a of elementAnimations.call(el)) add(a);
+  }, null);
+  for (const type of ["animationstart", "transitionrun", "transitionstart"]) {
+    safe(() => window.addEventListener(type, (event) => fromElement(event.target), { capture: true, passive: true }), null);
+  }
+  safe(() => {
+    const animate = Element.prototype.animate;
+    if (typeof animate === "function") {
+      Element.prototype.animate = function animate_(...args) {
+        const a = animate.apply(this, args);
+        safe(() => add(a), null);
+        return a;
+      };
+    }
+    const play = Animation.prototype.play;
+    if (typeof play === "function") {
+      Animation.prototype.play = function play_(...args) {
+        const result = play.apply(this, args);
+        safe(() => add(this), null);
+        return result;
+      };
+    }
+  }, null);
+  const began = safe(() => performance.now(), 0);
+  let frames = 0;
+  const sample = () => {
+    safe(() => {
+      if (typeof docAnimations === "function") for (const a of docAnimations.call(document)) add(a);
+    }, null);
+    frames++;
+    if (frames < 600 && safe(() => performance.now(), 0) - began < 10000) safe(() => requestAnimationFrame(sample), null);
+  };
+  safe(() => requestAnimationFrame(sample), null);
+  safe(() => Object.defineProperty(window, KEY, { value: { entries: () => entries.slice() }, enumerable: false }), null);
+})()`;
+
+/**
+ * Runs in the page. Reads every animation the browser knows about (document.getAnimations covers CSS animations,
+ * transitions and WAAPI, including Motion's hardware-accelerated ones) plus the ones the recorder kept that have ended
+ * since (when `web` started it before the page loaded; the extension reads a page that is already open, so it has
+ * none), GSAP tweens when `window.gsap` is exposed, the computed type of headings and text, and the colours on
+ * screen weighted by area.
+ */
+export const PAGE_SCRIPT = `(() => {
+  ${DESCRIBE}
+  const live = safe(() => [...document.getAnimations()].slice(0, 500), []);
+  const animations = live.map((a) => describe(a, Math.round(window.scrollY))).filter(Boolean);
+  // What the recorder saw start that the browser no longer lists (it ended, was cancelled or lost its element):
+  // described as it started, at the scroll position it started at.
+  const listed = new Set(live);
+  const recorder = safe(() => window[${RECORDER_KEY}], undefined);
+  const recorded = safe(() => (recorder && typeof recorder.entries === "function" ? recorder.entries() : []), []);
+  for (const r of Array.isArray(recorded) ? recorded.slice(0, 1000) : []) safe(() => {
+    if (!r || !r.reading || typeof r.reading !== "object" || listed.has(r.animation)) return;
+    const state = safe(() => String(r.animation.playState), "");
+    animations.push(state === "running" || state === "paused" ? { ...r.reading } : { ...r.reading, ended: true });
+  }, null);
   // A tween's startTime() is on its parent timeline and already includes its delay; nested timelines add theirs.
   const globalStart = (t) => {
     let s = t.startTime ? t.startTime() : 0;
@@ -200,6 +287,7 @@ export function cleanReading(raw: unknown): PageReading {
       properties: list<unknown>(a.properties, 12).map((p) => text(p, 40)),
       scrollY: num(a.scrollY),
       ...(a.scrollTriggered === true && { scrollTriggered: true }),
+      ...(a.ended === true && { ended: true }),
     }));
   const fonts = list<Record<string, unknown>>(r.fonts, 14)
     .filter((f) => f && typeof f === "object")
@@ -228,14 +316,20 @@ export function cleanReading(raw: unknown): PageReading {
   };
 }
 
-/** Merges readings taken at several scroll positions, keeping one entry per animation. */
+/**
+ * Merges readings taken at several scroll positions, keeping one entry per animation: the same animation read while
+ * running and kept by the recorder after it ended, or started again, is listed once (as first seen, and as running
+ * when any reading saw it run).
+ */
 export function mergeReadings(readings: PageReading[]): PageReading {
   const first = readings[0]!;
   const seen = new Map<string, PageAnimation>();
   for (const r of readings) {
     for (const a of r.animations) {
-      const key = `${a.kind}|${a.target}|${a.name}|${a.duration}`;
-      if (!seen.has(key)) seen.set(key, { ...a, scrollTriggered: a.scrollTriggered || a.scrollY > 0 });
+      const key = `${a.kind}|${a.target}|${a.name}|${a.duration}|${a.delay}`;
+      const known = seen.get(key);
+      if (!known) seen.set(key, { ...a, scrollTriggered: a.scrollTriggered || a.scrollY > 0 });
+      else if (known.ended && !a.ended) delete known.ended;
     }
   }
   const colors = new Map<string, number>();

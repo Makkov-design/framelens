@@ -20,7 +20,7 @@ import { exportSpec, type ExportTarget } from "./export/exporters.js";
 import { onBeatRatio } from "./audio/dsp.js";
 import { classifyChanges, energySpikeCuts, frameAt, motionEvents, motionProfile } from "./style/motion.js";
 import { mergePalettes, palette } from "./style/palette.js";
-import { detectTransitions, visibleMoves } from "./style/transitions.js";
+import { detectTransitions, visibleMoves, WHOLE_PICTURE_AREA } from "./style/transitions.js";
 import {
   ANALYSIS_SKELETON,
   buildSpec,
@@ -37,7 +37,7 @@ import {
 import { Workspace, type SourceRecord } from "./workspace/workspace.js";
 import { linkTracks } from "./track/link.js";
 import { trackMarkdown, trackSvg } from "./track/report.js";
-import { trackWindow, type TrackedMove } from "./track/run.js";
+import { trackWindow, WHOLE_PICTURE, type TrackedMove } from "./track/run.js";
 import type { Box } from "./track/tracker.js";
 
 /** A box given in fractions of the frame (every value ≤ 1) in source pixels. */
@@ -285,9 +285,16 @@ export class Engine {
     const source = await this.source(input);
     const { transcript } = await this.transcript(source);
     const { boundaries } = source.probe.hasVideo ? await this.boundaries(input, { rate: 2, threshold: 0.3 }) : { boundaries: undefined };
-    // Moves found by an earlier `style` run: the plan points `track` at them.
+    // Moves found by an earlier `style` run: the plan points `track` at them. `element` says whether `auto` can pick
+    // the element (it moves against a still background) or a box is needed (the whole picture moves there).
     const spec = source.ws.readJson<MotionSpec>("motion-spec.json");
-    const moves = spec?.events.map((e) => ({ start: e.start, end: e.end, frames: e.frames, tracked: Boolean(e.track) }));
+    const moves = spec?.events.map((e) => ({
+      start: e.start,
+      end: e.end,
+      frames: e.frames,
+      tracked: Boolean(e.track),
+      ...(typeof e.area === "number" && { area: e.area, element: e.area >= WHOLE_PICTURE_AREA ? ("box" as const) : ("auto" as const) }),
+    }));
     const duration = source.probe.duration;
     // What earlier runs left in the workspace, so steps that need them get real times: boundaries over the whole
     // video, and the shots of a `style` run that covered all of it.
@@ -408,6 +415,13 @@ export class Engine {
     let end = options.end;
     let move = options.move;
     let note: string | undefined;
+    const fps = probe.fps ?? probe.nominalFps ?? 30;
+    // The shot a time belongs to: frames across a cut are another picture, so a window stays inside its shot. Its
+    // last frame is the one before the cut (the cut's own frame starts the next shot).
+    const shots = Array.isArray(spec?.shots) ? spec!.shots.filter((s) => Number.isFinite(s.start) && Number.isFinite(s.end) && s.end > s.start) : [];
+    const shotAt = (t: number) => shots.find((s) => t >= s.start - 1e-6 && t < s.end);
+    const inside = (s: { start: number; end: number }) => ({ start: Math.max(0, s.start), end: Math.min(probe.duration, s.end < probe.duration - 1e-6 ? s.end - 0.5 / fps : s.end) });
+    let limits: { start: number; end: number } | undefined;
     if (start === undefined || end === undefined) {
       const events = spec?.events ?? [];
       if (move !== undefined && !events[move - 1]) throw new InvalidInputError(`There is no style move ${move}; motion-spec.json lists ${events.length}.`);
@@ -420,10 +434,26 @@ export class Engine {
         );
       }
       move = index + 1;
-      // Some rest on both sides: the fit finds where the move really starts and ends.
-      start = start ?? Math.max(0, event.start - 0.3);
-      end = end ?? Math.min(probe.duration, event.end + 0.4);
-      note = `Window from style move ${move} (${event.start.toFixed(3)}–${event.end.toFixed(3)} s).`;
+      // `style` measured how much of the picture this move changes: most of it is a camera or character move, where
+      // the automatic pick has no element against a still background to follow.
+      if (!options.box && typeof event.area === "number" && event.area >= WHOLE_PICTURE_AREA) {
+        throw new InvalidInputError(`${WHOLE_PICTURE} Style move ${move} changes ${Math.round(event.area * 100)}% of the picture.`);
+      }
+      const shot = shotAt(event.start);
+      limits = shot && inside(shot);
+      // Some rest on both sides, inside the move's shot: the fit finds where the move really starts and ends.
+      const lo = limits?.start ?? 0;
+      const hi = limits?.end ?? probe.duration;
+      start = start ?? Math.max(lo, event.start - 0.3);
+      end = end ?? Math.min(hi, event.end + 0.4);
+      const kept = shot && (start > event.start - 0.3 + 1e-6 || end < event.end + 0.4 - 1e-6);
+      note = `Window from style move ${move} (${event.start.toFixed(3)}–${event.end.toFixed(3)} s)${kept ? `, kept inside its shot (${shot!.start.toFixed(3)}–${shot!.end.toFixed(3)} s)` : ""}.`;
+    } else {
+      // A window given by hand: kept as asked; it may grow only inside its shot, and crossing a cut is said.
+      const shot = shotAt((start + end) / 2);
+      if (shot && start >= shot.start - 1e-6 && end <= shot.end + 1e-6) limits = inside(shot);
+      const crossed = (spec?.anchors?.cuts ?? []).map((c) => c.t).filter((t) => Number.isFinite(t) && t > start! + 0.5 / fps && t < end! - 0.5 / fps);
+      if (crossed.length) note = `The window crosses ${crossed.length === 1 ? "the cut" : "the cuts"} at ${crossed.map((t) => `${t.toFixed(3)} s`).join(", ")}: the frames on the other side are another picture. Pass a window inside one shot for an element of that shot.`;
     }
     const tracks = ws.readJson<TrackedMove[]>("tracks.json") ?? [];
     // A track is the same as an earlier one when it asks for the same window and the same element: another box in
@@ -437,14 +467,23 @@ export class Engine {
     };
     const previous = tracks.find(same);
     const id = previous?.id ?? `t${tracks.reduce((n, t) => Math.max(n, Number(t.id.slice(1)) || 0), 0) + 1}`;
-    const track = await trackWindow(record.mediaPath, probe, this.options.tools, {
-      start,
-      end,
-      id,
-      ...(options.box && { box: options.box }),
-      ...(options.at !== undefined && { at: options.at }),
-      ...(move !== undefined && { move }),
-    });
+    let measured: TrackedMove;
+    try {
+      measured = await trackWindow(record.mediaPath, probe, this.options.tools, {
+        start,
+        end,
+        id,
+        ...(options.box && { box: options.box }),
+        ...(options.at !== undefined && { at: options.at }),
+        ...(move !== undefined && { move }),
+        ...(limits && { limits }),
+      });
+    } catch (error) {
+      // A window across a cut is the likelier cause: say so with the refusal.
+      if (error instanceof InvalidInputError && note && /crosses the cut/.test(note)) throw new InvalidInputError(`${error.message} ${note}`);
+      throw error;
+    }
+    const track: TrackedMove = { ...measured, measuredAt: new Date().toISOString() };
     const all = [...tracks.filter((t) => t.id !== id), track].sort((a, b) => a.start - b.start || a.id.localeCompare(b.id));
     const files: Record<string, string> = { tracks: ws.writeJson("tracks.json", all) };
     if (spec) files.spec = ws.writeJson("motion-spec.json", linkTracks(spec, all));

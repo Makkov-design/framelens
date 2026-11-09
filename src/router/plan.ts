@@ -172,16 +172,33 @@ const BOX_THEN =
   "add `element`: a box {x, y, w, h} around the thing that moves, read from a frame of this move (source pixels, or fractions of the frame); " +
   "`auto` (the biggest moving region) suits graphics and UI, but in camera footage it often follows the camera or a person instead";
 
+const WHOLE_PICTURE_THEN =
+  "add `element`: a box {x, y, w, h} around the part to follow, with `at` (the time of the frame you read it from); " +
+  "`style` measured that the whole picture changes in this move (a camera or character move), so `auto` has no element to pick";
+
+/** A move from `style`, with whether `auto` can pick its element (`element`, from the share of the picture it changes). */
+export interface PlanMove {
+  start: number;
+  end: number;
+  frames: number;
+  tracked?: boolean;
+  /** Share of the picture the move changes (0–1); absent in specs from before 2.1.0's release fixes. */
+  area?: number;
+  /** `box` when the whole picture moves there; absent in older specs. */
+  element?: "auto" | "box";
+}
+
 /** After `style`: one `track` step per move that matters (the longest untracked ones), or one per move number. */
-function addTrackSteps(
-  steps: PlanStep[],
-  notes: string[],
-  moves: { start: number; end: number; frames: number; tracked?: boolean }[] | undefined,
-  type: VideoType,
-): void {
+function addTrackSteps(steps: PlanStep[], notes: string[], moves: PlanMove[] | undefined, type: VideoType): void {
   const auto = AUTO_ELEMENT_TYPES.has(type);
-  const step = (move: number, why: string): PlanStep =>
-    auto ? { tool: "track", args: { move, element: "auto" }, why } : { tool: "track", args: { move }, why, then: BOX_THEN };
+  // `element: "auto"` only where the move allows it (or says nothing) and the footage suits it; a whole-picture move
+  // always asks for a box.
+  const step = (move: number, why: string, whole = false): PlanStep =>
+    whole
+      ? { tool: "track", args: { move }, why, then: WHOLE_PICTURE_THEN }
+      : auto
+        ? { tool: "track", args: { move, element: "auto" }, why }
+        : { tool: "track", args: { move }, why, then: BOX_THEN };
   if (!moves) {
     steps.push(step(1, "after style: the exact curve (cubic-bezier or spring) of each move that matters; repeat with move 2, 3, …"));
     return;
@@ -200,9 +217,16 @@ function addTrackSteps(
       seen.add(key);
       return !m.tracked;
     });
-  const chosen = [...open].sort((a, b) => b.frames - a.frames || a.start - b.start).slice(0, MAX_TRACK_STEPS).sort((a, b) => a.start - b.start);
+  // Moves of one element against a still background first (they fit), then the longest.
+  const whole = (m: PlanMove) => m.element === "box";
+  const chosen = [...open]
+    .sort((a, b) => Number(whole(a)) - Number(whole(b)) || b.frames - a.frames || a.start - b.start)
+    .slice(0, MAX_TRACK_STEPS)
+    .sort((a, b) => a.start - b.start);
   for (const m of chosen) {
-    steps.push(step(m.number, `exact curve of the move at ${m.start.toFixed(2)}–${m.end.toFixed(2)} s (${m.frames} frames)${auto ? "; pass a box when several things move" : ""}`));
+    const why = `exact curve of the move at ${m.start.toFixed(2)}–${m.end.toFixed(2)} s (${m.frames} frames)`;
+    if (whole(m)) steps.push(step(m.number, `${why}; the whole picture changes here${m.area !== undefined ? ` (${Math.round(m.area * 100)}% of it)` : ""}`, true));
+    else steps.push(step(m.number, `${why}${auto ? "; pass a box when several things move" : ""}`));
   }
   if (open.length > chosen.length) notes.push(`${open.length - chosen.length} more moves can be tracked the same way (track with move: n).`);
 }
@@ -241,7 +265,7 @@ export function buildPlan(input: {
   hasSpeech: boolean;
   phrase?: string;
   /** Moves from an earlier `style` run, to point `track` at. */
-  moves?: { start: number; end: number; frames: number; tracked?: boolean }[];
+  moves?: PlanMove[];
   /**
    * Results already in the workspace, so a step that needs them gets real numbers instead of a `then`: `boundaries`
    * over the whole video at a rate and threshold, and the shots of an earlier `style` run.

@@ -1,10 +1,12 @@
 // Regressions from the release review of 2.1.0, before it was tagged. Each failed before its fix.
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { cleanReading, mergeReadings, specFromPage } from "../src/browser/web.js";
 import { HELP, runCommand } from "../src/cli.js";
+import { runExact } from "../src/exact/run.js";
 import { constantShift, matchCuts, verdict } from "../src/compare/compare.js";
 import { Engine, localFileResolver } from "../src/engine.js";
 import { silentLogger } from "../src/logger.js";
@@ -65,6 +67,51 @@ describe("evidence labels in motion-spec.json", () => {
     expect(spec.shots.map((s) => s.evidence)).toEqual(["measured", "derived", "derived"]);
     expect(spec.transitions!.find((x) => x.kind === "dip")!.hold).toEqual({ start: 5.95, end: 6.05, evidence: "derived" });
     expect(unlabelledNumbers(spec)).toEqual([]);
+  });
+
+  it("holds for specs read from a web page, a Lottie and Rive files", async () => {
+    // 2.1.0 left timebase, shots and rhythm of these specs (and a page's keyframes and scroll positions) unlabelled.
+    const reading = cleanReading({
+      url: "https://example.test/",
+      title: "Page",
+      viewport: { width: 1440, height: 900 },
+      scrollHeight: 3000,
+      animations: [
+        { kind: "css-animation", name: "rise", target: "h1", delay: 100, duration: 650, iterations: 1, easing: "linear", keyframes: [{ offset: 0, easing: "ease", opacity: "0" }, { offset: 1, opacity: "1" }], properties: ["opacity"], scrollY: 0, ended: true },
+        { kind: "gsap", name: "x", target: "div", delay: 500, duration: 1200, iterations: "infinite", easing: "expo.out", keyframes: [{ x: "200" }], properties: ["x"], scrollY: 900, scrollTriggered: true },
+      ],
+      fonts: [{ selector: "h1", family: "Inter", weight: "800", size: "72px", lineHeight: "76px", letterSpacing: "0", transform: "none", sample: "Hi" }],
+      colors: [{ hex: "#101418", area: 900 }],
+      gsap: true,
+    });
+    const web = specFromPage(mergeReadings([reading]), "test");
+    expect(unlabelledNumbers(web)).toEqual([]);
+    expect(web.timebase.evidence).toEqual({ fps: "inferred", duration: "derived", width: "measured", height: "measured" });
+
+    const dir = mkdtempSync(join(tmpdir(), "fl-walk-"));
+    try {
+      const lottie = {
+        v: "5.7.0", nm: "Demo", fr: 30, ip: 0, op: 60, w: 400, h: 300,
+        fonts: { list: [{ fName: "Inter-Bold", fFamily: "Inter", fStyle: "Bold" }] },
+        markers: [{ cm: "intro", tm: 0, dr: 30 }, { cm: "outro", tm: 30, dr: 30 }],
+        layers: [
+          { ty: 4, nm: "Box", ind: 1, ip: 0, op: 60, st: 0, sr: 1, ks: { p: { a: 1, k: [{ t: 0, s: [50, 150, 0], o: { x: [0.2], y: [0.8] }, i: { x: [0.3], y: [1] } }, { t: 30, s: [350, 150, 0] }] } }, shapes: [{ ty: "gr", it: [{ ty: "rc", s: { a: 0, k: [100, 100] } }, { ty: "fl", c: { a: 0, k: [1, 0.2, 0.2, 1] } }] }] },
+          { ty: 5, nm: "Title", ind: 2, ip: 0, op: 60, ks: {}, t: { d: { k: [{ t: 0, s: { s: 48, f: "Inter-Bold", t: "Hello", fc: [1, 1, 1] } }] } } },
+        ],
+      };
+      const file = join(dir, "demo.json");
+      writeFileSync(file, JSON.stringify(lottie));
+      const sources = [file, join("test", "fixtures", "rive", "cubic_value_test.riv"), join("test", "fixtures", "rive", "light_switch.riv")];
+      for (const source of sources) {
+        const r = await runExact({ source, root: join(dir, "ws"), version: "test" });
+        const spec = JSON.parse(readFileSync(r.files.spec!, "utf8")) as MotionSpec;
+        if (!source.includes("light_switch")) expect(spec.events.length, source).toBeGreaterThan(0); // its moves sit in a state machine
+        expect(spec.shots.length, source).toBeGreaterThan(0);
+        expect(unlabelledNumbers(spec), source).toEqual([]);
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

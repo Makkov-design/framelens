@@ -1,5 +1,6 @@
 // Frame Lens page reader, generated from src/browser/page-script.ts (the same script the web tool runs).
 (() => {
+  
   const short = (el) => {
     if (!el || !el.tagName) return "?";
     let s = el.tagName.toLowerCase();
@@ -28,7 +29,7 @@
       return fallback;
     }
   };
-  const animations = safe(() => [...document.getAnimations()].slice(0, 500), []).map((a) => safe(() => {
+  const describe = (a, scrollY) => safe(() => {
     const effect = a.effect;
     const timing = effect && effect.getComputedTiming ? effect.getComputedTiming() : {};
     const frames = effect && effect.getKeyframes ? effect.getKeyframes() : [];
@@ -49,9 +50,22 @@
         return o;
       }),
       properties: props.slice(0, 12),
-      scrollY: Math.round(window.scrollY),
+      scrollY,
     };
-  }, null)).filter(Boolean);
+  }, null);
+
+  const live = safe(() => [...document.getAnimations()].slice(0, 500), []);
+  const animations = live.map((a) => describe(a, Math.round(window.scrollY))).filter(Boolean);
+  // What the recorder saw start that the browser no longer lists (it ended, was cancelled or lost its element):
+  // described as it started, at the scroll position it started at.
+  const listed = new Set(live);
+  const recorder = safe(() => window[Symbol.for("framelens.recorder")], undefined);
+  const recorded = safe(() => (recorder && typeof recorder.entries === "function" ? recorder.entries() : []), []);
+  for (const r of Array.isArray(recorded) ? recorded.slice(0, 1000) : []) safe(() => {
+    if (!r || !r.reading || typeof r.reading !== "object" || listed.has(r.animation)) return;
+    const state = safe(() => String(r.animation.playState), "");
+    animations.push(state === "running" || state === "paused" ? { ...r.reading } : { ...r.reading, ended: true });
+  }, null);
   // A tween's startTime() is on its parent timeline and already includes its delay; nested timelines add theirs.
   const globalStart = (t) => {
     let s = t.startTime ? t.startTime() : 0;

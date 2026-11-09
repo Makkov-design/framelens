@@ -86,12 +86,27 @@ export async function analyzeAudio(source: string, tools: MediaTools, range: { s
   };
 }
 
-/** A spectrogram picture, so the agent can see sound design: risers, whooshes, hits, music beds, silences. */
+/**
+ * A spectrogram picture, so the agent can see sound design: risers, whooshes, hits, music beds, silences. The full
+ * PNG stays on disk; a smaller JPEG preview next to it (`spectrogramPreview`, about an eighth of its size) is what a
+ * tool result carries.
+ */
 export async function spectrogram(source: string, out: string, tools: MediaTools, range: { start: number; end: number }): Promise<string> {
   await tools.exec(tools.ffmpeg, [
     "-hide_banner", "-nostdin", "-v", "error", "-y",
     "-ss", String(range.start), "-t", String(range.end - range.start), "-i", source,
     "-lavfi", `showspectrumpic=s=1280x360:legend=1:scale=log:fscale=log:color=intensity`, "-frames:v", "1", out,
   ], { timeoutMs: 5 * 60_000 });
+  try {
+    // Three quarters of the size at JPEG quality 5: the axes stay readable, the file is about an eighth of the PNG.
+    await tools.exec(tools.ffmpeg, ["-hide_banner", "-nostdin", "-v", "error", "-y", "-i", out, "-frames:v", "1", "-vf", "scale=iw*3/4:-2", "-q:v", "5", spectrogramPreview(out)], { timeoutMs: 60_000 });
+  } catch {
+    // No preview: the result carries the PNG itself.
+  }
   return out;
+}
+
+/** Where `spectrogram` writes the JPEG preview of a spectrogram PNG. */
+export function spectrogramPreview(png: string): string {
+  return png.replace(/\.png$/i, "") + "-preview.jpg";
 }

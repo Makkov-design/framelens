@@ -10,6 +10,7 @@ import { MAX_RIVE_BYTES, parseRive, riveMarkdown, type RiveAnalysis } from "./ri
 import { writeExact, type ExactSpec } from "./spec.js";
 import type { ExactAnalysis } from "./types.js";
 import { oneLine } from "../text.js";
+import { distinctColours, mergeNearColours } from "../style/palette.js";
 
 export { FigmaTokenError, FIGMA_TOKEN_HELP };
 
@@ -55,14 +56,36 @@ export function riveLink(url: string): boolean {
   return isRiv;
 }
 
-function startsWithRive(path: string): boolean {
+function head(path: string, bytes: number): Buffer {
   const fd = openSync(path, "r");
   try {
-    const head = Buffer.alloc(4);
-    return readSync(fd, head, 0, 4, 0) === 4 && head.toString("latin1") === "RIVE";
+    const buf = Buffer.alloc(bytes);
+    return buf.subarray(0, readSync(fd, buf, 0, bytes, 0));
   } finally {
     closeSync(fd);
   }
+}
+
+function startsWithRive(path: string): boolean {
+  return head(path, 4).toString("latin1") === "RIVE";
+}
+
+/**
+ * The kind of video or animated picture a file is, from its first bytes (MP4/MOV, WebM/MKV, AVI, GIF, FLV, MPEG),
+ * whatever its name says; undefined for anything else.
+ */
+export function mediaKind(bytes: Uint8Array): string | undefined {
+  const b = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const at = (offset: number, text: string) => b.length >= offset + text.length && b.toString("latin1", offset, offset + text.length) === text;
+  if (at(4, "ftyp")) return /^(qt {2})$/.test(b.toString("latin1", 8, 12)) ? "QuickTime (MOV) video" : "MP4 video";
+  // QuickTime files without ftyp start with one of these atoms.
+  if (["moov", "mdat", "wide", "free", "skip", "pnot"].some((atom) => at(4, atom)) && b.length >= 8 && b.readUInt32BE(0) >= 8) return "QuickTime (MOV) video";
+  if (b.length >= 4 && b.readUInt32BE(0) === 0x1a45dfa3) return /webm/.test(b.toString("latin1", 0, 64)) ? "WebM video" : "Matroska (MKV) video";
+  if (at(0, "RIFF") && at(8, "AVI ")) return "AVI video";
+  if (at(0, "GIF87a") || at(0, "GIF89a")) return "GIF animation";
+  if (at(0, "FLV")) return "FLV video";
+  if (b.length >= 4 && b.readUInt32BE(0) === 0x000001ba) return "MPEG video";
+  return undefined;
 }
 
 const looksLottie = (j: unknown): boolean => !!j && typeof j === "object" && Array.isArray((j as { layers?: unknown }).layers) && typeof (j as { fr?: unknown }).fr === "number";
@@ -97,6 +120,14 @@ export async function runExact(o: ExactOptions): Promise<ExactResult> {
       const st = statSync(path);
       key = sha(`${path}|${st.size}|${st.mtimeMs}`);
       ws = new Workspace(o.root, `${RIV_EXT.test(path) ? "rive" : "lottie"}-${key}`);
+    }
+    // A video or GIF has no animation data to read: say so instead of failing to parse it as JSON.
+    const media = statSync(path).isFile() ? mediaKind(head(path, 64)) : undefined;
+    if (media) {
+      throw new Error(
+        `"${oneLine(o.source, 200)}" is ${/^(MP4|AVI|FLV|MPEG)/.test(media) ? "an" : "a"} ${media}, not a Lottie, Rive or Figma file, so it has no animation data to read. ` +
+          "Measure it from its frames instead: `plan` (with what you want to learn) or `style` take videos and GIFs.",
+      );
     }
     if (statSync(path).isFile() && startsWithRive(path)) {
       if (!ws.id.startsWith("rive-")) {
@@ -157,7 +188,9 @@ export function cleanAnalysis(a: ExactAnalysis): ExactAnalysis {
   return {
     ...a,
     title: t(a.title, 200),
-    shots: a.shots.map((s) => ({ ...s, name: t(s.name) })),
+    // The same colour written with a rounding difference (#FFFFFF, #FEFFFF, #FEFEFE) is one colour.
+    palette: mergeNearColours(a.palette),
+    shots: a.shots.map((s) => ({ ...s, name: t(s.name), palette: distinctColours(s.palette) })),
     moves: a.moves.map((m) => ({ ...m, target: t(m.target, 240), property: t(m.property, 60), type: t(m.type, 60), curve: t(m.curve, 120), from: m.from.map((v) => (typeof v === "string" ? t(v, 60) : v)), to: m.to.map((v) => (typeof v === "string" ? t(v, 60) : v)), ...(m.trigger !== undefined && { trigger: t(m.trigger, 60) }) })),
     texts: a.texts.map((x) => ({ ...x, text: t(x.text, 200), where: t(x.where, 240), ...(x.family !== undefined && { family: t(x.family, 120) }), ...(x.case !== undefined && { case: t(x.case, 20) }) })),
     fonts: a.fonts.map((f) => t(f, 120)),

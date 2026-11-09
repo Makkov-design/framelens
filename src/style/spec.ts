@@ -81,10 +81,11 @@ export interface MotionSpec {
   range: { start: number; end: number };
   /**
    * Evidence labels: every number is a field of an object with `evidence` (see `unlabelledNumbers`). The labels added
-   * in 2.1 (timebase, words, beats, shots, rhythm, audio) are optional in the type because specs from web pages,
-   * Lottie, Figma and Rive and older video specs may lack them.
+   * in 2.1 (timebase, words, beats, shots, rhythm, audio) are optional in the type because older specs may lack them.
+   * `timebase.evidence` is one label, or one per field: a web page's viewport is read, its 60 fps is Frame Lens's own
+   * choice (`inferred`).
    */
-  timebase: { fps?: number; vfr: boolean; duration: number; width?: number; height?: number; evidence?: Evidence };
+  timebase: { fps?: number; vfr: boolean; duration: number; width?: number; height?: number; evidence?: Evidence | Partial<Record<"fps" | "duration" | "width" | "height", Evidence>> };
   anchors: {
     /** Word times from the captions (the source's own data). */
     words: { id: string; t: number; end: number; text: string; evidence?: Evidence }[];
@@ -334,7 +335,8 @@ export function styleMarkdown(spec: MotionSpec): { measured: string; skeleton: s
   const swatches = spec.palette.map((p) => `| \`${p.hex}\` | ${(p.share * 100).toFixed(1)}% | ${p.lightness} | ${p.chroma < 0.03 ? "neutral" : p.chroma} |`);
   const easing = new Map<string, number>();
   for (const e of spec.events) easing.set(e.easing, (easing.get(e.easing) ?? 0) + 1);
-  const moveLines = spec.events.slice(0, 40).map((e) => `| ${fmt(e.start)} | ${e.frames} | ${e.easing}${e.track ? ` (tracked ${e.track})` : ""} | ${oneLine(e.curve ?? e.suggestion, 160) || "—"} | ${e.peakAt} |`);
+  // Numbered as `track` takes them (`move: n`).
+  const moveLines = spec.events.slice(0, 40).map((e, i) => `| ${i + 1} | ${fmt(e.start)} | ${e.frames} | ${e.easing}${e.track ? ` (tracked ${e.track})` : ""} | ${oneLine(e.curve ?? e.suggestion, 160) || "—"} | ${e.peakAt} |`);
   const gradual = (spec.transitions ?? []).filter((x) => x.kind !== "cut");
   const kinds = new Map<string, number>();
   for (const x of gradual) {
@@ -367,9 +369,9 @@ export function styleMarkdown(spec: MotionSpec): { measured: string; skeleton: s
     "|---|---|---|---|",
     ...swatches,
     "",
-    `**Moves:** ${spec.events.length} (${[...easing.entries()].map(([k, v]) => `${v} ${k}`).join(", ") || "none"}). Easing families are derived from how fast the whole picture changes; run \`track\` on the moves that matter for their exact curves (marked "tracked", details in TRACK.md).`,
+    `**Moves:** ${spec.events.length} (${[...easing.entries()].map(([k, v]) => `${v} ${k}`).join(", ") || "none"}). Easing families are derived from how fast the whole picture changes; run \`track\` with \`move: n\` (the number in the first column) on the moves that matter for their exact curves (marked "tracked", details in TRACK.md).`,
     "",
-    ...(moveLines.length ? ["| Starts | Frames | Family | Curve | Peak at |", "|---|---|---|---|---|", ...moveLines] : []),
+    ...(moveLines.length ? ["| Move | Starts | Frames | Family | Curve | Peak at |", "|---|---|---|---|---|---|", ...moveLines] : []),
   ].join("\n");
   const skeleton = `# Style: ${oneLine(spec.source.title ?? spec.source.input)}
 
