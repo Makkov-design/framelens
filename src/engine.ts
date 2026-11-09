@@ -93,8 +93,20 @@ export class Engine {
       root: string;
       logger: Logger;
       transcriptFallback?: TranscriptFallback;
+      /** Lines about tools Frame Lens installed by itself since the last call, for the agent (see tools/setup.ts). */
+      setupNotes?: () => string[];
     },
   ) {}
+
+  /** The absolute folder that holds every source's workspace. */
+  get root(): string {
+    return resolve(this.options.root);
+  }
+
+  /** What automatic setup did since the last call (downloaded ffmpeg or yt-dlp), to tell the agent. */
+  takeSetupNotes(): string[] {
+    return this.options.setupNotes?.() ?? [];
+  }
 
   /** Resolves and probes a source; the probe is kept in the workspace. */
   async source(input: string): Promise<Source> {

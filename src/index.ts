@@ -16,21 +16,24 @@ import { createHash } from "node:crypto";
 import { capturableLogin, captureVideo, hasLoginProfile, login, logout } from "./browser/capture.js";
 import { maxDownloadMb, resolveSource, SourceError } from "./sources/index.js";
 import { geminiTranscriptFallback } from "./speech/gemini.js";
-import { findTool } from "./tools/index.js";
-import { Workspace, workspaceRoot } from "./workspace/workspace.js";
+import { findTool, ToolSetup } from "./tools/index.js";
+import { chooseWorkspaceRoot, Workspace } from "./workspace/workspace.js";
 import type { Logger } from "./logger.js";
 
 function createEngine(logger: Logger, transcriptFallback?: TranscriptFallback): Engine {
-  // Found once at start: env override, then the pinned copy, PATH and WinGet folders. A missing ffmpeg surfaces as a
-  // clear tool error on first use, pointing at `framelens doctor`.
+  // Found once at start: env override, PATH, WinGet folders, then the pinned copy. When ffmpeg is nowhere, the bare
+  // name stays and automatic setup downloads the pinned build on first use (unless FRAMELENS_AUTO_INSTALL=0).
+  const setup = new ToolSetup({ log: (line) => logger.info(line) });
   const ffmpeg = findTool("ffmpeg")?.path ?? "ffmpeg";
   const ffprobe = findTool("ffprobe")?.path ?? "ffprobe";
-  const tools = { ffmpeg, ffprobe, exec: execTool };
+  const tools = { ffmpeg, ffprobe, exec: setup.wrapExec(execTool) };
+  const workspace = chooseWorkspaceRoot();
+  if (workspace.from !== "cwd") logger.info(`workspace folder ${workspace.root}: ${workspace.reason}`);
   return new Engine({
     tools,
     resolve: async (input, options) => {
       try {
-        return await resolveSource(input, { ...options, log: (line) => logger.info(line) });
+        return await resolveSource(input, { ...options, log: (line) => logger.info(line), locate: (name, signal) => setup.locate(name, signal) });
       } catch (error) {
         // Tier 3: a site that needs a login, and the user has logged in to the Frame Lens browser profile.
         if (!(error instanceof SourceError) || error.code !== "login_required" || !hasLoginProfile() || !capturableLogin(input, error.message)) throw error;
@@ -43,8 +46,9 @@ function createEngine(logger: Logger, transcriptFallback?: TranscriptFallback): 
         return record;
       }
     },
-    root: workspaceRoot(),
+    root: workspace.root,
     logger,
+    setupNotes: () => setup.takeNotes(),
     ...(transcriptFallback && { transcriptFallback }),
   });
 }

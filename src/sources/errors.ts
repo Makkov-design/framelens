@@ -16,10 +16,15 @@ export type SourceErrorCode =
 export class SourceError extends InvalidInputError {
   override name = "SourceError";
 
+  /** The site asked to prove a human is there (a bot check or CAPTCHA): nothing may try to get past it. */
+  readonly botCheck: boolean;
+
   constructor(
     readonly code: SourceErrorCode,
     message: string,
+    options: { botCheck?: boolean } = {},
   ) {
     super(message);
+    this.botCheck = options.botCheck === true;
   }
 }

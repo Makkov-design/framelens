@@ -52,6 +52,7 @@ const LOGIN_TIERS = (platform: string) =>
 
 const GEO = /available in your (country|region)|geo.?(restrict|block)|blocked it in your country/i;
 const GONE = /private video|video is private|has been removed|has been deleted|video unavailable|video is unavailable|no longer available|terminated|does not exist|isn.t available/i;
+const BOT_CHECK = /not a bot|bot check|captcha|unusual traffic/i;
 const LOGIN = /not a bot|confirm your age|age.?restrict|login required|log ?in|sign in|cookies|authenticat|registered users|rate-limit reached/i;
 
 /** Turns yt-dlp's stderr into an error that tells the user what to do. */
@@ -73,7 +74,7 @@ export function mapYtDlpFailure(stderr: string, url: string): SourceError {
   if (GONE.test(text)) {
     return new SourceError("unavailable", `${platform} says this video is private, removed or unavailable, so it cannot be fetched. Detail: ${brief}`);
   }
-  if (LOGIN.test(text)) return new SourceError("login_required", LOGIN_TIERS(platform));
+  if (LOGIN.test(text)) return new SourceError("login_required", LOGIN_TIERS(platform), { botCheck: BOT_CHECK.test(text) });
   if (/http error 429|too many requests/i.test(text)) {
     return new SourceError("download_failed", `${platform} is limiting requests from this connection (HTTP 429). Wait a while and try again, or save the file yourself into the inbox folder.`);
   }

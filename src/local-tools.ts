@@ -45,6 +45,18 @@ function sourceLine(source: Source, thirdParty = source.record.kind !== "file"):
   return `> ${parts.join(" · ")}\n> Workspace: ${source.ws.display(source.ws.dir)}${thirdParty ? `\n> ${NOTICE}` : ""}`;
 }
 
+/**
+ * Tells the agent what automatic setup did during the call (a downloaded ffmpeg or yt-dlp), at the end of the text
+ * and as `setup` in structuredContent, so it can pass it on instead of the download happening silently.
+ */
+export function withSetupNotes(result: CallToolResult, notes: string[]): CallToolResult {
+  if (!notes.length) return result;
+  const [first, ...rest] = result.content;
+  const content: CallToolResult["content"] =
+    first?.type === "text" ? [{ ...first, text: `${first.text}\n\n${notes.join("\n")}` }, ...rest] : [{ type: "text", text: notes.join("\n") }, ...result.content];
+  return { ...result, content, ...(result.structuredContent && { structuredContent: { ...result.structuredContent, setup: notes } }) };
+}
+
 /** The analysis tools that run on the user's computer (ffmpeg and friends) instead of Gemini. */
 export function registerLocalTools(server: McpServer, engine: Engine, logger: Logger, options: { inlineSheets?: number; version?: string } = {}): void {
   const inlineLimit = options.inlineSheets ?? 2;
@@ -54,15 +66,15 @@ export function registerLocalTools(server: McpServer, engine: Engine, logger: Lo
     try {
       const result = await body();
       logger.info("tool done", { tool, ms: Date.now() - startedAt });
-      return result;
+      return withSetupNotes(result, engine.takeSetupNotes());
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (error instanceof InvalidInputError || error instanceof AnalyzerError) {
         logger.warn("tool failed", { tool, error: message });
-        return { content: [{ type: "text", text: message }], isError: true };
+        return withSetupNotes({ content: [{ type: "text", text: message }], isError: true }, engine.takeSetupNotes());
       }
       logger.error("tool crashed", { tool, error });
-      return { content: [{ type: "text", text: `${tool} failed: ${message}` }], isError: true };
+      return withSetupNotes({ content: [{ type: "text", text: `${tool} failed: ${message}` }], isError: true }, engine.takeSetupNotes());
     }
   }
 

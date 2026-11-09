@@ -12,3 +12,5 @@ export {
   type FindOptions,
 } from "./find.js";
 export { prepareYtDlp, ytDlpPinnedPath, YTDLP_PIN, type PrepareOptions, type PrepareResult } from "./ytdlp.js";
+export { prepareFfmpeg, ffmpegPinnedPath, ffmpegAsset, FFMPEG_PIN, type FfmpegAsset, type PrepareFfmpegOptions, type PrepareFfmpegResult } from "./ffmpeg.js";
+export { ToolSetup, autoInstallEnabled, type ToolSetupOptions } from "./setup.js";

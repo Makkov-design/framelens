@@ -4,11 +4,12 @@ import { basename, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { InvalidInputError } from "../errors.js";
 import { parseVideoRef } from "../youtube.js";
-import { readToolVersion, requireTool, type Env } from "../tools/index.js";
+import { readToolVersion, requireTool, type Env, type ToolLocation } from "../tools/index.js";
+import { cobaltMayRetry, fetchWithCobalt } from "./cobalt.js";
 import { SourceError } from "./errors.js";
 import { newestInboxFile } from "./inbox.js";
 import type { ResolveOptions, SourceKind, SourceRecord } from "./types.js";
-import { fetchWithYtDlp } from "./ytdlp.js";
+import { fetchWithYtDlp, maxDownloadMb, type FetchResult } from "./ytdlp.js";
 
 export type Classified =
   | { kind: "youtube"; id: string; url: string }
@@ -118,18 +119,58 @@ export async function resolveSource(input: string, options: ResolveOptions): Pro
     return { ...previous, input, captions: captions?.length ? captions : undefined, reused: true };
   }
 
-  const ytdlp = requireTool("yt-dlp", { env, ...options.find });
-  const ffmpeg = requireTool("ffmpeg", { env, ...options.find });
-  const fetched = await fetchWithYtDlp({
-    url: target.url,
-    mediaDir: join(dir, "media"),
-    ytdlp,
-    ffmpeg,
-    env,
-    signal: options.signal,
-    log,
-    timeoutMs: options.downloadTimeoutMs ?? 30 * 60_000,
-  });
+  const locate = options.locate ?? (async (name) => requireTool(name, { env, ...options.find }));
+  let ytdlp: ToolLocation;
+  let ffmpeg: ToolLocation;
+  let fetched: FetchResult;
+  try {
+    ytdlp = await locate("yt-dlp", options.signal);
+    ffmpeg = await locate("ffmpeg", options.signal);
+    fetched = await fetchWithYtDlp({
+      url: target.url,
+      mediaDir: join(dir, "media"),
+      ytdlp,
+      ffmpeg,
+      env,
+      signal: options.signal,
+      log,
+      timeoutMs: options.downloadTimeoutMs ?? 30 * 60_000,
+    });
+  } catch (error) {
+    // Opt-in: the user's own cobalt instance gets the links yt-dlp could not fetch (never a bot check).
+    if (!cobaltMayRetry(error, env)) throw error;
+    const first = error instanceof Error ? error.message : String(error);
+    log(`yt-dlp could not fetch the link; trying the cobalt instance in FRAMELENS_COBALT_URL`);
+    let viaCobalt;
+    try {
+      viaCobalt = await fetchWithCobalt({
+        url: target.url,
+        mediaDir: join(dir, "media"),
+        env,
+        maxBytes: maxDownloadMb(env) * 1024 * 1024,
+        log,
+        ...(options.signal && { signal: options.signal }),
+        ...(options.fetchFn && { fetchFn: options.fetchFn }),
+        timeoutMs: options.downloadTimeoutMs ?? 30 * 60_000,
+      });
+    } catch (cobaltError) {
+      const second = cobaltError instanceof Error ? cobaltError.message : String(cobaltError);
+      const code = error instanceof SourceError ? error.code : "download_failed";
+      throw new SourceError(code, `${first} (${second})`);
+    }
+    const record: SourceRecord = {
+      id: target.id,
+      kind: target.kind as SourceKind,
+      input,
+      url: target.url,
+      title: viaCobalt.title,
+      mediaPath: viaCobalt.mediaPath,
+      fetchedAt,
+      tools: { cobalt: viaCobalt.instance },
+    };
+    writeRecord(dir, record);
+    return record;
+  }
 
   const record: SourceRecord = {
     id: target.id,
