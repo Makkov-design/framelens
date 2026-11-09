@@ -251,7 +251,7 @@ export function buildPlan(input: {
       const every = Math.max(0.5, Math.round((d / 120) * 10) / 10);
       steps.push({ tool: "frames", args: { every, columns: 4, rows: 4 }, why: "loupe ×1: the whole piece, its systems and rhythm" });
       addSheets(Math.min(120, Math.ceil(d / every)));
-      // The loupe is bounded by the video's length: about an eighth of it at ×10, a handful of every-frame windows
+      // The loupe is bounded by the video's length: one to three ×10 passages of about 12 % each, a handful of every-frame windows
       // around the strongest changes, none of them overlapping.
       const budget = loupeBudget(d);
       for (const w of busiestWindows(boundaries, d, Math.min(d, budget.passageSeconds), budget.passages)) {

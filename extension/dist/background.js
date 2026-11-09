@@ -185,7 +185,7 @@ async function readTab(tabId, options = {}) {
     const reading = mergeReadings(readings);
     const now = /* @__PURE__ */ new Date();
     const filename = readingFileName(reading.url, now);
-    const json = JSON.stringify({ framelens: READING_FORMAT, capturedWith: `Frame Lens extension ${"2.0.0"}`, capturedAt: now.toISOString(), ...reading });
+    const json = JSON.stringify({ framelens: READING_FORMAT, capturedWith: `Frame Lens extension ${"2.1.0"}`, capturedAt: now.toISOString(), ...reading });
     const bytes = new TextEncoder().encode(json);
     let binary = "";
     for (let i = 0; i < bytes.length; i += 32768) binary += String.fromCharCode(...bytes.subarray(i, i + 32768));

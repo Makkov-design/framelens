@@ -1,6 +1,12 @@
 # Changelog
 
-## [Unreleased]
+## 2.1.0 — 2026-11-09
+
+Frame Lens now measures the exact curve of a move, reads Rive files, tells cuts from fades, dissolves and wipes,
+reads pages and records tabs from a browser extension, and sets up ffmpeg and yt-dlp by itself. Every part went
+through an independent audit, fixes and a re-check; see the sections below. Website:
+https://makkov-design.github.io/framelens/
+
 
 - Listed for the official MCP Registry as `io.github.Makkov-design/framelens` (`server.json`, `mcpName` in
   `package.json`, and a manual "Publish to MCP Registry" workflow); `glama.json`; a PNG icon for the Claude Code

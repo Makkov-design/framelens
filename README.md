@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="https://makkov-design.github.io/framelens/"><img src="docs/assets/readme/banner.png" width="100%" alt="Frame Lens: video your agent can measure. A strip of Big Buck Bunny trailer frames with red cut marks and the reading: cut at 9.08 s, frame 227; 11 cuts, 8 fades and dissolves, 20 shots at 25 fps."></a>
+  <a href="https://makkov-design.github.io/framelens/"><img src="docs/assets/readme/banner.png" width="100%" alt="Frame Lens: video your agent can measure. A strip of Big Buck Bunny trailer frames with red cut marks and the reading: cut at 9.08 s, frame 227; 11 cuts, 10 fades and dissolves, 20 shots at 25 fps."></a>
 </p>
 
 <h1 align="center">Frame Lens</h1>
@@ -50,7 +50,7 @@ from where the square really was on any frame, grade `exact`. A spring of stiffn
 [scripts/demo/CHECK.md](scripts/demo/CHECK.md).
 
 On the 33-second Big Buck Bunny trailer it finds **11 cuts to the frame** (9.08 s, 11.20 s, 13.20 s, 13.88 s,
-15.00 s, 16.00 s, 16.60 s, 24.92 s, 26.00 s, 29.96 s, 31.04 s), **8 fades and dissolves** with their length (the
+15.00 s, 16.00 s, 16.60 s, 24.92 s, 26.00 s, 29.96 s, 31.04 s), **10 fades and dissolves** with their length (the
 opening dissolve runs 24 frames, 3.48–4.44 s), and 20 shots at 25 fps with a palette each.
 
 - **Measured, not described.** Cuts on their exact frame, every move with its duration and curve, an OKLab palette per
@@ -83,7 +83,7 @@ Real Frame Lens readings from the [website](https://makkov-design.github.io/fram
 
 <img src="docs/assets/readme/export.webp" alt="The measured move in five renderers: dots where the square was on each frame on the fitted curve, next to the CSS export with cubic-bezier(0.2312, 0.9511, 0.3843, 0.9964)">
 
-<img src="docs/assets/readme/readings.webp" alt="Table: the trailer read from pixels, 20 shots, 11 cuts, 8 fades and dissolves; a live website read from the browser, 328 animations, mostly 500 ms on cubic-bezier(0.16, 1, 0.3, 1); a Lottie file, our export read back from keyframes exactly; Rive files and Figma prototypes read from the file; YouTube and most video sites through a pinned yt-dlp">
+<img src="docs/assets/readme/readings.webp" alt="Table: the trailer read from pixels, 20 shots, 11 cuts, 10 fades and dissolves; a live website read from the browser, 328 animations, mostly 500 ms on cubic-bezier(0.16, 1, 0.3, 1); a Lottie file, our export read back from keyframes exactly; Rive files and Figma prototypes read from the file; YouTube and most video sites through a pinned yt-dlp">
 
 ## Quick start
 
