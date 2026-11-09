@@ -56,12 +56,15 @@ export function canWriteWorkspace(root: string): boolean {
   try {
     mkdirSync(root, { recursive: true });
     writeFileSync(probe, "");
-    rmSync(probe, { force: true });
     return true;
   } catch {
     return false;
   } finally {
-    rmSync(probe, { force: true });
+    try {
+      rmSync(probe, { force: true });
+    } catch {
+      // Never written (the path runs through a file, say).
+    }
     if (!existed) {
       try {
         rmdirSync(root);
