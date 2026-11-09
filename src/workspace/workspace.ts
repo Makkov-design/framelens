@@ -53,7 +53,8 @@ function systemByName(dir: string, env: Env, platform: NodeJS.Platform): boolean
     // Device and long-path prefixes (\\?\C:\…, \\.\C:\…, \\?\UNC\server\share\…) name the same folders.
     p = p.replace(/^\\\\[?.]\\UNC\\/i, "\\\\").replace(/^\\\\[?.]\\(?=[a-z]:)/i, "");
     // An administrative share (\\host\C$\Windows) is the drive itself.
-    p = p.replace(/^\\\\[^\\]+\\([a-z])\$(?=\\|$)/i, "$1:");
+    // "C:" alone would mean the current folder on C:, so the share's root becomes "C:\".
+    p = p.replace(/^\\\\[^\\]+\\([a-z])\$(?:\\|$)/i, "$1:\\");
     p = win32.resolve(p).toLowerCase();
     // A drive's root (C:\) or a share's root (\\server\share\).
     if (/^[a-z]:\\$/.test(p) || /^\\\\[^\\]+\\[^\\]+\\?$/.test(p)) return true;
