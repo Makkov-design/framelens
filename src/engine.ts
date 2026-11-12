@@ -9,8 +9,9 @@ import type { MediaTools } from "./media/exec.js";
 import { extractFrames, type FrameRequest } from "./media/frames.js";
 import { probeMedia, type ProbeInfo } from "./media/probe.js";
 import { buildSheets, type Sheet } from "./media/sheets.js";
-import { buildPlan, type Goal, type Plan } from "./router/plan.js";
+import { buildPlan, NAME_WIDTH, type Goal, type Plan } from "./router/plan.js";
 import { countPhrase, findPhrase, readCaptions, toMarkdown, wordsAt, type Transcript } from "./speech/transcript.js";
+import { nameMoments, namesMarkdown, pickNames } from "./speech/names.js";
 import { analyzeAudio, spectrogram, type AudioAnalysis } from "./audio/analyze.js";
 import { readPage, type PageResult } from "./browser/read.js";
 import { cleanReading, specFromPage, type PageReading } from "./browser/web.js";
@@ -303,9 +304,14 @@ export class Engine {
       boundaries: (rate: number, threshold: number) => source.ws.readJson<Boundaries>(boundariesFile(rate, threshold, 0, duration)),
       ...(wholeSpec && { shots: spec.shots.map((s) => ({ start: s.start, end: s.end })) }),
     };
+    // Automatic captions spell names by ear: list the likely ones, and where to read them on screen, in NAMES.md. It is
+    // written once, because the agent fills in what the screen shows.
+    const picked = transcript?.source === "auto-captions" && source.probe.hasVideo ? pickNames(transcript) : [];
+    const names = picked.length ? { list: picked.map((n) => n.name), at: nameMoments(picked, duration) } : undefined;
     const plan = buildPlan({
       probe: source.probe,
       known,
+      ...(names && { names }),
       ...(moves && { moves }),
       hasSpeech: Boolean(transcript?.segments.length),
       ...(boundaries && { boundaries }),
@@ -313,6 +319,11 @@ export class Engine {
       ...(options.request && { request: options.request }),
       ...(options.phrase && { phrase: options.phrase }),
     });
+    // Only the listen and learn plans check names (the one step with NAME_WIDTH).
+    if (names && plan.steps.some((s) => s.args.width === NAME_WIDTH) && !existsSync(source.ws.path("NAMES.md"))) {
+      source.ws.writeText("NAMES.md", namesMarkdown(picked, duration));
+      this.progress(source.ws, `names: ${picked.length} likely names in the automatic captions → NAMES.md`);
+    }
     source.ws.writeJson("plan.json", plan);
     this.progress(source.ws, `plan: goal ${plan.goal}${plan.goalInferred ? " (inferred)" : ""}, video type ${plan.videoType}, ${plan.steps.length} steps`);
     return { source, plan };

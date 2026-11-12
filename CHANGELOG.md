@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Name check: automatic captions spell product and proper names by ear ("Rare UI" for RareUI, "Val" for Vaul).
+  When the words come from automatic captions, `plan` for `listen` and `learn` picks the likely names (capitalised
+  words, words after cue words such as "called", "by" or "use", web addresses, said or written), adds a `frames` step
+  640 px wide a second after each is said, and writes `NAMES.md` (caption spelling, on-screen spelling for the agent to
+  fill in, time, evidence `seen` or `said`). `NAMES.md` is written once, so a later `plan` keeps what the agent wrote.
+
 ## 2.1.0 — 2026-11-09
 
 Frame Lens now measures the exact curve of a move, reads Rive files, tells cuts from fades, dissolves and wipes,

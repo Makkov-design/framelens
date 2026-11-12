@@ -8,7 +8,7 @@ import { AnalyzerError, InvalidInputError } from "./errors.js";
 import type { Logger } from "./logger.js";
 import { oneLine } from "./text.js";
 import { EXPORT_TARGETS } from "./export/exporters.js";
-import { GOALS } from "./router/plan.js";
+import { GOALS, NAME_WIDTH } from "./router/plan.js";
 import { collectSetupNotes, setupNotesOf } from "./tools/setup.js";
 import { curveLabel } from "./track/curve.js";
 import { transitionName } from "./style/spec.js";
@@ -114,7 +114,8 @@ export function registerLocalTools(server: McpServer, engine: Engine, logger: Lo
       description:
         "Classifies the video (talking head, screen, motion graphics, music video, live action) and returns the steps that fit the goal: " +
         "listen (podcast, lecture), learn (tutorial to guide), find (a moment), style (replicate motion design), sound (sound design), " +
-        "production (how it was made). Pass `goal`, or the user's request in `request` to infer it. Then run the steps in order: " +
+        "production (how it was made). When the words come from automatic captions, listen and learn add a name check: frames where likely " +
+        "product and proper names are said, and NAMES.md to fill with the spelling the screen shows. Pass `goal`, or the user's request in `request` to infer it. Then run the steps in order: " +
         "each step's `args` are ready to pass (with `source`); a step with `then` says what to add first from an earlier step's result.",
       inputSchema: {
         source: sourceInput,
@@ -141,7 +142,10 @@ export function registerLocalTools(server: McpServer, engine: Engine, logger: Lo
           `Estimate: ${plan.estimate.frames} frames in ${plan.estimate.sheets} sheets, about ${plan.estimate.imageTokens.toLocaleString("en-US")} image tokens if every sheet is opened.`,
           ...plan.notes.map((n) => `Note: ${n}`),
         ];
-        return { content: [{ type: "text", text: lines.join("\n") }], structuredContent: { workspace: source.ws.dir, plan: { ...plan } } };
+        // The name check's list, to fill in after its frames step.
+        const names = plan.steps.some((s) => s.args.width === NAME_WIDTH) && existsSync(source.ws.path("NAMES.md")) ? source.ws.path("NAMES.md") : undefined;
+        if (names) lines.push(`Names to check: ${source.ws.display(names)}`);
+        return { content: [{ type: "text", text: lines.join("\n") }], structuredContent: { workspace: source.ws.dir, plan: { ...plan }, ...(names && { files: { names } }) } };
       }),
   );
 

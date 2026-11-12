@@ -1,5 +1,6 @@
 import type { Boundaries } from "../media/boundaries.js";
 import type { ProbeInfo } from "../media/probe.js";
+import { NAME_LAG_SECONDS } from "../speech/names.js";
 
 export const GOALS = ["listen", "learn", "find", "style", "sound", "production"] as const;
 export type Goal = (typeof GOALS)[number];
@@ -17,6 +18,9 @@ export interface PlanStep {
    */
   then?: string;
 }
+
+/** Frame width of the name check: names in a logo or URL bar are small, and 320 px blurs them. */
+export const NAME_WIDTH = 640;
 
 /** Most moments one `frames` call takes (`at` holds at most 200). */
 export const MAX_AT = 200;
@@ -274,6 +278,11 @@ export function buildPlan(input: {
     boundaries?: (rate: number, threshold: number) => Boundaries | undefined;
     shots?: { start: number; end: number }[];
   };
+  /**
+   * Likely names in automatic captions, which spell them by ear, and the moments to read them on screen: the listen
+   * and learn plans get a step that takes those frames (NAMES.md lists them).
+   */
+  names?: { list: string[]; at: number[] };
 }): Plan {
   const { probe, boundaries, hasSpeech } = input;
   const { type, reasons } = classify(probe, boundaries, hasSpeech);
@@ -300,10 +309,9 @@ export function buildPlan(input: {
   let imageTokens = 0;
   // Cells as `frames` draws them: 320 px wide (240 from six columns), the picture's own shape, a 56 px label strip.
   const aspect = probe.width && probe.height ? probe.height / probe.width : 9 / 16;
-  const addSheets = (n: number, columns = 4, rows = 4) => {
+  const addSheets = (n: number, columns = 4, rows = 4, width = columns >= 6 ? 240 : 320) => {
     if (n <= 0) return;
     const per = columns * rows;
-    const width = columns >= 6 ? 240 : 320;
     const height = Math.round(width * aspect) + 56;
     frames += n;
     sheets += Math.ceil(n / per);
@@ -424,6 +432,19 @@ export function buildPlan(input: {
       }
       break;
     }
+  }
+
+  // Automatic captions spell names by ear; the screen often shows them right: in a logo, a title, the URL bar.
+  if ((goal === "listen" || goal === "learn") && probe.hasVideo && !still && input.names?.at.length) {
+    const { list, at } = input.names;
+    const shown = list.slice(0, 6).join(", ") + (list.length > 6 ? ", …" : "");
+    steps.push({
+      tool: "frames",
+      args: { at: at.slice(0, MAX_AT), width: NAME_WIDTH, columns: 2, rows: 3 },
+      why: `name check: automatic captions spell names by ear, so ${list.length} likely names (${shown}) are read on screen ${NAME_LAG_SECONDS} s after they are said, wide enough to read a logo or URL bar`,
+    });
+    addSheets(Math.min(MAX_AT, at.length), 2, 3, NAME_WIDTH);
+    notes.push("After the name check, fill NAMES.md in the workspace: the spelling each frame shows, evidence `seen` or `said`; write names as the screen spells them.");
   }
 
   return { goal, goalInferred: !input.goal, videoType: type, reasons, steps, estimate: { frames, sheets, imageTokens }, notes };
