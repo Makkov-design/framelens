@@ -1,5 +1,5 @@
 import { formatTimestamp } from "../youtube.js";
-import { mdText } from "../text.js";
+import { mdText, oneLine } from "../text.js";
 import type { Transcript } from "./transcript.js";
 
 /**
@@ -106,8 +106,11 @@ export function pickNames(transcript: Transcript, max = MAX_NAMES): NameCandidat
       continue;
     }
     if (w.text.toLowerCase() === "dot" && i > 0 && new RegExp(`^(${TLD})$`, "i").test(words[i + 1]?.text ?? "") && !words[i - 1]!.stop) {
-      const before = words[i - 1]!;
-      add(`${before.text.toLowerCase()}.${words[i + 1]!.text.toLowerCase()}`, before.t, "address", true);
+      // The address is the words said before "dot", back to a common word or a mark: "the site is beautiful ui dot dev".
+      let from = i - 1;
+      while (from > 0 && i - from < 3 && !words[from - 1]!.stop && !common(words[from - 1]!.text)) from--;
+      if (common(words[from]!.text)) from++;
+      if (from < i) add(`${words.slice(from, i).map((x) => x.text.toLowerCase()).join("")}.${words[i + 1]!.text.toLowerCase()}`, words[from]!.t, "address", true);
     }
     // A run of capitalised words: "Rare UI", "Emil Kowalski", "Pick UI Library".
     if (capitalised(w.text) && !common(w.text)) {
@@ -141,7 +144,8 @@ export function pickNames(transcript: Transcript, max = MAX_NAMES): NameCandidat
     .sort((a, b) => b.score - a.score || a.said[0]! - b.said[0]!)
     .slice(0, max)
     .sort((a, b) => a.said[0]! - b.said[0]!)
-    .map(({ name, said, why }) => ({ name, said, why }));
+    // Caption text is third-party: one short line, whatever it held.
+    .map(({ name, said, why }) => ({ name: oneLine(name, 60), said, why }));
 }
 
 /** The moments to look at: shortly after the first occurrences of each name, within the video, without near repeats. */
@@ -152,7 +156,11 @@ export function nameMoments(names: NameCandidate[], duration: number): number[] 
   return out;
 }
 
-const clock = (t: number) => `${formatTimestamp(t)}${(t % 1).toFixed(1).slice(1)}`;
+/** m:ss.s, rounded to the tenth first so 132.97 reads 2:13.0, not 2:12.0. */
+const clock = (t: number) => {
+  const tenths = Math.round(t * 10);
+  return `${formatTimestamp(Math.floor(tenths / 10))}.${tenths % 10}`;
+};
 
 /** NAMES.md: each name as the captions spell it, when it is said and where to look; the agent fills in the screen's spelling. */
 export function namesMarkdown(names: NameCandidate[], duration: number): string {

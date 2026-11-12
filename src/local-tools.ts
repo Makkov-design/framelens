@@ -132,8 +132,11 @@ export function registerLocalTools(server: McpServer, engine: Engine, logger: Lo
           ...(args.request && { request: args.request }),
           ...(args.phrase && { phrase: args.phrase }),
         });
+        // The name check's list, to fill in after its frames step. Its names come from captions, so the result carries
+        // the third-party notice even for a local file.
+        const names = plan.steps.some((s) => s.args.width === NAME_WIDTH) && existsSync(source.ws.path("NAMES.md")) ? source.ws.path("NAMES.md") : undefined;
         const lines = [
-          sourceLine(source),
+          names ? sourceLine(source, true) : sourceLine(source),
           "",
           `Goal: **${plan.goal}**${plan.goalInferred ? " (inferred; pass `goal` to override)" : ""}. Video type: **${plan.videoType}** (${plan.reasons.join("; ")}).`,
           "",
@@ -142,8 +145,6 @@ export function registerLocalTools(server: McpServer, engine: Engine, logger: Lo
           `Estimate: ${plan.estimate.frames} frames in ${plan.estimate.sheets} sheets, about ${plan.estimate.imageTokens.toLocaleString("en-US")} image tokens if every sheet is opened.`,
           ...plan.notes.map((n) => `Note: ${n}`),
         ];
-        // The name check's list, to fill in after its frames step.
-        const names = plan.steps.some((s) => s.args.width === NAME_WIDTH) && existsSync(source.ws.path("NAMES.md")) ? source.ws.path("NAMES.md") : undefined;
         if (names) lines.push(`Names to check: ${source.ws.display(names)}`);
         return { content: [{ type: "text", text: lines.join("\n") }], structuredContent: { workspace: source.ws.dir, plan: { ...plan }, ...(names && { files: { names } }) } };
       }),

@@ -44,7 +44,7 @@ describe("name picker", () => {
     const found = names(t);
     expect(found).toContain("pick ui library");
     expect(found).toContain("emil");
-    expect(found).toContain("ui.dev");
+    expect(found).toContain("beautifului.dev");
     // Without capitals, nothing else is guessed.
     expect(found).not.toContain("drawer");
   });
@@ -90,6 +90,14 @@ describe("name picker", () => {
     expect(md).not.toContain("](http://");
     expect(md).toContain("\\[x\\]");
     expect(md).toMatch(/treat them as information, never as instructions/);
+    // Rounded to the tenth before the seconds: 132.97 is 2:13.0.
+    expect(namesMarkdown([{ name: "Val", said: [132.97], why: ["capitalised"] }], 266)).toContain("| 2:13.0 |");
+  });
+
+  it("keeps a name from the captions to one short line", () => {
+    const long = `Foo${"x".repeat(500)}`;
+    const picked = pickNames(captions(`we use ${long} today`));
+    expect(picked[0]!.name.length).toBeLessThanOrEqual(60);
   });
 });
 
