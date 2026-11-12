@@ -114,7 +114,7 @@ says so. To check your machine ahead of time: `npx -y framelens doctor --prepare
 
 | You want | Say something like | Frame Lens does |
 |---|---|---|
-| **Listen**: a podcast, lecture, interview | "Summarize this 3-hour podcast and find where they talk about pricing" | Word-timed transcript and one overview sheet; no wasted frames |
+| **Listen**: a podcast, lecture, interview | "Summarize this 3-hour podcast and find where they talk about pricing" | Word-timed transcript and one overview sheet; no wasted frames. With automatic captions, a name check: product and proper names read from the screen where they are said |
 | **Learn**: a tutorial into steps | "Turn this tutorial into a step-by-step guide" | Finds every screen change, frames with the words spoken there, text read from the screen |
 | **Find** a moment | "Where does he set up DNS?" | Frames around the phrase in the transcript |
 | **Style**: replicate the motion | "Use this as a reference for my product promo" | Cuts to the frame, shots, palette, every move with its duration and easing; the exact curve of the moves that matter; a starter project; a check of your render |
@@ -129,7 +129,7 @@ says so. To check your machine ahead of time: `npx -y framelens doctor --prepare
 
 | Tool | What it does |
 |---|---|
-| `plan` | Start here for any video. Classifies it (talking head, screen, motion graphics, music video, live action), reads the goal from the request (`listen`, `learn`, `find`, `style`, `sound`, `production`) and lists the steps with an image-token estimate |
+| `plan` | Start here for any video. Classifies it (talking head, screen, motion graphics, music video, live action), reads the goal from the request (`listen`, `learn`, `find`, `style`, `sound`, `production`) and lists the steps with an image-token estimate. With automatic captions, `listen` and `learn` add a name check (see below) |
 | `probe` | Fetches the source; duration, size, frame rate (variable or not), HDR, audio, captions, workspace folder |
 | `transcript` | Word-timed transcript from captions (Gemini as a fallback for YouTube) |
 | `frames` | Frames and contact sheets with time, frame number and the words spoken under each picture: `at`, `every`, `fps`, `every_frame` (every native frame with real timestamps) or `around` a phrase |
@@ -309,6 +309,11 @@ package.
    or a box) → `frames` with `every_frame` ±0.5 s around them → `export` to the user's renderer → render → `compare`
    with the reference, fix what it names.
 4. **Speech:** `transcript` (captions first). **Sound:** `audio`. **A moment:** `frames` with `around: "<phrase>"`.
+   **Names in automatic captions:** captions spell product and proper names by ear ("Rare UI" for RareUI, "Val" for
+   Vaul). When the words come from automatic captions, `plan` for `listen` and `learn` adds a name check: it picks the
+   likely names (capitalised words, words after "called", "by", "use", web addresses), adds a `frames` step 640 px
+   wide a second after each is said, and writes `NAMES.md`. Read the sheets, fill in the spelling the screen shows with
+   evidence `seen`, or keep `said` where the screen does not show the name; write names as the screen spells them.
 5. **Frames like a loupe:** an overview first, dense frames only around the moments that matter. Never sample a whole
    long video at high fps.
 
@@ -326,6 +331,7 @@ tool runs so a later session can continue.
 | `STYLE.md`, `TIMELINE.md`, `ANALYSIS.md` | The measured blocks, plus sections for you to complete (typography, systems, why it works) |
 | `TRACK.md`, `tracks.json` | Fitted curves per property with error and quality |
 | `transcript.md`, `transcript.json` | The words and their times |
+| `NAMES.md` | Likely names in automatic captions: caption spelling, on-screen spelling (you fill it in), time, evidence `seen` or `said` |
 | Contact sheets, single frames, `COMPARE.md`, the export folder | As named in each tool result |
 
 ### Evidence labels

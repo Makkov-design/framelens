@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import type { Boundaries } from "../../src/media/boundaries.js";
 import type { ProbeInfo } from "../../src/media/probe.js";
-import { buildPlan, busiestWindows, classify, denseWindows, inferGoal, loupeBudget, MAX_DENSE_SECONDS, sheetTokens } from "../../src/router/plan.js";
+import { buildPlan, busiestWindows, classify, denseWindows, inferGoal, loupeBudget, MAX_DENSE_SECONDS, NAME_WIDTH, sheetTokens } from "../../src/router/plan.js";
 import { toolShapes } from "../fixtures/tool-shapes.js";
 
 const probe = (duration: number): ProbeInfo => ({ duration, fps: 30, nominalFps: 30, vfr: false, hdr: false, hasVideo: true, hasAudio: true });
@@ -214,5 +214,37 @@ describe("router", () => {
     const windows = busiestWindows(bounds(30, 0.2, [1, 1.5, 2, 2.5, 20, 30, 30.5]), 40, 8, 3);
     expect(windows[0]).toEqual({ start: 0, end: 8 });
     for (let i = 1; i < windows.length; i++) expect(windows[i]!.start).toBeGreaterThanOrEqual(windows[i - 1]!.end);
+  });
+});
+
+describe("name check", () => {
+  const names = { list: ["Sonner", "Val", "Rare UI"], at: [2, 3, 156.3] };
+
+  it("adds one wide frames step to listen and learn, with args the frames tool accepts", () => {
+    const shapes = toolShapes();
+    for (const goal of ["listen", "learn"] as const) {
+      const plan = buildPlan({ goal, probe: probe(266), boundaries: bounds(5, 0.03), hasSpeech: true, names });
+      const step = plan.steps.at(-1)!;
+      expect(step).toMatchObject({ tool: "frames", args: { at: names.at, width: NAME_WIDTH, columns: 2, rows: 3 } });
+      expect(step.why).toMatch(/name check: .*3 likely names \(Sonner, Val, Rare UI\)/);
+      expect(step.then).toBeUndefined();
+      expect(z.object(shapes.frames!).strict().safeParse({ source: "clip.mp4", ...step.args }).success).toBe(true);
+      expect(plan.notes.join(" ")).toMatch(/NAMES\.md/);
+    }
+  });
+
+  it("counts the wide frames in the estimate", () => {
+    const without = buildPlan({ goal: "listen", probe: probe(266), boundaries: bounds(5, 0.03), hasSpeech: true });
+    const withNames = buildPlan({ goal: "listen", probe: probe(266), boundaries: bounds(5, 0.03), hasSpeech: true, names });
+    expect(withNames.estimate.frames - without.estimate.frames).toBe(3);
+    expect(withNames.estimate.imageTokens - without.estimate.imageTokens).toBe(sheetTokens(3, 2, NAME_WIDTH, 360 + 56));
+  });
+
+  it("leaves it out of the other goals and of sources without a picture", () => {
+    for (const goal of ["find", "style", "sound", "production"] as const) {
+      expect(buildPlan({ goal, probe: probe(266), boundaries: bounds(5, 0.03), hasSpeech: true, names }).steps.some((s) => s.args.width === NAME_WIDTH)).toBe(false);
+    }
+    const audio = buildPlan({ goal: "listen", probe: { ...probe(266), hasVideo: false }, hasSpeech: true, names });
+    expect(audio.steps.some((s) => s.args.width === NAME_WIDTH)).toBe(false);
   });
 });

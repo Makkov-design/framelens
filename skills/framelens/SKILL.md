@@ -27,6 +27,11 @@ deferred, load them with ToolSearch query `framelens` first.
    find, style, sound, production). It classifies the video and returns the steps. Follow them in order: their
    `args` are ready to pass; a step with `then` says what to add first from an earlier step's result.
 3. **Listen** (podcast, lecture): `transcript`, then one overview sheet. The words carry the content.
+   **Name check** (listen and learn, when the words come from automatic captions): captions spell names by ear
+   ("Rare UI" for RareUI, "Val" for Vaul). `plan` adds a `frames` step at the moments the likely names are said and
+   writes `NAMES.md`. Read each name on the sheets (logo, title, URL bar), fill **On screen** and set **Evidence** to
+   `seen`; keep `said` where the screen does not show it, and delete rows that are not names. Use the on-screen
+   spelling everywhere after that, and say which names are only heard.
 4. **Learn** (tutorial → guide): `boundaries` to find screen changes, then `frames` at those moments with words under
    each frame. Read commands and code from the frames; open a single frame at full width when text is small.
 5. **Find** (a moment): `frames` with `around: "<phrase>"`.

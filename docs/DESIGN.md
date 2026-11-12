@@ -45,7 +45,7 @@ research and reasoning lives in the plan page; this file is what the code must f
 | `sources/` | Turning any input into a local media file plus `source.json`: resolve, yt-dlp, direct URL, local file, inbox folder, cookies |
 | `tools/` | Finding and running external binaries (ffmpeg, ffprobe, yt-dlp, whisper), version checks, pinned downloads |
 | `media/` | ffprobe probe (VFR, HDR, audio), frame extraction, contact sheets with time and word labels, visual-change candidates, dynamics index |
-| `speech/` | Transcript with word times: captions first, local whisper if present, Gemini as fallback |
+| `speech/` | Transcript with word times: captions first, local whisper if present, Gemini as fallback; `names.ts` picks likely names in automatic captions for the name check (`NAMES.md`) |
 | `workspace/` | Workspace folder layout, `manifest.json`, cached pass results, `PROGRESS.md` |
 | `router/` | Video type classification and the goal-based plan |
 | `style/` (2.1) | Shots, cuts, transitions (`transitions.ts`: dissolves, fades, dips, wipes from every frame at 64×36), palette, typography notes, `STYLE.md`, `motion-spec.json`, `ANALYSIS.md`, `TIMELINE.md` |
