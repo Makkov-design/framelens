@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- `style`, `track`, `compare` and `export` work when ffmpeg exists only as the automatically installed pinned build:
+  the code that pipes frames from ffmpeg now locates it first instead of spawning the bare name.
+- The Gemini transcript fallback for YouTube links without captions runs only when a transcript is required
+  (`transcript`, `frames` with `around`), no longer for frame labels, `plan` or `style`; a failure is remembered for
+  the session instead of sending the whole video to Gemini on every call.
+- `style` and `compare` return their notes (only the first 180 s analyzed, transitions not looked for); `compare`
+  says when its cuts and palette cover less of the files than its picture similarity.
+- SubRip (`.srt`) captions are read (they parsed to NaN times); TTML, ASS, LRC and broken caption files are skipped.
+- A cached transcript is rebuilt when `language` asks for one the captions have in another language.
+- yt-dlp's automatic setup downloads the `musllinux` build on Alpine and other musl Linux (pinned from the
+  release's signed SHA2-256SUMS); the Docker image installs ffmpeg from Alpine's packages.
+- A `file://` link with a host answers with a clear source error instead of a raw TypeError.
+
 ## 2.1.0 — 2026-11-09
 
 Frame Lens now measures the exact curve of a move, reads Rive files, tells cuts from fades, dissolves and wipes,
