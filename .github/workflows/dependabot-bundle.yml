@@ -1,0 +1,104 @@
+name: Dependabot bundle
+
+# Every dependency is a devDependency bundled into the committed dist/framelens.mjs and extension/dist, so CI's
+# "committed bundle is up to date" check fails on every Dependabot npm PR. This workflow rebuilds both on those PRs,
+# commits the result to the PR branch and starts CI on the new commit.
+#
+# Security: the bumped packages are untrusted code, and no job that runs them holds a write token.
+# - Plain `pull_request`, never `pull_request_target`: the workflow runs only on Dependabot's own same-repo branches.
+# - `build` runs the new packages (npm ci, esbuild) with a read-only token, no secrets, no saved git credentials and
+#   no npm cache (nothing it writes is read by a later privileged run). Its only output is an artifact of files.
+# - `commit` holds the write token and runs no package code: no npm, no node, no build. It checks that the artifact
+#   holds nothing but the two build outputs as plain files, copies them in and pushes with git. A push that is not a
+#   fast-forward (Dependabot rebased meanwhile) is refused, so it never overwrites Dependabot's newer commit.
+# - What it commits ships only after a person reviews and merges the PR, exactly as a hand-run `npm run bundle` would.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions: {}
+
+concurrency:
+  group: dependabot-bundle-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    if: >-
+      github.actor == 'dependabot[bot]' &&
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.event.pull_request.head.ref, 'dependabot/npm_and_yarn/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - run: npm ci --ignore-scripts
+      - run: npm run bundle
+      - run: npm run build:extension
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: bundle
+          path: |
+            dist/framelens.mjs
+            extension/dist/
+          if-no-files-found: error
+          retention-days: 1
+
+  commit:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # push the rebuilt files to the Dependabot branch
+      actions: write # start CI on the new commit: pushes made with this token start no workflow
+    env:
+      HEAD_REF: ${{ github.event.pull_request.head.ref }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: bundle
+          path: ${{ runner.temp }}/bundle
+      - name: Check the artifact and copy it in
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/bundle"
+          # Nothing but the two build outputs, as regular files (no links), under 50 MB in all.
+          odd="$(cd "$src" && find . -mindepth 1 \( \( ! -type d ! -type f \) -o \( -type f ! -path ./dist/framelens.mjs ! -path './extension/dist/*' \) \) -print)"
+          if [ -n "$odd" ]; then echo "Unexpected files in the artifact:"; echo "$odd"; exit 1; fi
+          test -f "$src/dist/framelens.mjs" && test -f "$src/extension/dist/manifest.json"
+          size="$(du -sk "$src" | cut -f1)"
+          if [ "$size" -gt 51200 ]; then echo "The artifact is ${size} KB, more than 50 MB."; exit 1; fi
+          cp "$src/dist/framelens.mjs" dist/framelens.mjs
+          rm -rf extension/dist
+          cp -R "$src/extension/dist" extension/dist
+      - name: Commit and push the rebuild
+        id: push
+        run: |
+          set -euo pipefail
+          git add -A -- dist/framelens.mjs extension/dist
+          if git diff --cached --quiet; then
+            echo "The committed bundle is already up to date."
+            echo "pushed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git diff --cached --stat
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -q -m "Rebuild dist/framelens.mjs and extension/dist for the dependency update"
+          git push origin "HEAD:refs/heads/$HEAD_REF"
+          echo "pushed=true" >> "$GITHUB_OUTPUT"
+      - name: Start CI on the rebuilt commit
+        if: steps.push.outputs.pushed == 'true'
+        run: gh workflow run ci.yml --ref "$HEAD_REF"

@@ -4,7 +4,7 @@ import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { captureVideo, chooseMedia } from "../../src/browser/capture.js";
-import { findBrowser } from "../../src/browser/cdp.js";
+import { browserStartDeadlineMs, findBrowser } from "../../src/browser/cdp.js";
 import { readPage } from "../../src/browser/read.js";
 import { easingFamily, effectiveEasing, mergeReadings, specFromPage, type PageAnimation, type PageReading } from "../../src/browser/web.js";
 import { createHash } from "node:crypto";
@@ -121,6 +121,11 @@ describe("web animation data", () => {
   it("finds no browser where none is configured", () => {
     expect(findBrowser({ FRAMELENS_BROWSER: "/nope/chrome" })).toBeUndefined();
   });
+
+  it("gives a cold browser start a minute in CI and 20 s elsewhere", () => {
+    expect(browserStartDeadlineMs({})).toBe(20_000);
+    expect(browserStartDeadlineMs({ CI: "true" })).toBe(60_000);
+  });
 });
 
 const browser = findBrowser();
@@ -143,7 +148,8 @@ new IntersectionObserver((es) => es.forEach((e) => e.isIntersecting && e.target.
 window.gsap = { globalTimeline: { getChildren: () => [{ vars: { x: 200, ease: "expo.out", duration: 1.2 }, startTime: () => 0.5, duration: () => 1.2, targets: () => [document.querySelector("h1")] }] } };
 </script></body></html>`;
 
-describe.skipIf(!canRun)("with a real browser", () => {
+// One retry in CI: a cold first browser start on a shared runner is the one known flake (PR #32, Node 22).
+describe.skipIf(!canRun)("with a real browser", { retry: process.env.CI ? 1 : 0 }, () => {
   let dir: string;
   let server: Server;
   let base: string;

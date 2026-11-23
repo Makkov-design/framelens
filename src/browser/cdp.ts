@@ -183,6 +183,14 @@ function killTree(child: ChildProcess): void {
 }
 
 /**
+ * How long a browser may take to open its DevTools port. A cold first start on a busy CI runner can pass 20 s (seen on
+ * GitHub's Ubuntu runners while ffmpeg tests run alongside), so CI gets a minute.
+ */
+export function browserStartDeadlineMs(env: Record<string, string | undefined> = process.env): number {
+  return env.CI ? 60_000 : 20_000;
+}
+
+/**
  * Starts Chrome or Edge with its own profile and a DevTools port, opens one tab and attaches to it. The browser is
  * always killed on close and after `maxLifetimeMs`, so a hung page cannot leave it running.
  */
@@ -225,10 +233,11 @@ export async function launchBrowser(options: {
     return new Error(message);
   };
 
-  const deadline = Date.now() + 20_000;
+  const startMs = browserStartDeadlineMs();
+  const deadline = Date.now() + startMs;
   while (!existsSync(portFile) || !readFileSync(portFile, "utf8").includes("\n")) {
     if (child.exitCode !== null) throw fail("The browser exited at start. If it is already open with this profile, close that window first.");
-    if (Date.now() > deadline) throw fail("The browser did not start within 20 s.");
+    if (Date.now() > deadline) throw fail(`The browser did not start within ${startMs / 1000} s.`);
     await new Promise((r) => setTimeout(r, 150));
   }
   const port = Number(readFileSync(portFile, "utf8").split("\n")[0]);

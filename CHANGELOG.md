@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Development: Dependabot's npm PRs get the bundle rebuilt and committed by a workflow, so they can pass CI; major
+  bumps come as PRs of their own. CI also runs `probe` through the built bundle on Node 20, 22 and 24 and the unit
+  tests on macOS and Windows.
+
+### Fixed
+
+- In CI (the `CI` variable set), a browser gets 60 s instead of 20 s to start, so a cold start on a busy runner does
+  not fail `web`.
+
 ## 2.1.0 — 2026-11-09
 
 Frame Lens now measures the exact curve of a move, reads Rive files, tells cuts from fades, dissolves and wipes,

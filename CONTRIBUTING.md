@@ -15,8 +15,10 @@ channel in [SECURITY.md](SECURITY.md), never a public issue.
 
 ## Development setup
 
-You need Node 20 or newer, git and ffmpeg/ffprobe on `PATH` (the media tests make their own fixtures with ffmpeg and
-are skipped without it). yt-dlp is only needed to try links by hand.
+You need Node 20 or newer, git and ffmpeg/ffprobe 7.0 or newer on `PATH` (the media tests make their own fixtures
+with ffmpeg and are skipped without it). CI tests with ffmpeg 8.0; on ffmpeg 6.1 (Ubuntu 24.04's package) two tests
+fail, one because its fixture uses a filter option 6.1 rejects. If your system ffmpeg is older, install a newer build
+and point `PATH` at it. yt-dlp is only needed to try links by hand.
 
 ```bash
 git clone https://github.com/Makkov-design/framelens.git
@@ -61,7 +63,10 @@ npm run bundle             # updates dist/framelens.mjs
 npm run build:extension    # updates extension/dist (only when extension/ changed)
 ```
 
-Commit those files together with the source change. `npm run check` runs typecheck, tests and bundle in one go
+Commit those files together with the source change. Dependabot's npm PRs are the exception: the
+`dependabot-bundle.yml` workflow rebuilds both, commits them to the PR branch and starts CI on that commit (the first
+CI run on Dependabot's own commit fails the bundle check; the run on the rebuild is the one that counts). After that
+commit Dependabot no longer rebases the PR by itself; comment `@dependabot recreate` to get a fresh one. `npm run check` runs typecheck, tests and bundle in one go
 (pass `-- --maxWorkers=2` to the test step if you run `npm test` separately).
 
 ## Evidence labels
@@ -100,8 +105,9 @@ The single word check that decides this lives in `src/sources/access.ts`; widen 
 ## Pull requests
 
 - Branch from `main`, one topic per pull request, and fill in the template.
-- CI must be green: typecheck, tests on Node 22 and 24, the committed bundle and extension build, the server
-  starting on Node 20, 22 and 24, and the Docker build.
+- CI must be green: typecheck, tests on Node 22 and 24 (Ubuntu) and Node 22 (macOS and Windows, without the media
+  tests), the committed bundle and extension build, the bundle starting and running `probe` on Node 20, 22 and 24,
+  and the Docker build. Real-browser tests get one retry in CI.
 - Add a line to `CHANGELOG.md` under "Unreleased" for anything a user would notice.
 - Do not bump versions; that happens at release time (`package.json`, `src/version.ts`,
   `.claude-plugin/plugin.json` and `server.json` move together, and a test checks it).
