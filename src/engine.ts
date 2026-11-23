@@ -346,7 +346,7 @@ export class Engine {
    * easing family. Writes motion-spec.json, STYLE.md, TIMELINE.md and ANALYSIS.md (only the measured blocks are
    * refreshed on later runs; the agent's own writing is kept).
    */
-  async style(input: string, options: { start?: number; end?: number; version: string }): Promise<{ source: Source; spec: MotionSpec; files: Record<string, string> }> {
+  async style(input: string, options: { start?: number; end?: number; version: string }): Promise<{ source: Source; spec: MotionSpec; files: Record<string, string>; notes: string[] }> {
     const source = await this.source(input);
     const { probe, record, ws } = source;
     if (!probe.hasVideo) throw new InvalidInputError("This source has no picture to analyze for style.");
@@ -418,7 +418,7 @@ export class Engine {
     const analysis = ws.path("ANALYSIS.md");
     files.analysis = existsSync(analysis) ? analysis : ws.writeText("ANALYSIS.md", ANALYSIS_SKELETON(record.title ?? record.input));
     this.progress(ws, `style: ${shots.length} shots, ${transitions.length} gradual transitions, ${spec.events.length} moves, ${overall.length} palette colours (${start.toFixed(2)}–${end.toFixed(2)} s)${notes.length ? `; ${notes.join(" ")}` : ""}`);
-    return { source, spec, files };
+    return { source, spec, files, notes };
   }
 
   /**
@@ -646,7 +646,7 @@ export class Engine {
    * Checks a render against the reference: duration, cuts (matched within 3 frames), palette distance and picture
    * similarity over time, with a side-by-side sheet of the least similar moments. Writes COMPARE.md.
    */
-  async compare(reference: string, render: string, version: string): Promise<{ source: Source; comparison: Comparison; files: Record<string, string>; sheet?: Sheet }> {
+  async compare(reference: string, render: string, version: string): Promise<{ source: Source; comparison: Comparison; files: Record<string, string>; sheet?: Sheet; notes: string[] }> {
     // Both sources first, before the long style passes, and an error says which of the two it is about.
     for (const [name, input] of [["reference", reference], ["render", render]] as const) {
       try {
@@ -658,6 +658,14 @@ export class Engine {
     }
     const ref = await this.style(reference, { version });
     const out = await this.style(render, { version });
+    // The style passes can cover less than the whole file (the first 180 s), while SSIM below reads all of it.
+    const notes = [...ref.notes.map((n) => `reference: ${n}`), ...out.notes.map((n) => `render: ${n}`)];
+    const styled = (r: typeof ref) => r.spec.range.end - r.spec.range.start < r.source.probe.duration - 0.5;
+    if (styled(ref) || styled(out)) {
+      notes.push(
+        `Cuts and palette are compared over the analyzed ranges (reference ${ref.spec.range.start.toFixed(1)}–${ref.spec.range.end.toFixed(1)} s, render ${out.spec.range.start.toFixed(1)}–${out.spec.range.end.toFixed(1)} s); picture similarity (SSIM) covers the whole files.`,
+      );
+    }
     const fps = ref.source.probe.fps ?? 30;
     const samples = await similarity(ref.source.record.mediaPath, out.source.record.mediaPath, this.options.tools);
     let worst = [...samples].sort((a, b) => a.ssim - b.ssim).slice(0, WORST_MOMENTS).sort((a, b) => a.t - b.t);
@@ -712,10 +720,11 @@ export class Engine {
       `Palette distance (OKLab, 0 = same): ${comparison.palette.distance}.`,
       `Mean picture similarity (SSIM): ${comparison.similarity.mean}.`,
       sheet ? `\nSide by side at the ${worst.length} least similar moments (${momentList(worst)}): ${ws.display(sheet.file)}` : "",
+      ...(notes.length ? ["", ...notes.map((n) => `Note: ${n}`)] : []),
     ].join("\n");
     const files: Record<string, string> = { report: ws.writeText("COMPARE.md", `${md}\n`), json: ws.writeJson("compare.json", comparison) };
     this.progress(ws, `compare: with ${oneLine(render)}: ${comparison.verdict.join(" ")}`);
-    return { source: ref.source, comparison, files, ...(sheet && { sheet }) };
+    return { source: ref.source, comparison, files, notes, ...(sheet && { sheet }) };
   }
 
   /**

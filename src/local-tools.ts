@@ -271,7 +271,7 @@ export function registerLocalTools(server: McpServer, engine: Engine, logger: Lo
     },
     (args) =>
       run("style", async () => {
-        const { source, spec, files } = await engine.style(args.source, {
+        const { source, spec, files, notes } = await engine.style(args.source, {
           ...(args.start !== undefined && { start: parseTime(args.start) }),
           ...(args.end !== undefined && { end: parseTime(args.end) }),
           version: options.version ?? "dev",
@@ -284,6 +284,7 @@ export function registerLocalTools(server: McpServer, engine: Engine, logger: Lo
           sourceLine(source),
           "",
           `Range ${spec.range.start.toFixed(2)}–${spec.range.end.toFixed(2)} s: ${spec.rhythm.cuts} cuts (${spec.rhythm.cutsPerMinute}/min), ${gradual.length} gradual transitions, ${spec.shots.length} shots, median shot ${spec.rhythm.medianShotSeconds} s, ${spec.events.length} moves.`,
+          ...notes.map((n) => `Note: ${n}`),
           `Palette: ${spec.palette.map((p) => `${p.hex} ${(p.share * 100).toFixed(0)}%`).join(", ")}.`,
           `Easing families (derived): ${[...families.entries()].map(([k, v]) => `${v} ${k}`).join(", ") || "no moves found"}.`,
           ...gradual.slice(0, 12).map((x) => `- ${transitionName(x)} ${x.start.toFixed(3)}–${x.end.toFixed(3)} s, ${x.frames} frames, shot boundary at ${x.at.toFixed(3)} s (derived)`),
@@ -300,7 +301,7 @@ export function registerLocalTools(server: McpServer, engine: Engine, logger: Lo
         ].join("\n");
         return {
           content: [{ type: "text", text }],
-          structuredContent: { workspace: ws.dir, files, rhythm: spec.rhythm, palette: spec.palette, transitions: spec.transitions ?? [], events: spec.events },
+          structuredContent: { workspace: ws.dir, files, notes, rhythm: spec.rhythm, palette: spec.palette, transitions: spec.transitions ?? [], events: spec.events },
         };
       }),
   );
@@ -474,7 +475,7 @@ export function registerLocalTools(server: McpServer, engine: Engine, logger: Lo
     },
     (args) =>
       run("compare", async () => {
-        const { source, comparison, files, sheet } = await engine.compare(args.reference, args.render, options.version ?? "dev");
+        const { source, comparison, files, sheet, notes } = await engine.compare(args.reference, args.render, options.version ?? "dev");
         const ws = source.ws;
         const text = [
           sourceLine(source),
@@ -482,6 +483,7 @@ export function registerLocalTools(server: McpServer, engine: Engine, logger: Lo
           ...comparison.verdict.map((v) => `- ${v}`),
           "",
           `Duration ${comparison.durations.reference.toFixed(2)} s vs ${comparison.durations.render.toFixed(2)} s · cuts matched ${comparison.cuts.matched.length - comparison.cuts.missing.length}/${comparison.cuts.matched.length} · palette distance ${comparison.palette.distance} · mean SSIM ${comparison.similarity.mean}.`,
+          ...notes.map((n) => `Note: ${n}`),
           `Report: ${ws.display(files.report!)}.`,
         ].join("\n");
         return {
@@ -489,7 +491,7 @@ export function registerLocalTools(server: McpServer, engine: Engine, logger: Lo
             { type: "text", text },
             ...(sheet ? [{ type: "image" as const, data: readFileSync(sheet.file).toString("base64"), mimeType: "image/jpeg" }] : []),
           ],
-          structuredContent: { workspace: ws.dir, files, comparison: { ...comparison } },
+          structuredContent: { workspace: ws.dir, files, notes, comparison: { ...comparison } },
         };
       }),
   );
