@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -217,6 +217,27 @@ describe("resolveSource: links through yt-dlp", () => {
     expect((await resolveSource(YT, { workspaceRoot: ws, env: env({ FRAMELENS_MAX_DOWNLOAD_MB: "100" }) })).kind).toBe("youtube");
     expect(calls().find((c) => c.includes("--max-filesize"))![calls().find((c) => c.includes("--max-filesize"))!.indexOf("--max-filesize") + 1]).toBe("100M");
   });
+
+  it.each(["stream", "stream-temp-id"])("stops a download of unknown size once it passes the cap (%s)", async (mode) => {
+    process.env.FAKE_YTDLP_MODE = mode;
+    const started = Date.now();
+    const error = await resolveSource(YT, { workspaceRoot: ws, env: env({ FRAMELENS_MAX_DOWNLOAD_MB: "3" }) }).catch((e) => e);
+    expect(error.code).toBe("too_large");
+    expect(error.message).toMatch(/passed the 3 MB limit/);
+    // The fake writes 1 MB every 50 ms for 30 s: stopped within a few seconds, and the partial file is removed.
+    expect(Date.now() - started).toBeLessThan(10_000);
+    const media = join(ws, "yt-jNQXAC9IVRw", "media");
+    const left = existsSync(media) ? readdirSync(media).filter((n) => n.startsWith("source.")) : [];
+    expect(left).toEqual([]);
+    expect(runningChildren()).toBe(0);
+  }, 20_000);
+
+  it("does not count the merger's temporary output against the cap", async () => {
+    // 3 MB downloaded; while merging, 6 MB are on disk. A 4 MB cap must let it through.
+    process.env.FAKE_YTDLP_MODE = "merge";
+    const record = await resolveSource(YT, { workspaceRoot: ws, env: env({ FRAMELENS_MAX_DOWNLOAD_MB: "4" }) });
+    expect(record.mediaPath).toBe(join(ws, "yt-jNQXAC9IVRw", "media", "source.mp4"));
+  }, 20_000);
 
   it("reports a download that produced no file", async () => {
     process.env.FAKE_YTDLP_MODE = "nofile";

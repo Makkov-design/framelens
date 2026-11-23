@@ -43,14 +43,36 @@ export function parseSsim(text: string, rate: number): SimilaritySample[] {
   return samples;
 }
 
+/** Long side of the pictures SSIM compares, in pixels. */
+const SSIM_LONG_SIDE = 320;
+
+/**
+ * The size both videos are scaled to before SSIM: the reference's aspect ratio with its long side at 320 px (even
+ * numbers, as yuv420p needs), so a vertical or square reference is not squashed into 16:9. Without a known size, 320×180.
+ */
+export function ssimSize(width?: number, height?: number): { width: number; height: number } {
+  if (!width || !height || !Number.isFinite(width / height)) return { width: 320, height: 180 };
+  const even = (n: number) => Math.max(2, Math.round(n / 2) * 2);
+  return width >= height
+    ? { width: SSIM_LONG_SIDE, height: even((SSIM_LONG_SIDE * height) / width) }
+    : { width: even((SSIM_LONG_SIDE * width) / height), height: SSIM_LONG_SIDE };
+}
+
 /** Samples both videos at the same rate and size and scores how alike each pair of pictures is. */
-export async function similarity(reference: string, render: string, tools: MediaTools, rate = 4): Promise<SimilaritySample[]> {
+export async function similarity(
+  reference: string,
+  render: string,
+  tools: MediaTools,
+  rate = 4,
+  size: { width: number; height: number } = ssimSize(),
+): Promise<SimilaritySample[]> {
   const out = tempPath("framelens-ssim-", ".txt");
+  const scale = `scale=${size.width}:${size.height}`;
   try {
     await tools.exec(tools.ffmpeg, [
       "-hide_banner", "-nostdin", "-v", "error",
       "-i", reference, "-i", render,
-      "-lavfi", `[0:v]fps=${rate},scale=320:180,setsar=1,format=yuv420p[a];[1:v]fps=${rate},scale=320:180,setsar=1,format=yuv420p[b];[a][b]ssim=stats_file=${filterValue(out)}`,
+      "-lavfi", `[0:v]fps=${rate},${scale},setsar=1,format=yuv420p[a];[1:v]fps=${rate},${scale},setsar=1,format=yuv420p[b];[a][b]ssim=stats_file=${filterValue(out)}`,
       "-f", "null", "-",
     ], { timeoutMs: 20 * 60_000 });
     return parseSsim(readFileSync(out, "utf8"), rate);

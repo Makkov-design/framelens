@@ -1,6 +1,8 @@
 import { mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import { extname, join } from "node:path";
 import { readEnv, run, ToolError, type Env, type ToolLocation } from "../tools/index.js";
+import { anySignal } from "../tools/download.js";
+import { callSignal } from "../runtime/call.js";
 import { cookieArgs, redactArgs } from "./cookies.js";
 import { mayBeAccessControl } from "./access.js";
 import { SourceError } from "./errors.js";
@@ -20,6 +22,41 @@ export function maxDownloadMb(env: Env): number {
     throw new SourceError("bad_input", `FRAMELENS_MAX_DOWNLOAD_MB must be a whole number of megabytes, got "${raw}".`);
   }
   return value;
+}
+
+/**
+ * How often a running download's size on disk is checked against the limit. A fast download can pass the limit by
+ * what it writes in that time before it is stopped, so the limit is approximate for a size not known up front.
+ */
+const SIZE_CHECK_MS = 250;
+
+/**
+ * The output a postprocessor writes next to its inputs: yt-dlp's `prepend_extension(final name, "temp")`, so for
+ * source.mp4 exactly source.temp.mp4 (the merger's, renamed over the inputs once done). Nothing else: a stream is
+ * named source.f<format id>.<ext>, and a site chooses the format id (a DASH Representation@id), dots included.
+ */
+const POSTPROCESSOR_OUTPUT = /^source\.temp\.[A-Za-z0-9]+$/;
+
+/**
+ * Bytes yt-dlp has downloaded so far: the result, its parts and fragments, and captions, all named source.*. A
+ * postprocessor's output is a copy of what was downloaded, not more of it, so it is not counted: a video under the
+ * limit is not stopped while it merges.
+ */
+export function writtenBytes(dir: string): number {
+  let total = 0;
+  try {
+    for (const name of readdirSync(dir)) {
+      if (!name.startsWith("source.") || POSTPROCESSOR_OUTPUT.test(name)) continue;
+      try {
+        total += statSync(join(dir, name)).size;
+      } catch {
+        // Renamed or removed between the listing and the stat.
+      }
+    }
+  } catch {
+    // The folder is not there yet.
+  }
+  return total;
 }
 
 /** A readable platform name for a link, for messages. */
@@ -152,10 +189,10 @@ export async function fetchWithYtDlp(params: FetchParams): Promise<FetchResult> 
     ...cookies,
   ];
   const runEnv = { PYTHONIOENCODING: "utf-8", NO_COLOR: "1" };
-  const exec = async (args: string[], limit: number) => {
+  const exec = async (args: string[], limit: number, stop?: AbortSignal) => {
     log(`yt-dlp ${redactArgs(args).slice(0, 40).join(" ")}`);
     try {
-      return await run(ytdlp.path, args, { timeoutMs: limit, signal, env: runEnv, maxOutputBytes: 32 * 1024 * 1024 });
+      return await run(ytdlp.path, args, { timeoutMs: limit, signal: stop ? anySignal(signal ?? callSignal(), stop) : signal, env: runEnv, maxOutputBytes: 32 * 1024 * 1024 });
     } catch (error) {
       if (error instanceof ToolError && error.code === "timeout") {
         throw new SourceError("download_failed", `yt-dlp did not finish in ${Math.round(limit / 60_000)} minutes and was stopped. The video may be too long or the connection too slow.`);
@@ -196,7 +233,27 @@ export async function fetchWithYtDlp(params: FetchParams): Promise<FetchResult> 
     "-o", join(mediaDir, "source.%(ext)s"),
     "--", url,
   ];
-  const result = await exec(args, timeoutMs);
+  // `--max-filesize` only works when the size is known up front: an HLS or DASH stream that reports none (live, many
+  // playlists) would download without end. The files written so far are watched, and the download is stopped once
+  // they pass the limit.
+  const limitBytes = maxMb * 1024 * 1024;
+  const overLimit = new AbortController();
+  const watch = setInterval(() => {
+    if (writtenBytes(mediaDir) > limitBytes) overLimit.abort();
+  }, SIZE_CHECK_MS);
+  watch.unref();
+  let result: Awaited<ReturnType<typeof exec>>;
+  try {
+    result = await exec(args, timeoutMs, overLimit.signal);
+  } catch (error) {
+    if (overLimit.signal.aborted && !(signal ?? callSignal())?.aborted) {
+      for (const name of readdirSync(mediaDir)) if (name.startsWith("source.")) rmSync(join(mediaDir, name), { force: true });
+      throw new SourceError("too_large", `The download passed the ${maxMb} MB limit and was stopped (the site did not say its full size up front, so it is checked as it downloads). Raise FRAMELENS_MAX_DOWNLOAD_MB or use a shorter video.`);
+    }
+    throw error;
+  } finally {
+    clearInterval(watch);
+  }
   if (result.code !== 0) throw mapYtDlpFailure(result.stderr, url);
 
   // 3. Find what was written.

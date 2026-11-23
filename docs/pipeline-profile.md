@@ -74,3 +74,17 @@ build.
   server, and they outlive the client. The reliable sign is the pipe itself: a write to the client fails once its
   end is closed, so a server that must notice a dead client writes something valid (an MCP `ping`) and treats EPIPE
   as gone. Test it through a launcher that stays alive, not only with the client as the direct parent.
+- A safety check written for one download route belongs to every route that fetches third-party addresses: the
+  cobalt path checked each redirect hop while `exact` link downloads followed any redirect. Reuse the one check
+  (`checkHop`, `pinnedGet`) rather than writing a second, and test a hop to a private address over a real socket.
+- A limit that a tool enforces only from metadata is no limit when the metadata is missing: yt-dlp's
+  `--max-filesize` skips streams of unknown size. Enforce caps on what is actually written or read.
+- Chain streams with `stream.pipeline`, never `.pipe()`: `pipe` neither passes errors on nor closes the source when
+  the reader stops, so an open socket's later abort became an unhandled `'error'` that ended the server. Test hostile
+  answers (endless, broken, stalled, cut) in a process of their own and wait past every time limit
+  (`test/runtime/download-guard.test.ts`). A quick fix to a review finding needs the same scrutiny: two of this PR's
+  three audit findings came from such fixes.
+- A filter that skips files must match the exact name our side writes, never a substring the remote side can put in a
+  name: yt-dlp keeps dots in a site-chosen format id, so `.includes(".temp.")` let a manifest switch the size watch off.
+- A size cap measures what is on disk: an archive's own size fields can lie (`unzip -Zt` reads them), so measure the
+  extracted files before copying them anywhere that matters.

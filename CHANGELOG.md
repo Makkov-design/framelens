@@ -10,58 +10,79 @@
 
 ### Changed
 
+- The local tools (`probe`, `plan`, `frames`, `style`, `track`, `web`, `exact` and the rest) are no longer annotated
+  `readOnlyHint: true`: they write workspaces and may download a video or install ffmpeg and yt-dlp. They are marked
+  not destructive. A client that runs read-only tools without asking may now ask before these. The Gemini tools stay
+  read-only.
 - `plan` reads the picture changes of a source longer than 10 minutes in 12 sample windows of 30 s instead of every
   second, and says so in its notes; `boundaries` over a whole long source gets a time limit that grows with its length.
 - Development: on Dependabot's npm PRs a workflow rebuilds and commits the bundle, so they can pass CI once a
-  maintainer approves the CI run; major bumps come as PRs of their own. CI also runs `probe` through the built
-  bundle on Node 20, 22 and 24 and the unit tests on Windows.
+  maintainer approves the CI run; major bumps come as PRs of their own. The workflow checks the build's artifact
+  before it extracts anything (at most 50 MB packed and by its listing unpacked, exactly the expected file names,
+  plain files only), and measures what it extracted (at most 50 MB) before copying it in.
+  CI also runs `probe` through the built bundle on Node 20, 22 and 24 and the unit tests on Windows and macOS.
 - The bundled Gemini client is `@google/genai` 3.0.0 (was 2.32.0). Calls stay on the `v1beta` API, where the
-  default `-latest` models exist (3.x defaults to `v1`), and a `GOOGLE_GENAI_API_VERSION` in the environment no
-  longer changes it. The bundle still runs on Node 20.
+  default `-latest` models exist (3.x defaults to `v1`), and a `GOOGLE_GENAI_API_VERSION` in the environment is
+  ignored. The bundle still runs on Node 20.
 
 ### Fixed
 
+- Cancelling a tool call stops the yt-dlp, ffmpeg or browser it started, with their own children; the server stops
+  all of them when it exits (they used to run on for up to 30 minutes). When the client closes stdin, the calls it
+  already sent are answered first. A cancelled call leaves no result in the workspace and sends no progress after
+  its answer.
+- A server whose client died during a call exits and stops the call's downloads instead of running on until their
+  own time limits, also when started through `npx` (whose `sh -c` or `cmd /c` and `npm exec` outlive the client):
+  while it finishes its calls after stdin closed, a ping it cannot write tells it the client is gone.
+- A shared first-use install of ffmpeg or yt-dlp, and the one ffmpeg feature check, no longer stop for one call's
+  cancel or report to its progress; an install whose waiting calls were all cancelled is reported on the next call.
+- Two calls on the same new link at once (`transcript` and `frames` together) no longer break each other's download:
+  the second waits for the first (also for the login-profile capture). A cancelled download leaves nothing a later
+  call takes for complete.
+- A download from a site that does not say the size up front (HLS and DASH streams) is measured as it runs and
+  stopped once past `FRAMELENS_MAX_DOWNLOAD_MB` instead of running on; yt-dlp's `--max-filesize` only covered a known
+  size.
+- `exact` link downloads check every redirect, like the cobalt route: a redirect to another host must be https to a
+  public address and may not add a user name or password, so a redirect cannot send the download to this computer,
+  the local network or a cloud metadata address. The host of the link itself may still be local (a dev server).
+  gzip, deflate and br answers are decoded (zstd and lists of encodings are refused), and a stalled, cut or broken
+  answer ends the call with a message instead of a crash.
+- A program that hits its time limit says so and names the limit, instead of reading as a failed command. Output a
+  stray descendant writes after its program exited is flagged as possibly incomplete.
+- Temporary files get unguessable names instead of the process id and the time.
+- `style`, `track`, `compare` and `export` work when ffmpeg exists only as the automatically installed pinned build:
+  the code that pipes frames from ffmpeg now locates it first instead of spawning the bare name.
 - Automatic setup and `doctor --prepare` offer the pinned ffmpeg on glibc Linux on arm64 too (FFmpeg 9.0.2 from the
   same build server, SHA-256 verified), and on Alpine and other musl systems none (they need `apk add ffmpeg`): the
   check now asks for the C library instead of looking for the x64 loader, and a glibc build left on disk is not used.
   A glibc system without the loader the build needs (Guix, NixOS without stub-ld) is told so instead of downloading
   60 MB that cannot start.
+- yt-dlp's automatic setup downloads the `musllinux` build on Alpine and other musl Linux (pinned from the
+  release's signed SHA2-256SUMS). The Docker image installs ffmpeg from Alpine's packages (its version, not the
+  pinned 9.0.2).
 - The pinned ffmpeg and yt-dlp are looked for under the platform and architecture asked for (tests that check the
-  Linux x64 setup failed on arm64 Macs); CI runs the unit tests on macOS as well.
+  Linux x64 setup failed on arm64 Macs).
 - Gemini tools stop their request when the call is cancelled and send progress while Gemini works. An answer Gemini
   could not complete (`MALFORMED_RESPONSE`) or a reply that is not the API's JSON reads as a bad response that is
   tried again on the next call, not as an empty answer or an unknown error.
-- A server whose client died during a call exits and stops the call's downloads instead of running on until their
-  own time limits, also when started through `npx` (whose `sh -c` and `npm exec` outlive the client): while it
-  finishes its calls after stdin closed, a ping it cannot write tells it the client is gone.
-- A shared first-use check or install no longer stops for one call's cancel or reports to its progress, a cancelled
-  call sends no progress after its answer, and an install whose waiters were all cancelled is reported on the next
-  call. Output a stray descendant writes after its program exited is flagged as possibly incomplete.
-
-- Cancelling a tool call stops the yt-dlp, ffmpeg or browser it started, with their own children; the server stops
-  all of them when it exits (they used to run on for up to 30 minutes). When the client closes stdin, the calls it
-  already sent are answered first. A cancelled call never stops the first-use download of ffmpeg or yt-dlp that
-  other calls wait for, and leaves no result in the workspace.
-- Two calls on the same new link at once (`transcript` and `frames` together) no longer break each other's download:
-  the second waits for the first (also for the login-profile capture). A cancelled download leaves nothing a later
-  call takes for complete.
-- A program that hits its time limit says so and names the limit, instead of reading as a failed command.
-- Temporary files get unguessable names instead of the process id and the time.
-- `style`, `track`, `compare` and `export` work when ffmpeg exists only as the automatically installed pinned build:
-  the code that pipes frames from ffmpeg now locates it first instead of spawning the bare name.
 - The Gemini transcript fallback for YouTube links without captions runs only when a transcript is required
   (`transcript`, `frames` with `around`), no longer for frame labels, `plan` or `style`. A failure that would repeat
   (key, blocked video, the day's quota, an unreadable answer) is remembered for the session instead of sending the
   whole video to Gemini on every call; overload, timeouts and per-minute limits are tried again on the next call.
   `plan` says "no captions (speech not checked)" instead of claiming no speech was found.
+- `compare` measures picture similarity at the reference's aspect ratio, so a vertical or square video is no longer
+  squashed into 16:9. The ratio comes from the stored picture size: a video stored landscape with a rotation flag
+  is still compared as landscape.
 - `style` and `compare` return their notes (only the first 180 s analyzed, transitions not looked for); `compare`
   says when its cuts and palette cover less of the files than its picture similarity.
+- `web` no longer loses a finished reading on Windows when the browser's temporary profile is still locked as it is
+  removed.
+- `framelens init` keeps the environment variables and settings added to an existing `framelens` entry in
+  `.mcp.json` (and carries over those of a `ytlens` entry); only the command and its pinned version are rewritten.
+  The file is replaced in one step, and one that does not hold a JSON object is left untouched with a clear error.
 - SubRip (`.srt`) captions are read (they parsed to NaN times); TTML, ASS, LRC and broken caption files are skipped;
   a separator line holding only spaces no longer merges two cues.
 - A cached transcript is rebuilt when `language` asks for one the captions have in another language.
-- yt-dlp's automatic setup downloads the `musllinux` build on Alpine and other musl Linux (pinned from the
-  release's signed SHA2-256SUMS); ffmpeg's automatic setup no longer offers its glibc build there and says
-  `apk add ffmpeg`. The Docker image installs ffmpeg from Alpine's packages (its version, not the pinned 9.0.2).
 - A `file://` link with a host answers with a clear source error instead of a raw TypeError.
 - In CI (the `CI` variable set), a browser gets 60 s instead of 20 s to start, so a cold start on a busy runner does
   not fail `web`.

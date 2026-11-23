@@ -17,7 +17,7 @@ import { analyzeAudio, spectrogram, type AudioAnalysis } from "./audio/analyze.j
 import { readPage, type PageResult } from "./browser/read.js";
 import { cleanReading, specFromPage, type PageReading } from "./browser/web.js";
 import { inboxContents, inboxNote, newestInboxItem, newestInboxReading } from "./sources/inbox.js";
-import { matchCuts, momentList, paletteDistance, similarity, verdict, WORST_MOMENTS, type Comparison } from "./compare/compare.js";
+import { matchCuts, momentList, paletteDistance, similarity, ssimSize, verdict, WORST_MOMENTS, type Comparison } from "./compare/compare.js";
 import { exportSpec, type ExportTarget } from "./export/exporters.js";
 import { onBeatRatio } from "./audio/dsp.js";
 import { classifyChanges, energySpikeCuts, frameAt, motionEvents, motionProfile } from "./style/motion.js";
@@ -725,7 +725,13 @@ export class Engine {
       );
     }
     const fps = ref.source.probe.fps ?? 30;
-    const samples = await similarity(ref.source.record.mediaPath, out.source.record.mediaPath, this.options.tools);
+    const samples = await similarity(
+      ref.source.record.mediaPath,
+      out.source.record.mediaPath,
+      this.options.tools,
+      undefined,
+      ssimSize(ref.source.probe.width, ref.source.probe.height),
+    );
     let worst = [...samples].sort((a, b) => a.ssim - b.ssim).slice(0, WORST_MOMENTS).sort((a, b) => a.t - b.t);
 
     // The side-by-side sheet of those moments. Each moment is named by the reference frame shown at it, so the

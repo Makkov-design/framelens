@@ -83,6 +83,19 @@ export async function readPage(url: string, outDir: string, tools: MediaTools, o
     return { reading: mergeReadings(readings), views, ...(sheet && { sheet }) };
   } finally {
     await session.close();
-    rmSync(profile, { recursive: true, force: true });
+    removeProfile(profile);
+  }
+}
+
+/**
+ * Removes the temporary browser profile. Windows can hold its files a moment after the browser exits (EBUSY, EPERM),
+ * so the removal retries, and a folder that still cannot go is left in the temp folder rather than throwing away a
+ * finished reading from `finally`.
+ */
+export function removeProfile(profile: string, remove: typeof rmSync = rmSync): void {
+  try {
+    remove(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  } catch {
+    // Left for the system's temp cleanup.
   }
 }

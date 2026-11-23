@@ -137,18 +137,27 @@ export function isPrivateAddress(address: string): boolean {
 const LOCAL_NAMES = /(^|\.)(localhost|local|internal|intranet|lan|home\.arpa)$/;
 
 export type Lookup = (host: string) => Promise<string[]>;
-const systemLookup: Lookup = async (host) => (await dnsLookup(host, { all: true })).map((a) => a.address);
+export const systemLookup: Lookup = async (host) => (await dnsLookup(host, { all: true })).map((a) => a.address);
+
+/** Who a rejected hop is blamed on in messages, and what the address is called. */
+export interface HopWording {
+  who: string;
+  what: string;
+}
+const COBALT_WORDING: HopWording = { who: "Your cobalt instance", what: "a media address" };
 
 /**
  * Every address the media download goes to: the instance itself, or an https host on the public internet. A
  * redirect cannot point it at this computer or the local network (a cobalt answer or tunnel is third-party data).
- * Returns the checked address to connect to (undefined for the instance), so a second DNS answer cannot differ.
+ * Returns the checked address to connect to (undefined for the trusted origin), so a second DNS answer cannot differ.
+ * `exact` link downloads use the same check, with the link the user gave as the trusted origin.
  */
-async function checkHop(url: URL, instance: URL, lookup: Lookup): Promise<string | undefined> {
-  if (url.protocol !== "http:" && url.protocol !== "https:") throw new SourceError("download_failed", "Your cobalt instance pointed to a media address that is not http(s); it was not downloaded.");
-  if (url.origin === instance.origin) return undefined;
-  if (url.protocol !== "https:") throw new SourceError("download_failed", "Your cobalt instance pointed to a media address on another host that is not https; it was not downloaded.");
-  if (url.username || url.password) throw new SourceError("download_failed", "Your cobalt instance pointed to a media address with credentials; it was not downloaded.");
+export async function checkHop(url: URL, trusted: URL, lookup: Lookup = systemLookup, wording: HopWording = COBALT_WORDING): Promise<string | undefined> {
+  const { who, what } = wording;
+  if (url.protocol !== "http:" && url.protocol !== "https:") throw new SourceError("download_failed", `${who} pointed to ${what} that is not http(s); it was not downloaded.`);
+  if (url.origin === trusted.origin) return undefined;
+  if (url.protocol !== "https:") throw new SourceError("download_failed", `${who} pointed to ${what} on another host that is not https; it was not downloaded.`);
+  if (url.username || url.password) throw new SourceError("download_failed", `${who} pointed to ${what} with credentials; it was not downloaded.`);
   const host = url.hostname.toLowerCase().replace(/\.+$/, "").replace(/^\[|\]$/g, "");
   let addresses: string[];
   if (isIP(host)) addresses = [host];
@@ -157,11 +166,11 @@ async function checkHop(url: URL, instance: URL, lookup: Lookup): Promise<string
     try {
       addresses = await lookup(host);
     } catch {
-      throw new SourceError("download_failed", `Your cobalt instance pointed to ${host}, which does not resolve.`);
+      throw new SourceError("download_failed", `${who} pointed to ${host}, which does not resolve.`);
     }
   }
   if (!addresses.length || addresses.some(isPrivateAddress)) {
-    throw new SourceError("download_failed", `Your cobalt instance pointed to ${host}, which is on this computer or the local network; it was not downloaded.`);
+    throw new SourceError("download_failed", `${who} pointed to ${host}, which is on this computer or the local network; it was not downloaded.`);
   }
   return addresses[0];
 }

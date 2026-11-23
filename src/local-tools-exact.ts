@@ -5,6 +5,7 @@ import type { Engine } from "./engine.js";
 import { EXPORT_TARGETS } from "./export/exporters.js";
 import type { Logger } from "./logger.js";
 import { runExact, FigmaTokenError, type ExactResult } from "./exact/run.js";
+import { WRITES_WORKSPACE } from "./local-tools.js";
 import { oneLine } from "./text.js";
 import { mcpCallContext, withCall } from "./runtime/call.js";
 
@@ -68,7 +69,7 @@ export function registerExactTools(server: McpServer, engine: Engine, logger: Lo
         figma_json: z.union([z.string().max(8_000_000), z.record(z.string(), z.unknown())]).optional().describe("Figma JSON: a /v1/files/:key/nodes response or get_motion_context output. Use instead of `source`."),
         export: z.enum(EXPORT_TARGETS).optional().describe("Also write a starter project for this renderer."),
       },
-      annotations: { readOnlyHint: false, idempotentHint: true, openWorldHint: true },
+      annotations: WRITES_WORKSPACE,
     },
     async (args, extra): Promise<CallToolResult> => {
       const startedAt = Date.now();
