@@ -62,6 +62,12 @@ describe("exact link download redirects", () => {
     expect(asked).toEqual(["https://lottie.host/abc", "https://assets.lottie.host/abc/anim.json"]);
   });
 
+  it("refuses a redirect that adds a user name and password, even on the link's own host", async () => {
+    const { fetchImpl, asked } = routes({ "https://cdn.example.com/anim.json": () => redirect("https://user:secret@cdn.example.com/anim.json") });
+    await expect(downloadFile("https://cdn.example.com/anim.json", join(dir, "u"), fetchImpl, publicLookup)).rejects.toThrow(/user name or password/);
+    expect(asked).toHaveLength(1);
+  });
+
   it("stops after five redirects", async () => {
     const { fetchImpl } = routes({ "https://cdn.example.com/loop.json": () => redirect("/loop.json") });
     await expect(downloadFile("https://cdn.example.com/loop.json", join(dir, "e"), fetchImpl, publicLookup)).rejects.toThrow(/redirects too often/);

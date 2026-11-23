@@ -16,10 +16,11 @@ describe("dependabot-bundle workflow", () => {
     expect(allowed).toEqual(committed);
   });
 
-  it("checks the artifact's size before it extracts anything", () => {
+  it("checks the artifact's size before it extracts anything, and measures what it extracted before copying it in", () => {
     const commit = workflow.slice(workflow.indexOf("  commit:"));
     expect(commit).not.toContain("actions/download-artifact");
-    const order = ["size_in_bytes", "--max-filesize", "unzip -Z1", "unzip -Zt", "unzip -q"].map((s) => commit.indexOf(s));
+    // The measured size of what was extracted is checked before the repository's files are touched.
+    const order = ["size_in_bytes", "--max-filesize", "unzip -Z1", "unzip -Zt", "unzip -q", 'du -sk "$src"', "rm -rf extension/dist"].map((s) => commit.indexOf(s));
     expect(order.every((i) => i > 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
   });

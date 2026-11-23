@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { InvalidInputError } from "./errors.js";
 import { VERSION } from "./version.js";
@@ -27,10 +27,16 @@ export function initProject(projectDir: string): InitResult {
   const mcpPath = join(projectDir, ".mcp.json");
   let config: { mcpServers?: Record<string, unknown>; [key: string]: unknown } = {};
   if (existsSync(mcpPath)) {
+    let parsed: unknown;
     try {
-      config = JSON.parse(readFileSync(mcpPath, "utf8"));
+      parsed = JSON.parse(readFileSync(mcpPath, "utf8"));
     } catch {
       throw new InvalidInputError(`${mcpPath} is not valid JSON. Fix or remove it, then run init again.`);
+    }
+    if (!asObject(parsed)) throw new InvalidInputError(`${mcpPath} does not hold a JSON object. Fix or remove it, then run init again.`);
+    config = parsed as typeof config;
+    if (config.mcpServers !== undefined && !asObject(config.mcpServers)) {
+      throw new InvalidInputError(`"mcpServers" in ${mcpPath} is not an object. Fix or remove it, then run init again.`);
     }
   }
   // A project set up with ytlens, the earlier name, gets the renamed server instead of a second copy.
@@ -47,7 +53,15 @@ export function initProject(projectDir: string): InitResult {
       env: { GEMINI_API_KEY: "${GEMINI_API_KEY}", ...asObject(existing.env) },
     },
   };
-  writeFileSync(mcpPath, `${JSON.stringify(config, null, 2)}\n`);
+  // Written next to it and renamed over it, so an interrupted run never leaves a half-written .mcp.json.
+  const temp = `${mcpPath}.${process.pid}.tmp`;
+  try {
+    writeFileSync(temp, `${JSON.stringify(config, null, 2)}\n`);
+    renameSync(temp, mcpPath);
+  } catch (error) {
+    rmSync(temp, { force: true });
+    throw error;
+  }
 
   const skillDir = join(projectDir, ".claude", "skills", "framelens");
   mkdirSync(skillDir, { recursive: true });

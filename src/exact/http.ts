@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import { Readable as NodeReadable } from "node:stream";
+import { pipeline, Readable as NodeReadable } from "node:stream";
 import { createBrotliDecompress, createGunzip, createInflate } from "node:zlib";
 import { checkHop, pinnedGet, systemLookup, type Lookup } from "../sources/cobalt.js";
 
@@ -50,6 +50,7 @@ export async function readCapped(res: Readable | FetchResponse, max: number): Pr
 export const isHttpUrl = (s: string) => /^https?:\/\//i.test(s.trim());
 
 const MAX_REDIRECTS = 5;
+const DOWNLOAD_TIMEOUT_MS = 30_000;
 const LINK_WORDING = { who: "The link", what: "an address" };
 
 /**
@@ -59,16 +60,23 @@ const LINK_WORDING = { who: "The link", what: "an address" };
  * download to this computer, the local network or a cloud metadata address, and each request goes to the address that
  * was checked. An injected `fetchImpl` (tests) replaces the pinned request.
  */
-export async function downloadFile(url: string, dir: string, fetchImpl?: FetchLike, lookup: Lookup = systemLookup): Promise<string> {
+export async function downloadFile(url: string, dir: string, fetchImpl?: FetchLike, lookup: Lookup = systemLookup, timeoutMs = DOWNLOAD_TIMEOUT_MS): Promise<string> {
   const parsed = new URL(url);
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") throw new Error("Only http(s) links can be downloaded.");
   if (parsed.username || parsed.password) throw new Error("Links with a user name or password are not accepted.");
-  const signal = AbortSignal.timeout(30_000);
+  const signal = AbortSignal.timeout(timeoutMs);
+  const timedOut = () => new Error(`The download from ${parsed.host} did not finish in ${Math.max(1, Math.round(timeoutMs / 1000))} s.`);
   let current = parsed;
   let res: { status: number; headers?: { get(name: string): string | null }; body?: ReadableStream<Uint8Array> | null; arrayBuffer?(): Promise<ArrayBuffer> } | undefined;
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+    // Not even the link's own host gets a name and password added by a redirect.
+    if (current.username || current.password) throw new Error("The link redirected to an address with a user name or password; it was not downloaded.");
     const address = await checkHop(current, parsed, lookup, LINK_WORDING);
-    res = fetchImpl ? await fetchImpl(current.href, { signal, redirect: "manual" }) : await pinnedGet(current, address, signal);
+    try {
+      res = fetchImpl ? await fetchImpl(current.href, { signal, redirect: "manual" }) : await pinnedGet(current, address, signal);
+    } catch (error) {
+      throw signal.aborted ? timedOut() : error;
+    }
     if (res.status < 300 || res.status >= 400) break;
     const location = res.headers?.get("location");
     await res.body?.cancel().catch(() => undefined);
@@ -84,7 +92,21 @@ export async function downloadFile(url: string, dir: string, fetchImpl?: FetchLi
     await res?.body?.cancel().catch(() => undefined);
     throw new Error(`Download failed: HTTP ${res?.status ?? "?"} for ${current.host}.`);
   }
-  const data = await readCapped(decoded(res), MAX_DOWNLOAD);
+  const encoding = res.headers?.get("content-encoding")?.trim().toLowerCase();
+  let data: Buffer;
+  try {
+    data = await readCapped(decoded(res, encoding), MAX_DOWNLOAD);
+  } catch (error) {
+    if (signal.aborted) throw timedOut();
+    if (error instanceof Error && /^(File is larger than|The link sent the file with an encoding)/.test(error.message)) throw error;
+    if (error instanceof Error && (error.message === "aborted" || (error as NodeJS.ErrnoException).code === "ECONNRESET")) {
+      throw new Error(`The download from ${current.host} was cut off before the file was complete.`);
+    }
+    if (encoding && encoding !== "identity") {
+      throw new Error(`The link's file could not be decoded (${encoding.slice(0, 40)}): ${(error instanceof Error && error.message) || "the data is broken"}.`);
+    }
+    throw error;
+  }
   mkdirSync(dir, { recursive: true });
   const base = basename(parsed.pathname).replace(/[^A-Za-z0-9._-]/g, "_") || "animation";
   const ext = /\.(json|lottie|riv)$/i.test(base) ? "" : data[0] === 0x50 && data[1] === 0x4b ? ".lottie" : data.subarray(0, 4).toString("latin1") === "RIVE" ? ".riv" : ".json";
@@ -98,12 +120,17 @@ export async function downloadFile(url: string, dir: string, fetchImpl?: FetchLi
  * even to a client that did not ask for it; `fetch` decoded that, the pinned request does not, so gzip, deflate and
  * br are decoded here, and the size cap then applies to the decoded bytes.
  */
-function decoded<T extends Readable>(res: T): T {
-  const encoding = res.headers?.get("content-encoding")?.trim().toLowerCase();
+function decoded<T extends Readable>(res: T, encoding: string | undefined): T {
   if (!res.body || !encoding || encoding === "identity") return res;
   const decoder = encoding === "gzip" || encoding === "x-gzip" ? createGunzip() : encoding === "deflate" ? createInflate() : encoding === "br" ? createBrotliDecompress() : undefined;
-  if (!decoder) throw new Error(`The link sent the file with an encoding Frame Lens cannot read (${encoding.slice(0, 40)}).`);
-  const body = NodeReadable.toWeb(NodeReadable.fromWeb(res.body as never).pipe(decoder)) as unknown as ReadableStream<Uint8Array>;
+  if (!decoder) {
+    void res.body.cancel().catch(() => undefined);
+    throw new Error(`The link sent the file with an encoding Frame Lens cannot read (${encoding.slice(0, 40)}); only gzip, deflate and br are decoded.`);
+  }
+  // pipeline, not pipe: an error on either side, or the reader stopping at the cap, destroys both streams and so
+  // closes the connection. With pipe the socket stayed open, and the time limit's abort later surfaced as an
+  // unhandled stream error that ended the whole server.
+  const body = NodeReadable.toWeb(pipeline(NodeReadable.fromWeb(res.body as never), decoder, () => undefined)) as unknown as ReadableStream<Uint8Array>;
   return { ...res, headers: { get: (name: string) => (name.toLowerCase() === "content-length" ? null : res.headers!.get(name)) }, body };
 }
 

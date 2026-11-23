@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -115,6 +115,17 @@ describe("initProject", () => {
     writeFileSync(join(dir, ".mcp.json"), "{ not json");
     expect(() => initProject(dir)).toThrow(InvalidInputError);
     expect(readFileSync(join(dir, ".mcp.json"), "utf8")).toBe("{ not json");
+  });
+
+  it("refuses an .mcp.json that is not an object, and leaves no temporary file behind", () => {
+    for (const text of ["null", "[]", '{"mcpServers": []}']) {
+      writeFileSync(join(dir, ".mcp.json"), text);
+      expect(() => initProject(dir), text).toThrow(InvalidInputError);
+      expect(readFileSync(join(dir, ".mcp.json"), "utf8")).toBe(text);
+    }
+    rmSync(join(dir, ".mcp.json"));
+    initProject(dir);
+    expect(readdirSync(dir).filter((n) => n.includes(".tmp"))).toEqual([]);
   });
 
   it("overwrites an outdated skill file", () => {

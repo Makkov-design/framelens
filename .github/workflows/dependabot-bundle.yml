@@ -16,10 +16,12 @@ name: Dependabot bundle
 # 1. Trigger is `pull_request`, never `pull_request_target`; `build` keeps every condition of its `if:` gate.
 # 2. `build` (runs the packages) stays `contents: read`, `persist-credentials: false`, no secrets, no cache step.
 # 3. `commit` (holds the write token) runs no package code: no npm, no node, no script from the repo or the artifact.
-# 4. The artifact zip is fetched outside the repo and checked before anything is extracted: under 50 MB as a zip
-#    and under 50 MB unpacked, and its entries are exactly the names in `allowed` (dist/framelens.mjs and the files
-#    of extension/dist; test/workflows.test.ts keeps the list equal to what is committed), plain files only. Only
-#    those names are extracted, each again checked to be a plain file, and copied in.
+# 4. The artifact zip is fetched outside the repo and checked before anything is extracted: under 50 MB as a zip,
+#    under 50 MB unpacked by its own listing, and its entries are exactly the names in `allowed` (dist/framelens.mjs
+#    and the files of extension/dist; test/workflows.test.ts keeps the list equal to what is committed), plain files
+#    only. Only those names are extracted, each file capped by `ulimit -f`; what was extracted is then measured
+#    (`du -sk`, under 50 MB in all, since the zip's size fields can lie) and each file checked again to be a plain
+#    file before it is copied in.
 #    After `git add`, every staged entry must be a plain 100644 blob (no gitlinks, no executables, no links).
 # 5. git in `commit` runs with fsmonitor and hooks off, and no `git submodule`, `git status` or other command that
 #    reads config or attributes from the copied files is added.
@@ -121,6 +123,9 @@ jobs:
           mkdir "$src"
           # Only the allowed names, and no file larger than the cap even if the zip lies about its sizes.
           (ulimit -f $((max / 1024)); unzip -q "$zip" "${allowed[@]}" -d "$src")
+          # The zip's own size fields can lie: measure what was actually extracted before anything is copied in.
+          extracted="$(du -sk "$src" | cut -f1)"
+          if [ "$extracted" -gt $((max / 1024)) ]; then echo "The artifact unpacked to ${extracted} KB, more than 50 MB."; exit 1; fi
           rm -rf extension/dist
           for f in "${allowed[@]}"; do
             if [ -L "$src/$f" ] || [ ! -f "$src/$f" ]; then echo "$f is not a plain file."; exit 1; fi

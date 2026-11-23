@@ -50,10 +50,12 @@ if (delay) {
   await new Promise((done) => setTimeout(done, delay));
 }
 // "stream": keeps appending fragments (1 MB every 50 ms) until it is stopped, like a long HLS download.
-if (mode === "stream") {
+// "stream-temp-id": the same, under a format id the site chose to contain ".temp." (a DASH Representation@id).
+if (mode === "stream" || mode === "stream-temp-id") {
   const chunk = Buffer.alloc(1024 * 1024);
+  const part = mode === "stream" ? `${base}mp4.part` : `${base}fv.temp.1.mp4.part`;
   for (let i = 0; i < 600; i++) {
-    appendFileSync(`${base}mp4.part`, chunk);
+    appendFileSync(part, chunk);
     await new Promise((done) => setTimeout(done, 50));
   }
 }

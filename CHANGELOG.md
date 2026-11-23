@@ -18,7 +18,8 @@
   second, and says so in its notes; `boundaries` over a whole long source gets a time limit that grows with its length.
 - Development: on Dependabot's npm PRs a workflow rebuilds and commits the bundle, so they can pass CI once a
   maintainer approves the CI run; major bumps come as PRs of their own. The workflow checks the build's artifact
-  before it extracts anything (at most 50 MB packed and unpacked, exactly the expected file names, plain files only).
+  before it extracts anything (at most 50 MB packed and by its listing unpacked, exactly the expected file names,
+  plain files only), and measures what it extracted (at most 50 MB) before copying it in.
   CI also runs `probe` through the built bundle on Node 20, 22 and 24 and the unit tests on Windows and macOS.
 - The bundled Gemini client is `@google/genai` 3.0.0 (was 2.32.0). Calls stay on the `v1beta` API, where the
   default `-latest` models exist (3.x defaults to `v1`), and a `GOOGLE_GENAI_API_VERSION` in the environment is
@@ -38,11 +39,14 @@
 - Two calls on the same new link at once (`transcript` and `frames` together) no longer break each other's download:
   the second waits for the first (also for the login-profile capture). A cancelled download leaves nothing a later
   call takes for complete.
-- A download from a site that does not say the size up front (HLS and DASH streams) stops at
-  `FRAMELENS_MAX_DOWNLOAD_MB` instead of running on; yt-dlp's `--max-filesize` only covered a known size.
-- `exact` link downloads check every redirect, like the cobalt route: a redirect to another host must be https on the
-  public internet, so a link cannot send the download to this computer, the local network or a cloud metadata
-  address. The link's own host may still be local (a dev server).
+- A download from a site that does not say the size up front (HLS and DASH streams) is measured as it runs and
+  stopped once past `FRAMELENS_MAX_DOWNLOAD_MB` instead of running on; yt-dlp's `--max-filesize` only covered a known
+  size.
+- `exact` link downloads check every redirect, like the cobalt route: a redirect to another host must be https to a
+  public address and may not add a user name or password, so a redirect cannot send the download to this computer,
+  the local network or a cloud metadata address. The host of the link itself may still be local (a dev server).
+  gzip, deflate and br answers are decoded (zstd and lists of encodings are refused), and a stalled, cut or broken
+  answer ends the call with a message instead of a crash.
 - A program that hits its time limit says so and names the limit, instead of reading as a failed command. Output a
   stray descendant writes after its program exited is flagged as possibly incomplete.
 - Temporary files get unguessable names instead of the process id and the time.
@@ -67,13 +71,15 @@
   whole video to Gemini on every call; overload, timeouts and per-minute limits are tried again on the next call.
   `plan` says "no captions (speech not checked)" instead of claiming no speech was found.
 - `compare` measures picture similarity at the reference's aspect ratio, so a vertical or square video is no longer
-  squashed into 16:9.
+  squashed into 16:9. The ratio comes from the stored picture size: a video stored landscape with a rotation flag
+  is still compared as landscape.
 - `style` and `compare` return their notes (only the first 180 s analyzed, transitions not looked for); `compare`
   says when its cuts and palette cover less of the files than its picture similarity.
 - `web` no longer loses a finished reading on Windows when the browser's temporary profile is still locked as it is
   removed.
 - `framelens init` keeps the environment variables and settings added to an existing `framelens` entry in
   `.mcp.json` (and carries over those of a `ytlens` entry); only the command and its pinned version are rewritten.
+  The file is replaced in one step, and one that does not hold a JSON object is left untouched with a clear error.
 - SubRip (`.srt`) captions are read (they parsed to NaN times); TTML, ASS, LRC and broken caption files are skipped;
   a separator line holding only spaces no longer merges two cues.
 - A cached transcript is rebuilt when `language` asks for one the captions have in another language.

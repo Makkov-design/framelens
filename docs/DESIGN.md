@@ -203,6 +203,15 @@ browser extension (`extension/`, 2.1): the user records the tab or reads the pag
 the user's own cobalt instance (`FRAMELENS_COBALT_URL`); a failure that may be access control never does (allow-list
 in `sources/cobalt.ts`, wording in `sources/access.ts`). One video per request, with pauses between requests.
 
+Redirects are followed by hand wherever a download takes an address from third-party data: `checkHop` and
+`pinnedGet` in `sources/cobalt.ts`, shared by cobalt and `exact` links (`exact/http.ts`). The trusted origin (the
+user's cobalt instance, or the host of the link given to `exact`) may be local; every other hop must be https, resolve
+only to public addresses and carry no user name or password, and is connected to at the address that was checked.
+`exact` decodes gzip, deflate and br through `stream.pipeline` (never `pipe`, which left the socket open and let the
+time limit's abort surface as an unhandled error) and refuses other encodings. yt-dlp's `--max-filesize` covers only a
+size known up front, so `sources/ytdlp.ts` also measures the `source.*` files every 250 ms (not the postprocessor's
+`source.temp.<ext>`) and stops the download past the limit.
+
 ## Engineering rules
 
 - TypeScript strict, ESM, Node ≥ 20, zero runtime dependencies; bundle with `npm run bundle` and commit

@@ -179,6 +179,12 @@ DRM, a private, members-only or paid post, or HTTP 401, 403, 429 or 451 is never
 download must be https to a public address, nothing on your computer or local network, and only video or audio is
 kept. The official cobalt.tools hosts are refused: they are not for other projects. Nothing changes when it is unset.
 
+**Links given to `exact`.** A Lottie, dotLottie or Rive link is downloaded from the host you name, even one on your
+computer or local network (a dev server). Every redirect to another host must be https to a public address, never
+your computer, the local network or a cloud metadata address, and a redirect may not add a user name or password.
+Files sent gzip-, deflate- or br-encoded are decoded; other encodings (zstd, lists of encodings) are refused. At most
+30 MB, after decoding, in 30 s.
+
 Frame Lens never bypasses logins, CAPTCHAs or bot checks and never uses online downloader sites or scraping services.
 Platforms' terms may forbid automated downloading: analyze videos you are allowed to watch and use, for reference.
 </details>
@@ -391,7 +397,7 @@ Nothing that fails the check is kept.
 | `FRAMELENS_AUTO_INSTALL` | on | `0` stops Frame Lens from downloading a missing ffmpeg or yt-dlp |
 | `FRAMELENS_HOME` | `~/.framelens` | Where downloaded ffmpeg and yt-dlp builds and the fallback workspaces live |
 | `FRAMELENS_FFMPEG`, `FRAMELENS_FFPROBE`, `FRAMELENS_YTDLP` | found automatically | Paths to the tools |
-| `FRAMELENS_MAX_DOWNLOAD_MB` | `2048` | Largest download |
+| `FRAMELENS_MAX_DOWNLOAD_MB` | `2048` | Largest download. When a site gives no size up front (HLS, DASH), the download is measured as it runs and stopped once past the limit, so it can overshoot by a few seconds' worth |
 | `FRAMELENS_COOKIES_FROM_BROWSER`, `FRAMELENS_COOKIES_FILE` | — | Opt-in cookies for sites that need your login |
 | `FRAMELENS_BROWSER`, `FRAMELENS_BROWSER_PROFILE` | found automatically, `~/.framelens/browser-profile` | Chrome or Edge for `web` and `login`, and where the login profile lives |
 | `FRAMELENS_COBALT_URL`, `FRAMELENS_COBALT_KEY` | — | Your own cobalt instance and its API key |

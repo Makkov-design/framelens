@@ -218,8 +218,8 @@ describe("resolveSource: links through yt-dlp", () => {
     expect(calls().find((c) => c.includes("--max-filesize"))![calls().find((c) => c.includes("--max-filesize"))!.indexOf("--max-filesize") + 1]).toBe("100M");
   });
 
-  it("stops a download of unknown size once it passes the cap", async () => {
-    process.env.FAKE_YTDLP_MODE = "stream";
+  it.each(["stream", "stream-temp-id"])("stops a download of unknown size once it passes the cap (%s)", async (mode) => {
+    process.env.FAKE_YTDLP_MODE = mode;
     const started = Date.now();
     const error = await resolveSource(YT, { workspaceRoot: ws, env: env({ FRAMELENS_MAX_DOWNLOAD_MB: "3" }) }).catch((e) => e);
     expect(error.code).toBe("too_large");
