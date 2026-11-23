@@ -112,6 +112,18 @@ The single word check that decides this lives in `src/sources/access.ts`; widen 
 - Do not bump versions; that happens at release time (`package.json`, `src/version.ts`,
   `.claude-plugin/plugin.json` and `server.json` move together, and a test checks it).
 
+## CI notes
+
+Things learned the hard way, so the next change does not relearn them:
+
+- A dependency bump always changes the committed bundle. Bot PRs therefore need the rebuild workflow
+  (`dependabot-bundle.yml`). Pushes made with `GITHUB_TOKEN` start no workflow, which is why it dispatches CI itself.
+- Never give a write token to a job that runs freshly bumped packages: build in a read-only job and let the privileged
+  job only check and copy the files.
+- The first headless browser start on a busy runner can take more than 20 s; `CI` raises the deadline to 60 s.
+- Ubuntu 24.04's ffmpeg (6.1) is too old for two tests; CI's runner image has 8.0.
+- macOS is not in the unit-test matrix yet: `test/tools/ffmpeg.test.ts` fails there.
+
 ## License
 
 By contributing you agree that your contribution is licensed under the [MIT License](LICENSE).
