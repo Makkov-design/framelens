@@ -4,6 +4,7 @@ import { InvalidInputError } from "../errors.js";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { MediaTools } from "../media/exec.js";
+import { spawnPath, type ToolLocator } from "../tools/spawn-path.js";
 import { filterValue } from "../media/sheets.js";
 
 export interface EnergySample {
@@ -171,10 +172,12 @@ function streamFrames(ffmpeg: string, args: string[], frameBytes: number, expect
  */
 export async function motionProfile(
   source: string,
-  tools: MediaTools,
+  tools: MediaTools & ToolLocator,
   range: { start: number; end: number },
   options: ProfileOptions = {},
 ): Promise<{ energy: EnergySample[]; frames: PictureFrames; skipped?: boolean }> {
+  // streamFrames spawns ffmpeg itself: locate it first (a pinned-only install is not on PATH).
+  const ffmpeg = await spawnPath(tools, "ffmpeg");
   const stamp = `${process.pid}-${Date.now()}`;
   const out = join(tmpdir(), `framelens-energy-${stamp}.txt`);
   const times = join(tmpdir(), `framelens-thumbs-${stamp}.txt`);
@@ -189,7 +192,7 @@ export async function motionProfile(
     `${hdr ? `${HDR_TONEMAP},` : ""}format=yuv444p,scale=${THUMB_WIDTH}:${THUMB_HEIGHT}:flags=area,signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=${filterValue(times)},format=rgb24`;
   const timeoutMs = 20 * 60_000;
   const energyOnly = () =>
-    tools.exec(tools.ffmpeg, [...input, "-map", "0:v:0", "-an", "-vf", `scale=160:-2,${energyChain}`, "-fps_mode", "passthrough", "-f", "null", "-"], { timeoutMs }).catch(() => undefined);
+    tools.exec(ffmpeg, [...input, "-map", "0:v:0", "-an", "-vf", `scale=160:-2,${energyChain}`, "-fps_mode", "passthrough", "-f", "null", "-"], { timeoutMs }).catch(() => undefined);
   const result = (data: Uint8Array, skipped = false) => {
     const energy = existsSync(out) ? parseEnergy(readFileSync(out, "utf8")).map((s) => ({ t: Math.round((s.t + range.start) * 1000) / 1000, energy: s.energy })) : [];
     const stamps = skipped || !existsSync(times) ? [] : parseFrameTimes(readFileSync(times, "utf8"));
@@ -206,7 +209,7 @@ export async function motionProfile(
       return result(new Uint8Array(0), true);
     }
     const both = (hdr: boolean) =>
-      streamFrames(tools.ffmpeg, [
+      streamFrames(ffmpeg, [
         ...input,
         "-filter_complex", `[0:v:0]scale=160:-2,split=2[e][p];[e]${energyChain}[eo];[p]${thumbChain(hdr)}[po]`,
         "-map", "[eo]", "-fps_mode", "passthrough", "-f", "null", "-",
@@ -229,7 +232,7 @@ export async function motionProfile(
       // A one-frame video has no frame-to-frame change, and an output that never gets a frame fails the whole pass:
       // decode for each output on its own.
       await energyOnly();
-      read = await streamFrames(tools.ffmpeg, [...input, "-map", "0:v:0", "-an", "-vf", `scale=160:-2,${thumbChain(false)}`, "-fps_mode", "passthrough", "-f", "rawvideo", "pipe:1"], size, expected, maxBytes, timeoutMs);
+      read = await streamFrames(ffmpeg, [...input, "-map", "0:v:0", "-an", "-vf", `scale=160:-2,${thumbChain(false)}`, "-fps_mode", "passthrough", "-f", "rawvideo", "pipe:1"], size, expected, maxBytes, timeoutMs);
     }
     if (read.tooLarge) {
       clear();

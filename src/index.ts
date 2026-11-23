@@ -23,9 +23,7 @@ function createEngine(logger: Logger, transcriptFallback?: TranscriptFallback): 
   // Found once at start: env override, PATH, WinGet folders, then the pinned copy. When ffmpeg is nowhere, the bare
   // name stays and automatic setup downloads the pinned build on first use (unless FRAMELENS_AUTO_INSTALL=0).
   const setup = new ToolSetup({ log: (line) => logger.info(line) });
-  const ffmpeg = setup.startPath("ffmpeg");
-  const ffprobe = setup.startPath("ffprobe");
-  const tools = { ffmpeg, ffprobe, exec: setup.wrapExec(execTool) };
+  const tools = setup.mediaTools(execTool);
   const workspace = chooseWorkspaceRoot();
   if (workspace.from !== "cwd") logger.info(`workspace folder ${workspace.root}: ${workspace.reason}`);
   return new Engine({

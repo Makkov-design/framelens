@@ -1,10 +1,11 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { dirname } from "node:path";
-import type { Exec } from "../media/exec.js";
+import type { Exec, MediaTools } from "../media/exec.js";
 import { cleanStalePartials } from "./download.js";
 import { readEnv, type Env } from "./env.js";
 import { ToolError } from "./errors.js";
 import { ffmpegAsset, pinnedFfmpegIntact, prepareFfmpeg, type PrepareFfmpegOptions, type PrepareFfmpegResult } from "./ffmpeg.js";
+import type { ToolLocator } from "./spawn-path.js";
 import { findTool, missingToolMessage, type ToolLocation, type ToolName } from "./find.js";
 import { pinnedYtDlpIntact, prepareYtDlp, YTDLP_PIN, type PrepareOptions, type PrepareResult } from "./ytdlp.js";
 
@@ -146,6 +147,19 @@ export class ToolSetup {
     } catch {
       return name;
     }
+  }
+
+  /**
+   * The MediaTools the engine runs with: start paths, the wrapped `exec`, and `locate` for code that spawns ffmpeg
+   * itself (a pipe), which would otherwise spawn the bare name and miss a pinned-only install.
+   */
+  mediaTools(exec: Exec): MediaTools & ToolLocator {
+    return {
+      ffmpeg: this.startPath("ffmpeg"),
+      ffprobe: this.startPath("ffprobe"),
+      exec: this.wrapExec(exec),
+      locate: async (name, signal) => (await this.locate(name, signal)).path,
+    };
   }
 
   /**

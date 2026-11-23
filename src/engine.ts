@@ -1,3 +1,4 @@
+import type { ToolLocator } from "./tools/spawn-path.js";
 import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
@@ -154,7 +155,7 @@ export function readSavedReading(file: string): { reading: PageReading; captured
 export class Engine {
   constructor(
     private readonly options: {
-      tools: MediaTools;
+      tools: MediaTools & ToolLocator;
       resolve: SourceResolver;
       root: string;
       logger: Logger;
