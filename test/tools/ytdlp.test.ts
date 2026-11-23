@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { prepareYtDlp, YTDLP_PIN, ytDlpPinnedPath } from "../../src/tools/ytdlp.js";
+import { isMusl, prepareYtDlp, YTDLP_PIN, ytDlpAsset, ytDlpPinnedPath } from "../../src/tools/ytdlp.js";
 
 const body = "pretend-yt-dlp-binary";
 const hash = createHash("sha256").update(body).digest("hex");
@@ -28,6 +28,17 @@ describe("pinned yt-dlp", () => {
   it("records a version and a hash for every supported platform", () => {
     expect(YTDLP_PIN.version).toMatch(/^\d{4}\.\d{2}\.\d{2}$/);
     for (const asset of Object.values(YTDLP_PIN.assets)) expect(asset.sha256).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("picks the musl build on Alpine and the glibc build elsewhere", () => {
+    expect(ytDlpAsset("linux", "x64", true)?.file).toBe("yt-dlp_musllinux");
+    expect(ytDlpAsset("linux", "arm64", true)?.file).toBe("yt-dlp_musllinux_aarch64");
+    expect(ytDlpAsset("linux", "x64", false)?.file).toBe("yt-dlp_linux");
+    expect(ytDlpAsset("linux", "arm64", false)?.file).toBe("yt-dlp_linux_aarch64");
+    expect(ytDlpAsset("darwin", "arm64", false)?.file).toBe("yt-dlp_macos");
+    // This test machine: musl exactly when Node reports no glibc.
+    const glibc = (process.report?.getReport() as { header?: { glibcVersionRuntime?: string } }).header?.glibcVersionRuntime;
+    expect(isMusl()).toBe(process.platform === "linux" && !glibc);
   });
 
   it("downloads, verifies against the code and the release sums, and installs under the version folder", async () => {

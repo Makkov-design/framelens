@@ -1,12 +1,13 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { dirname } from "node:path";
-import type { Exec } from "../media/exec.js";
+import type { Exec, MediaTools } from "../media/exec.js";
 import { cleanStalePartials } from "./download.js";
 import { readEnv, type Env } from "./env.js";
 import { ToolError } from "./errors.js";
 import { ffmpegAsset, pinnedFfmpegIntact, prepareFfmpeg, type PrepareFfmpegOptions, type PrepareFfmpegResult } from "./ffmpeg.js";
+import type { ToolLocator } from "./spawn-path.js";
 import { findTool, missingToolMessage, type ToolLocation, type ToolName } from "./find.js";
-import { pinnedYtDlpIntact, prepareYtDlp, YTDLP_PIN, type PrepareOptions, type PrepareResult } from "./ytdlp.js";
+import { isMusl, pinnedYtDlpIntact, prepareYtDlp, ytDlpAsset, type PrepareOptions, type PrepareResult } from "./ytdlp.js";
 
 /** Automatic setup is on unless FRAMELENS_AUTO_INSTALL is 0, false, no or off. */
 export function autoInstallEnabled(env: Env = process.env): boolean {
@@ -80,11 +81,15 @@ export class ToolSetup {
       const group = name === "yt-dlp" ? "yt-dlp" : "ffmpeg";
       const platform = this.options.platform ?? process.platform;
       const arch = this.options.arch ?? process.arch;
-      const pinned = group === "yt-dlp" ? Boolean(YTDLP_PIN.assets[`${platform}-${arch}` as keyof typeof YTDLP_PIN.assets]) : Boolean(ffmpegAsset(platform, arch));
+      const pinned = group === "yt-dlp" ? Boolean(ytDlpAsset(platform, arch)) : Boolean(ffmpegAsset(platform, arch)) && !(platform === "linux" && isMusl());
       if (!autoInstallEnabled(this.env)) {
         throw new ToolError("not_found", `${missingToolMessage(name)} (Automatic setup is off: FRAMELENS_AUTO_INSTALL=0.)`);
       }
-      if (!pinned) throw new ToolError("not_found", missingToolMessage(name));
+      if (!pinned) {
+        // The pinned ffmpeg is built against glibc: on Alpine and other musl systems it would download and not start.
+        const musl = group === "ffmpeg" && platform === "linux" && isMusl() ? " On Alpine: apk add ffmpeg." : "";
+        throw new ToolError("not_found", `${missingToolMessage(name)}${musl}`);
+      }
       let pending = this.installing.get(group);
       if (!pending) {
         pending = this.install(group, signal);
@@ -146,6 +151,19 @@ export class ToolSetup {
     } catch {
       return name;
     }
+  }
+
+  /**
+   * The MediaTools the engine runs with: start paths, the wrapped `exec`, and `locate` for code that spawns ffmpeg
+   * itself (a pipe), which would otherwise spawn the bare name and miss a pinned-only install.
+   */
+  mediaTools(exec: Exec): MediaTools & ToolLocator {
+    return {
+      ffmpeg: this.startPath("ffmpeg"),
+      ffprobe: this.startPath("ffprobe"),
+      exec: this.wrapExec(exec),
+      locate: async (name, signal) => (await this.locate(name, signal)).path,
+    };
   }
 
   /**

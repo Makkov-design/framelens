@@ -192,7 +192,7 @@ export async function fetchWithYtDlp(params: FetchParams): Promise<FetchResult> 
     "--merge-output-format", "mp4",
     "--max-filesize", `${maxMb}M`,
     "--no-mtime",
-    ...(langs.length ? ["--write-subs", "--write-auto-subs", "--sub-langs", langs.join(","), "--sub-format", "json3/vtt/best"] : []),
+    ...(langs.length ? ["--write-subs", "--write-auto-subs", "--sub-langs", langs.join(","), "--sub-format", "json3/vtt/srt/best"] : []),
     "-o", join(mediaDir, "source.%(ext)s"),
     "--", url,
   ];

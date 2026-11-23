@@ -130,8 +130,8 @@ describe.skipIf(!tools)("audit of #22: transitions on clips that move, recolour 
   }, 60_000);
 
   it("a fast pan over a smooth picture and a smooth picture dimming are not dissolves", async () => {
-    const pan = clip("pan-smooth", ["-f", "lavfi", "-i", "gradients=s=960x540:r=30:d=3:speed=0:n=3:seed=5", "-vf", "crop=320:180:x='min(600,max(0,(t-1)*600))':y=100"]);
-    const dim = clip("dim-smooth", ["-f", "lavfi", "-i", `gradients=s=${S}:r=30:d=4:speed=0:n=3:seed=2`, "-vf", "geq=r='r(X,Y)*(1-0.85*min(1,max(0,(T-1)/2)))':g='g(X,Y)*(1-0.85*min(1,max(0,(T-1)/2)))':b='b(X,Y)*(1-0.85*min(1,max(0,(T-1)/2)))'"]);
+    const pan = clip("pan-smooth", ["-f", "lavfi", "-i", "gradients=s=960x540:r=30:d=3:speed=0.00001:n=3:seed=5", "-vf", "crop=320:180:x='min(600,max(0,(t-1)*600))':y=100"]);
+    const dim = clip("dim-smooth", ["-f", "lavfi", "-i", `gradients=s=${S}:r=30:d=4:speed=0.00001:n=3:seed=2`, "-vf", "geq=r='r(X,Y)*(1-0.85*min(1,max(0,(T-1)/2)))':g='g(X,Y)*(1-0.85*min(1,max(0,(T-1)/2)))':b='b(X,Y)*(1-0.85*min(1,max(0,(T-1)/2)))'"]);
     for (const file of [pan, dim]) expect(gradual(await style(file)).filter((x) => x.kind === "dissolve"), file).toEqual([]);
   }, 60_000);
 });

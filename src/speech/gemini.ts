@@ -1,4 +1,5 @@
 import type { VideoAnalyzer } from "../analyzer.js";
+import { AnalyzerError } from "../errors.js";
 import type { TranscriptFallback } from "../engine.js";
 import { TRANSCRIPT_SCHEMA, transcriptPrompt } from "../prompts.js";
 import { parseVideoRef } from "../youtube.js";
@@ -15,7 +16,12 @@ export function geminiTranscriptFallback(analyzer: VideoAnalyzer): TranscriptFal
       detail: "default",
       responseJsonSchema: TRANSCRIPT_SCHEMA,
     });
-    const parsed = JSON.parse(result.text) as { language?: string; segments?: { seconds: number; kind?: string; speaker?: string; text: string }[] };
+    let parsed: { language?: string; segments?: { seconds: number; kind?: string; speaker?: string; text: string }[] };
+    try {
+      parsed = JSON.parse(result.text) as typeof parsed;
+    } catch {
+      throw new AnalyzerError("bad_response", "Gemini answered the transcript request with text that is not the expected JSON.");
+    }
     const speech = (parsed.segments ?? []).filter((s) => s.kind !== "on_screen" && s.text?.trim()).sort((a, b) => a.seconds - b.seconds);
     const segments: Segment[] = speech.map((s, i) => ({
       start: s.seconds,

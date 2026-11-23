@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { InvalidInputError } from "../errors.js";
 import { parseShowinfo } from "../media/frames.js";
 import type { MediaTools } from "../media/exec.js";
+import { spawnPath, type ToolLocator } from "../tools/spawn-path.js";
 import type { GrayFrames } from "./tracker.js";
 
 /** Most bytes of decoded frames held for one window. */
@@ -23,9 +24,9 @@ export function workSize(width: number, height: number, frameCount: number, budg
  * Decodes every frame of `range` as 8-bit grey at `size`, through a pipe: nothing is written to disk and only this
  * window is held in memory. Times come from ffmpeg's showinfo, so variable-rate files keep their real timestamps.
  */
-export function decodeGray(
+export async function decodeGray(
   source: string,
-  tools: MediaTools,
+  tools: MediaTools & ToolLocator,
   range: { start: number; end: number },
   size: { width: number; height: number },
   options: { maxFrames: number; fps: number; timeoutMs?: number },
@@ -37,8 +38,9 @@ export function decodeGray(
     "-vf", `scale=${size.width}:${size.height}:flags=area,format=gray,showinfo`,
     "-fps_mode", "passthrough", "-f", "rawvideo", "-pix_fmt", "gray", "pipe:1",
   ];
+  const ffmpeg = await spawnPath(tools, "ffmpeg");
   return new Promise((resolve, reject) => {
-    const child = spawn(tools.ffmpeg, args, { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(ffmpeg, args, { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
     const frames: Uint8Array[] = [];
     let pending: Buffer[] = [];
     let pendingBytes = 0;

@@ -52,7 +52,8 @@ export function parseJson3(text: string): { words: Word[]; segments: Segment[] }
 }
 
 function vttTime(value: string): number {
-  const parts = value.trim().split(":").map(Number);
+  // SubRip writes the decimal comma (00:00:01,500), WebVTT the point.
+  const parts = value.trim().replace(",", ".").split(":").map(Number);
   return round(parts.reduce((acc, part) => acc * 60 + part, 0));
 }
 
@@ -60,7 +61,7 @@ function vttTime(value: string): number {
 export function parseVtt(text: string): { words: Word[]; segments: Segment[] } {
   const words: Word[] = [];
   const segments: Segment[] = [];
-  const blocks = text.replace(/\r/g, "").split(/\n\n+/);
+  const blocks = text.replace(/\r/g, "").split(/\n[ \t]*\n(?:[ \t]*\n)*/);
   for (const block of blocks) {
     const lines = block.split("\n");
     const timing = lines.findIndex((l) => l.includes("-->"));
@@ -68,6 +69,7 @@ export function parseVtt(text: string): { words: Word[]; segments: Segment[] } {
     const [from, to] = lines[timing]!.split("-->");
     const start = vttTime(from!);
     const end = vttTime(to!.trim().split(/\s+/)[0]!);
+    if (!Number.isFinite(start) || !Number.isFinite(end)) continue;
     const textLines = lines.slice(timing + 1);
     const body = textLines.join(" ");
     // An inline time always separates words, even when the caption has no space around it.
@@ -126,7 +128,16 @@ function dedupeWords(words: Word[]): Word[] {
 /** Reads a caption file in json3 or VTT format. */
 export function readCaptions(path: string): { words: Word[]; segments: Segment[] } {
   const text = readFileSync(path, "utf8");
-  return path.endsWith(".json3") || text.trimStart().startsWith("{") ? parseJson3(text) : parseVtt(text);
+  const lower = path.toLowerCase();
+  try {
+    if (lower.endsWith(".json3") || text.trimStart().startsWith("{")) return parseJson3(text);
+    // WebVTT and SubRip share the cue layout. TTML, ASS, LRC and YouTube's srv formats are not read: no segments,
+    // so the next caption track (or the "no transcript" answer) is used instead of NaN times.
+    if (lower.endsWith(".vtt") || lower.endsWith(".srt") || /^\uFEFF?WEBVTT/.test(text)) return parseVtt(text);
+  } catch {
+    // A broken caption file counts as none.
+  }
+  return { words: [], segments: [] };
 }
 
 /** The words spoken around a moment, for labels under frames. */
