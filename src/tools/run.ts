@@ -1,4 +1,5 @@
-import { spawn, execFile } from "node:child_process";
+import { callSignal } from "../runtime/call.js";
+import { killTree, spawnTracked } from "./children.js";
 import { ToolError } from "./errors.js";
 import type { Env } from "./env.js";
 
@@ -69,24 +70,6 @@ class Collector {
   }
 }
 
-/** Ends the process and everything it started. Windows has no process groups, so taskkill walks the tree. */
-function killTree(pid: number | undefined): void {
-  if (pid === undefined) return;
-  if (process.platform === "win32") {
-    execFile("taskkill", ["/pid", String(pid), "/T", "/F"], { windowsHide: true }, () => {});
-    return;
-  }
-  try {
-    process.kill(-pid, "SIGKILL"); // the child leads its own group (detached below)
-  } catch {
-    try {
-      process.kill(pid, "SIGKILL");
-    } catch {
-      // already gone
-    }
-  }
-}
-
 /** A .js/.mjs/.cjs path runs under this Node, so a script can stand in for a binary (tests, custom wrappers). */
 function commandFor(binary: string, args: string[]): { file: string; args: string[] } {
   return /\.(c|m)?js$/i.test(binary)
@@ -99,7 +82,9 @@ function commandFor(binary: string, args: string[]): { file: string; args: strin
  * Throws ToolError for: program missing/unrunnable, timeout, abort.
  */
 export function run(binary: string, args: string[], options: RunOptions = {}): Promise<RunResult> {
-  const { timeoutMs, signal, cwd, env } = options;
+  const { timeoutMs, cwd, env } = options;
+  // Without its own signal, a program stops when the tool call it runs for is cancelled.
+  const signal = options.signal ?? callSignal();
   const max = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT;
   const started = Date.now();
 
@@ -110,13 +95,7 @@ export function run(binary: string, args: string[], options: RunOptions = {}): P
     }
     const cmd = commandFor(binary, args);
     const mergedEnv: Record<string, string | undefined> = { ...process.env, ...env };
-    const child = spawn(cmd.file, cmd.args, {
-      cwd,
-      env: mergedEnv as NodeJS.ProcessEnv,
-      windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"],
-      detached: process.platform !== "win32",
-    });
+    const child = spawnTracked(cmd.file, cmd.args, { ...(cwd && { cwd }), env: mergedEnv as NodeJS.ProcessEnv });
 
     const out = new Collector(max, "head");
     const err = new Collector(max, "tail");

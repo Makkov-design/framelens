@@ -40,6 +40,13 @@ if (args.includes("--dump-single-json")) {
 const template = args[args.indexOf("-o") + 1];
 const base = template.replace("%(ext)s", "");
 mkdirSync(dirname(template), { recursive: true });
+// FAKE_YTDLP_DELAY_MS: a download that takes a while, with its partial file on disk meanwhile (concurrency, cancel).
+const delay = Number(process.env.FAKE_YTDLP_DELAY_MS ?? 0);
+if (delay) {
+  writeFileSync(`${base}mp4.part`, "partial");
+  await new Promise((done) => setTimeout(done, delay));
+}
+if (mode === "fail-download") fail("ERROR: unable to download video data: HTTP Error 500: Internal Server Error");
 if (mode !== "nofile") writeFileSync(`${base}mp4`, "fake-video");
 const langs = args.includes("--sub-langs") ? args[args.indexOf("--sub-langs") + 1].split(",") : [];
 for (const lang of langs) writeFileSync(`${base}${lang}.json3`, "{}");

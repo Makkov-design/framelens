@@ -50,3 +50,11 @@ build.
   or one bad minute blocks a tool until a restart the agent cannot do. Key the memo by exactly what the call depends
   on (the Gemini transcript ignores `language`, so the key is the source alone). Test a transient and a permanent kind.
 - Warnings a tool writes to `PROGRESS.md` are not seen by the agent: return them in the tool result as well.
+- Shared on-disk state needs a lock where it is created: two tool calls on the same new link raced on one workspace.
+  The lock is keyed by the workspace folder (`resolveSource`), waiters get the leader's record or error, and a
+  waiter whose leader was cancelled retries instead of inheriting the cancellation.
+- Every child process goes through `tools/children.ts` (`spawnTracked`): its own process group, registered, and
+  killed on cancel and shutdown. A bare `spawn` or `execFile` outlives the call and the server. Code that swallows an
+  error to retry (`catch {}` around ffmpeg) must rethrow `CancelledError`.
+- A test for shutdown behaviour runs the real bundle over stdio (close stdin, look for the child): on main the
+  server did not even exit, because the detached child kept it alive.

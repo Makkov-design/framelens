@@ -112,10 +112,40 @@ export async function resolveSource(input: string, options: ResolveOptions): Pro
   const env = options.env ?? process.env;
   const target = classifyInput(input, env);
   const dir = join(resolve(options.workspaceRoot), target.id);
+  if (target.kind === "file") {
+    mkdirSync(dir, { recursive: true });
+    return recordFile(dir, target, input, new Date().toISOString(), env);
+  }
+  // One download per workspace at a time: agents often call `transcript` and `frames` on a new link together, and a
+  // second download would delete the first one's files (and a failing first call would remove the workspace).
+  for (;;) {
+    const pending = inFlight.get(dir);
+    if (!pending) break;
+    try {
+      const record = await pending.promise;
+      return { ...record, input, reused: true };
+    } catch (error) {
+      // The download this call waited for was cancelled by its own caller: try again, unless this call is cancelled too.
+      if (!pending.signal?.aborted || options.signal?.aborted) throw error;
+    }
+  }
+  const promise = fetchIntoWorkspace(dir, target, input, env, options);
+  const entry = { promise, ...(options.signal && { signal: options.signal }) };
+  inFlight.set(dir, entry);
+  try {
+    return await promise;
+  } finally {
+    if (inFlight.get(dir) === entry) inFlight.delete(dir);
+  }
+}
+
+/** Downloads in progress, by workspace folder. */
+const inFlight = new Map<string, { promise: Promise<SourceRecord>; signal?: AbortSignal }>();
+
+async function fetchIntoWorkspace(dir: string, target: Exclude<Classified, { kind: "file" }>, input: string, env: Env, options: ResolveOptions): Promise<SourceRecord> {
   const existed = existsSync(dir);
   mkdirSync(dir, { recursive: true });
   const fetchedAt = new Date().toISOString();
-  if (target.kind === "file") return recordFile(dir, target, input, fetchedAt, env);
   try {
     return await fetchLink(dir, target, input, fetchedAt, env, options);
   } catch (error) {

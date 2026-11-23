@@ -16,13 +16,20 @@ import { capturableLogin, captureVideo, hasLoginProfile } from "./browser/captur
 import { maxDownloadMb, resolveSource, SourceError } from "./sources/index.js";
 import { geminiTranscriptFallback } from "./speech/gemini.js";
 import { ToolSetup } from "./tools/index.js";
+import { installChildCleanup } from "./tools/children.js";
+import { reportProgress } from "./runtime/call.js";
 import { chooseWorkspaceRoot, Workspace } from "./workspace/workspace.js";
 import type { Logger } from "./logger.js";
 
 function createEngine(logger: Logger, transcriptFallback?: TranscriptFallback): Engine {
   // Found once at start: env override, PATH, WinGet folders, then the pinned copy. When ffmpeg is nowhere, the bare
   // name stays and automatic setup downloads the pinned build on first use (unless FRAMELENS_AUTO_INSTALL=0).
-  const setup = new ToolSetup({ log: (line) => logger.info(line) });
+  const setup = new ToolSetup({
+    log: (line) => {
+      logger.info(line);
+      reportProgress(line);
+    },
+  });
   const tools = setup.mediaTools(execTool);
   const workspace = chooseWorkspaceRoot();
   if (workspace.from !== "cwd") logger.info(`workspace folder ${workspace.root}: ${workspace.reason}`);
@@ -30,7 +37,11 @@ function createEngine(logger: Logger, transcriptFallback?: TranscriptFallback): 
     tools,
     resolve: async (input, options) => {
       try {
-        return await resolveSource(input, { ...options, log: (line) => logger.info(line), locate: (name, signal) => setup.locate(name, signal) });
+        const log = (line: string) => {
+          logger.info(line);
+          reportProgress(line);
+        };
+        return await resolveSource(input, { ...options, log, locate: (name, signal) => setup.locate(name, signal) });
       } catch (error) {
         // Tier 3: a site that needs a login, and the user has logged in to the Frame Lens browser profile.
         if (!(error instanceof SourceError) || error.code !== "login_required" || !hasLoginProfile() || !capturableLogin(input, error.detail ?? error.message)) throw error;
@@ -70,6 +81,7 @@ async function main(): Promise<void> {
       engine: createEngine(setupLogger),
     });
     await setupServer.connect(new StdioServerTransport());
+    installChildCleanup();
     setupLogger.warn(`framelens ${VERSION} started without a Gemini key; local tools work, Gemini tools explain how to add one`);
     return;
   }
@@ -78,6 +90,8 @@ async function main(): Promise<void> {
   const server = createServer({ analyzer, logger, engine: createEngine(logger, geminiTranscriptFallback(analyzer)) });
 
   await server.connect(new StdioServerTransport());
+  // yt-dlp and ffmpeg run in their own process groups: end them when the client goes away or the server stops.
+  installChildCleanup();
   logger.info(`framelens ${VERSION} ready`, { model: config.model });
 }
 

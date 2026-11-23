@@ -47,6 +47,7 @@ research and reasoning lives in the plan page; this file is what the code must f
 | `media/` | ffprobe probe (VFR, HDR, audio), frame extraction, contact sheets with time and word labels, visual-change candidates, dynamics index |
 | `speech/` | Transcript with word times: captions first, local whisper if present, Gemini as fallback |
 | `workspace/` | Workspace folder layout, `manifest.json`, cached pass results, `PROGRESS.md` |
+| `runtime/` | The per-call context (`call.ts`): the client's cancel signal and MCP progress, carried to the code that runs programs |
 | `router/` | Video type classification and the goal-based plan |
 | `style/` (2.1) | Shots, cuts, transitions (`transitions.ts`: dissolves, fades, dips, wipes from every frame at 64×36), palette, typography notes, `STYLE.md`, `motion-spec.json`, `ANALYSIS.md`, `TIMELINE.md` |
 | `track/` (2.1) | Element tracking (normalised cross-correlation, then Lucas–Kanade subpixel refinement with gain and offset, drift checked against the first template) and curve fitting (cubic-bezier, spring, linear, steps by least squares with Nelder–Mead), `TRACK.md`, `tracks.json` |
@@ -56,6 +57,23 @@ research and reasoning lives in the plan page; this file is what the code must f
 
 Every external process goes through `tools/` (one place for timeouts, Windows quoting, `windowsHide`, killing the
 tree on abort). stdout is reserved for MCP: logs go to stderr through `logger.ts`.
+
+**Cancellation, progress, shutdown.** Each tool call runs inside a call context (`runtime/call.ts`, an
+AsyncLocalStorage) that holds the client's `extra.signal` and, when the client sent a progress token, a reporter. The
+code that starts programs (`tools/run.ts`, `media/exec.ts`, the ffmpeg pipes in `track/decode.ts` and
+`style/motion.ts`) reads the signal from there, so the engine's methods need no signal parameter. Every child is
+spawned by `tools/children.ts`: no shell, its own process group on POSIX (killing the group stops what it started,
+such as yt-dlp's ffmpeg; on Windows taskkill walks the tree), and registered until it ends. A cancelled call kills
+its children; the server kills all of them on exit, SIGINT, SIGTERM, SIGHUP and when the client closes stdin.
+Progress notifications carry each finished step (the lines written to `PROGRESS.md`, setup and download log lines)
+and a heartbeat every 15 s, so a client that resets its timeout on progress waits for a long `style` or download.
+A program that hits its time limit is reported with that limit, not as a failed command.
+
+**One download per workspace.** `resolveSource` keeps the downloads in flight by workspace folder: a second call on
+the same new link waits for the first (and gets its record or its error) instead of starting a second yt-dlp that
+deletes the first one's files. A waiter whose download was cancelled by the other caller tries again itself.
+`source.json` is written only after the media is complete, so a cancelled download leaves nothing a later call takes
+for a finished one.
 
 ## Workspace
 
@@ -87,7 +105,7 @@ All new tools take `source` (URL, path or YouTube ID) and return a short text su
 | Tool | Phase | Does |
 |---|---|---|
 | `probe` | 2.0 | Resolve and fetch the source, probe it, report kind, duration, fps, captions, dynamics, workspace path |
-| `plan` | 2.0 | Goal (or free-text request) + probe → passes, densities, ranges, token estimate. Style goal: 1–3 ×10 passages of about 12 % of the video each (2–8 s, by summed change strength, never overlapping), every-frame windows around the strongest changes (one per 8 s, 2–8, overlapping or touching windows joined, longer stretches split into windows of ≤ 2 s); the estimate counts frames and image tokens per sheet layout |
+| `plan` | 2.0 | Picture changes over the whole source up to 10 min; a longer one is read in 12 windows of 30 s spread over it, and the plan says so. Goal (or free-text request) + probe → passes, densities, ranges, token estimate. Style goal: 1–3 ×10 passages of about 12 % of the video each (2–8 s, by summed change strength, never overlapping), every-frame windows around the strongest changes (one per 8 s, 2–8, overlapping or touching windows joined, longer stretches split into windows of ≤ 2 s); the estimate counts frames and image tokens per sheet layout |
 | `transcript` | 2.0 | Word-timed transcript; returns the text (bounded) and file paths |
 | `frames` | 2.0 | Frames or contact sheets for a range: `at`, `every` (s), `fps`, `every_frame`, `around` (phrase), `columns`, `rows`, `cell`, word labels. Returns sheet paths; inlines at most a few sheets |
 | `boundaries` | 2.0 | Visual-change candidates with scores (not editorial cut labels) |

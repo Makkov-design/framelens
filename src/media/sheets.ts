@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { MediaTools } from "./exec.js";
 import type { ExtractedFrame } from "./frames.js";
+import { uniqueName } from "./temp.js";
 
 export interface SheetOptions {
   columns: number;
@@ -81,7 +82,7 @@ export async function buildSheets(
   const labels = await hasDrawtext(tools);
   const font = findFont();
   const sheets: Sheet[] = [];
-  const tmp = join(outDir, `.labels-${process.pid}-${Date.now()}`);
+  const tmp = join(outDir, uniqueName(".labels-"));
   mkdirSync(tmp, { recursive: true });
   try {
     for (let page = 0; page * perSheet < frames.length; page++) {

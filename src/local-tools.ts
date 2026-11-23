@@ -10,6 +10,7 @@ import { oneLine } from "./text.js";
 import { EXPORT_TARGETS } from "./export/exporters.js";
 import { GOALS } from "./router/plan.js";
 import { collectSetupNotes, setupNotesOf } from "./tools/setup.js";
+import { CancelledError, mcpCallContext, withCall, type ProgressExtra } from "./runtime/call.js";
 import { curveLabel } from "./track/curve.js";
 import { transitionName } from "./style/spec.js";
 import { WHOLE_PICTURE_AREA } from "./style/transitions.js";
@@ -66,10 +67,15 @@ export function withSetupNotes(result: CallToolResult, notes: string[]): CallToo
 export function registerLocalTools(server: McpServer, engine: Engine, logger: Logger, options: { inlineSheets?: number; version?: string } = {}): void {
   const inlineLimit = options.inlineSheets ?? 2;
 
-  async function run(tool: string, body: () => Promise<CallToolResult>): Promise<CallToolResult> {
+  /**
+   * Runs one tool call: the client's cancel signal and progress token go into the call context (so yt-dlp and ffmpeg
+   * stop when the call is cancelled, and long steps send progress), and setup notes are collected.
+   */
+  async function run(tool: string, extra: ProgressExtra | undefined, body: () => Promise<CallToolResult>): Promise<CallToolResult> {
     const startedAt = Date.now();
+    const call = mcpCallContext(tool, extra);
     try {
-      const { value: result, notes } = await collectSetupNotes(body);
+      const { value: result, notes } = await withCall(call.context, () => collectSetupNotes(body));
       logger.info("tool done", { tool, ms: Date.now() - startedAt });
       return withSetupNotes(result, notes);
     } catch (error) {
@@ -78,8 +84,14 @@ export function registerLocalTools(server: McpServer, engine: Engine, logger: Lo
         logger.warn("tool failed", { tool, error: message });
         return withSetupNotes({ content: [{ type: "text", text: message }], isError: true }, setupNotesOf(error));
       }
+      if (error instanceof CancelledError) {
+        logger.info("tool cancelled", { tool, ms: Date.now() - startedAt });
+        return withSetupNotes({ content: [{ type: "text", text: `${tool} was cancelled; the programs it started were stopped.` }], isError: true }, setupNotesOf(error));
+      }
       logger.error("tool crashed", { tool, error });
       return withSetupNotes({ content: [{ type: "text", text: `${tool} failed: ${message}` }], isError: true }, setupNotesOf(error));
+    } finally {
+      call.stop();
     }
   }
 
@@ -93,8 +105,8 @@ export function registerLocalTools(server: McpServer, engine: Engine, logger: Lo
       inputSchema: { source: sourceInput },
       annotations: READ_ONLY,
     },
-    ({ source }) =>
-      run("probe", async () => {
+    ({ source }, extra) =>
+      run("probe", extra, async () => {
         const s = await engine.source(source);
         const captions = (s.record.captions ?? []).map((c) => `${c.language}${c.auto ? " (auto)" : ""}`);
         const text = [
@@ -124,8 +136,8 @@ export function registerLocalTools(server: McpServer, engine: Engine, logger: Lo
       },
       annotations: READ_ONLY,
     },
-    (args) =>
-      run("plan", async () => {
+    (args, extra) =>
+      run("plan", extra, async () => {
         const { source, plan } = await engine.plan(args.source, {
           ...(args.goal && { goal: args.goal }),
           ...(args.request && { request: args.request }),
@@ -159,8 +171,8 @@ export function registerLocalTools(server: McpServer, engine: Engine, logger: Lo
       },
       annotations: READ_ONLY,
     },
-    (args) =>
-      run("transcript", async () => {
+    (args, extra) =>
+      run("transcript", extra, async () => {
         const { source, transcript } = await engine.transcript(args.source, { required: true, ...(args.language && { language: args.language }) });
         const md = readFileSync(source.ws.path("transcript.md"), "utf8");
         const body = md.length > args.max_chars ? `${md.slice(0, args.max_chars)}\n\n… shortened; the full text is in ${source.ws.display(source.ws.path("transcript.md"))}` : md;
@@ -207,8 +219,8 @@ export function registerLocalTools(server: McpServer, engine: Engine, logger: Lo
       },
       annotations: READ_ONLY,
     },
-    (args) =>
-      run("frames", async () => {
+    (args, extra) =>
+      run("frames", extra, async () => {
         const result = await engine.frames(args.source, {
           ...(args.start !== undefined && { start: parseTime(args.start) }),
           ...(args.end !== undefined && { end: parseTime(args.end) }),
@@ -269,8 +281,8 @@ export function registerLocalTools(server: McpServer, engine: Engine, logger: Lo
       },
       annotations: READ_ONLY,
     },
-    (args) =>
-      run("style", async () => {
+    (args, extra) =>
+      run("style", extra, async () => {
         const { source, spec, files, notes } = await engine.style(args.source, {
           ...(args.start !== undefined && { start: parseTime(args.start) }),
           ...(args.end !== undefined && { end: parseTime(args.end) }),
@@ -338,8 +350,8 @@ export function registerLocalTools(server: McpServer, engine: Engine, logger: Lo
       },
       annotations: READ_ONLY,
     },
-    (args) =>
-      run("track", async () => {
+    (args, extra) =>
+      run("track", extra, async () => {
         const { source, track, files, note } = await engine.track(args.source, {
           ...(args.start !== undefined && { start: parseTime(args.start) }),
           ...(args.end !== undefined && { end: parseTime(args.end) }),
@@ -389,8 +401,8 @@ export function registerLocalTools(server: McpServer, engine: Engine, logger: Lo
       },
       annotations: READ_ONLY,
     },
-    (args) =>
-      run("audio", async () => {
+    (args, extra) =>
+      run("audio", extra, async () => {
         const { source, analysis, cutOnBeat, files } = await engine.audio(args.source, {
           ...(args.start !== undefined && { start: parseTime(args.start) }),
           ...(args.end !== undefined && { end: parseTime(args.end) }),
@@ -442,8 +454,8 @@ export function registerLocalTools(server: McpServer, engine: Engine, logger: Lo
       },
       annotations: { readOnlyHint: false, idempotentHint: true, openWorldHint: false },
     },
-    (args) =>
-      run("export", async () => {
+    (args, extra) =>
+      run("export", extra, async () => {
         const { ws, title, dir, files, inboxNote } = await engine.export(args.source, args.target, options.version ?? "dev");
         const text = [
           `> ${oneLine(title)}`,
@@ -473,8 +485,8 @@ export function registerLocalTools(server: McpServer, engine: Engine, logger: Lo
       },
       annotations: READ_ONLY,
     },
-    (args) =>
-      run("compare", async () => {
+    (args, extra) =>
+      run("compare", extra, async () => {
         const { source, comparison, files, sheet, notes } = await engine.compare(args.reference, args.render, options.version ?? "dev");
         const ws = source.ws;
         const text = [
@@ -512,8 +524,8 @@ export function registerLocalTools(server: McpServer, engine: Engine, logger: Lo
       },
       annotations: READ_ONLY,
     },
-    (args) =>
-      run("boundaries", async () => {
+    (args, extra) =>
+      run("boundaries", extra, async () => {
         const { source, boundaries, file } = await engine.boundaries(args.source, {
           ...(args.start !== undefined && { start: parseTime(args.start) }),
           ...(args.end !== undefined && { end: parseTime(args.end) }),

@@ -4,14 +4,15 @@ import { basename, join, resolve } from "node:path";
 import { AnalyzerError, InvalidInputError } from "./errors.js";
 import { oneLine } from "./text.js";
 import type { Logger } from "./logger.js";
-import { findBoundaries, type Boundaries } from "./media/boundaries.js";
-import type { MediaTools } from "./media/exec.js";
+import { findBoundaries, mergeBoundaries, type Boundaries } from "./media/boundaries.js";
+import { DEFAULT_EXEC_TIMEOUT_MS, type MediaTools } from "./media/exec.js";
 import { extractFrames, type FrameRequest } from "./media/frames.js";
 import { probeMedia, type ProbeInfo } from "./media/probe.js";
 import { buildSheets, type Sheet } from "./media/sheets.js";
 import { buildPlan, type Goal, type Plan } from "./router/plan.js";
 import { countPhrase, findPhrase, readCaptions, toMarkdown, wordsAt, type Transcript } from "./speech/transcript.js";
 import type { ToolLocator } from "./tools/spawn-path.js";
+import { callSignal, reportProgress } from "./runtime/call.js";
 import { analyzeAudio, spectrogram, type AudioAnalysis } from "./audio/analyze.js";
 import { readPage, type PageResult } from "./browser/read.js";
 import { cleanReading, specFromPage, type PageReading } from "./browser/web.js";
@@ -113,6 +114,13 @@ const r3 = (n: number) => Math.round(n * 1000) / 1000;
 /** Where `boundaries` keeps a result in the workspace, so the same call is answered from it next time. */
 const boundariesFile = (rate: number, threshold: number, start: number, end: number) => `boundaries-r${rate}-t${threshold}-${r3(start)}-${r3(end)}.json`;
 
+/** `plan` reads the picture changes of the whole source up to this long; a longer one is read in sample windows. */
+export const PLAN_FULL_SECONDS = 600;
+const PLAN_SAMPLE_WINDOWS = 12;
+const PLAN_SAMPLE_SECONDS = 30;
+/** Time allowed per second of video for a whole-source `boundaries` pass (about 10 times what 1080p30 takes on 4 cores). */
+const BOUNDARIES_MS_PER_SECOND = 500;
+
 /**
  * Why there is no transcript and what can give one. Frame Lens reads captions and, for YouTube links with a key,
  * asks Gemini; it runs no speech-to-text of its own, so a local one is something the user runs.
@@ -181,7 +189,8 @@ export class Engine {
 
   /** Resolves and probes a source; the probe is kept in the workspace. */
   async source(input: string): Promise<Source> {
-    const record = await this.options.resolve(input, { workspaceRoot: this.options.root });
+    const signal = callSignal();
+    const record = await this.options.resolve(input, { workspaceRoot: this.options.root, ...(signal && { signal }) });
     const ws = new Workspace(this.options.root, record.id);
     let probe = ws.readJson<ProbeInfo>("probe.json");
     if (!probe) {
@@ -247,6 +256,31 @@ export class Engine {
     return { source, transcript };
   }
 
+  /**
+   * The picture changes `plan` classifies with: the whole source up to PLAN_FULL_SECONDS (or a whole-source reading
+   * already in the workspace), else sample windows spread over it, so `plan` stays quick on an hour-long video.
+   */
+  private async planBoundaries(input: string, source: Source): Promise<Boundaries> {
+    const rate = 2;
+    const threshold = 0.3;
+    const duration = source.probe.duration;
+    const whole = source.ws.readJson<Boundaries>(boundariesFile(rate, threshold, 0, duration));
+    if (whole) return whole;
+    if (duration <= PLAN_FULL_SECONDS) return (await this.boundaries(input, { rate, threshold })).boundaries;
+    const name = `boundaries-sampled-r${rate}-t${threshold}-${PLAN_SAMPLE_WINDOWS}x${PLAN_SAMPLE_SECONDS}.json`;
+    const cached = source.ws.readJson<Boundaries>(name);
+    if (cached) return cached;
+    const parts: Boundaries[] = [];
+    for (let i = 0; i < PLAN_SAMPLE_WINDOWS; i++) {
+      const start = r3(((duration - PLAN_SAMPLE_SECONDS) * i) / (PLAN_SAMPLE_WINDOWS - 1));
+      parts.push(await findBoundaries(source.record.mediaPath, this.options.tools, { start, end: start + PLAN_SAMPLE_SECONDS, rate, threshold }));
+    }
+    const merged = mergeBoundaries(parts, rate, threshold, PLAN_SAMPLE_SECONDS);
+    source.ws.writeJson(name, merged);
+    this.progress(source.ws, `boundaries (sampled, ${PLAN_SAMPLE_WINDOWS} × ${PLAN_SAMPLE_SECONDS} s): ${merged.candidates.length} changes, dynamics ${merged.dynamics}`);
+    return merged;
+  }
+
   async boundaries(input: string, options: { start?: number; end?: number; rate?: number; threshold?: number } = {}): Promise<{ source: Source; boundaries: Boundaries; file: string }> {
     const source = await this.source(input);
     const rate = options.rate ?? 4;
@@ -254,7 +288,9 @@ export class Engine {
     const name = boundariesFile(rate, threshold, options.start ?? 0, options.end ?? source.probe.duration);
     let boundaries = source.ws.readJson<Boundaries>(name);
     if (!boundaries) {
-      boundaries = await findBoundaries(source.record.mediaPath, this.options.tools, { ...options, rate, threshold });
+      const span = (options.end ?? source.probe.duration) - (options.start ?? 0);
+      const timeoutMs = Math.max(DEFAULT_EXEC_TIMEOUT_MS, Math.ceil(span * BOUNDARIES_MS_PER_SECOND));
+      boundaries = await findBoundaries(source.record.mediaPath, this.options.tools, { ...options, rate, threshold, timeoutMs });
       source.ws.writeJson(name, boundaries);
       this.progress(source.ws, `boundaries: ${boundaries.candidates.length} changes at ${rate}/s (threshold ${threshold}), dynamics ${boundaries.dynamics}`);
     }
@@ -320,7 +356,7 @@ export class Engine {
   async plan(input: string, options: { goal?: Goal; request?: string; phrase?: string }): Promise<{ source: Source; plan: Plan }> {
     const source = await this.source(input);
     const { transcript } = await this.transcript(source);
-    const { boundaries } = source.probe.hasVideo ? await this.boundaries(input, { rate: 2, threshold: 0.3 }) : { boundaries: undefined };
+    const boundaries = source.probe.hasVideo ? await this.planBoundaries(input, source) : undefined;
     // Moves found by an earlier `style` run: the plan points `track` at them. `element` says whether `auto` can pick
     // the element (it moves against a still background) or a box is needed (the whole picture moves there).
     const spec = source.ws.readJson<MotionSpec>("motion-spec.json");
@@ -349,6 +385,13 @@ export class Engine {
       ...(options.request && { request: options.request }),
       ...(options.phrase && { phrase: options.phrase }),
     });
+    if (boundaries?.sampled) {
+      plan.notes.push(
+        `The video is ${Math.round(source.probe.duration / 60)} min long, so its picture changes were read in ${boundaries.sampled.windows} windows of ` +
+          `${PLAN_SAMPLE_SECONDS} s spread over it (${boundaries.sampled.seconds} s in all), not every second: the video type and the busy moments are from those samples. ` +
+          "Run `boundaries` for every change.",
+      );
+    }
     source.ws.writeJson("plan.json", plan);
     this.progress(source.ws, `plan: goal ${plan.goal}${plan.goalInferred ? " (inferred)" : ""}, video type ${plan.videoType}, ${plan.steps.length} steps`);
     return { source, plan };
@@ -801,5 +844,6 @@ export class Engine {
     if (!existsSync(file)) ws.writeText("PROGRESS.md", "# Progress\n\nTool runs, oldest first. Add your own notes and open questions below them.\n\n");
     appendFileSync(file, `- ${new Date().toISOString().slice(0, 19)}Z ${line}\n`);
     this.options.logger.debug(line, { workspace: ws.id });
+    reportProgress(line);
   }
 }

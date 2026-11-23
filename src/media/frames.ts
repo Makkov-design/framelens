@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { InvalidInputError } from "../errors.js";
 import type { MediaTools } from "./exec.js";
 import type { ProbeInfo } from "./probe.js";
+import { uniqueName } from "./temp.js";
 
 export interface FrameRequest {
   /** Exact moments, in seconds. */
@@ -89,7 +90,7 @@ export async function extractFrames(
   if (request.at?.length) {
     // Each frame is named by the time of the frame actually shown (the first at or after the moment), not the
     // moment asked for: at 25 fps, 0.01 s shows the frame at 0.04 s.
-    const tmp = join(outDir, `.tmp-${process.pid}-${Date.now()}`);
+    const tmp = join(outDir, uniqueName(".tmp-"));
     mkdirSync(tmp, { recursive: true });
     try {
       const frames: ExtractedFrame[] = [];
@@ -124,7 +125,7 @@ export async function extractFrames(
   }
 
   // One continuous decode of the range; showinfo reports each written frame's real timestamp.
-  const tmp = join(outDir, `.tmp-${process.pid}-${Date.now()}`);
+  const tmp = join(outDir, uniqueName(".tmp-"));
   mkdirSync(tmp, { recursive: true });
   try {
     // The fps filter keeps the last frame of each interval, so a "0.0 s" sample would really show 0.23 s.

@@ -10,6 +10,7 @@ import { mergePalettes, palette, type Swatch } from "./palette.js";
 import { uniqueEvents, type ClassifiedChange, type MotionEvent } from "./motion.js";
 import type { Transition } from "./transitions.js";
 import type { TrackedMove } from "../track/run.js";
+import { uniqueName } from "../media/temp.js";
 
 /** A transition between two shots as motion-spec.json lists it. */
 export type SpecTransition = Transition & {
@@ -145,7 +146,7 @@ export interface MotionSpec {
 
 /** Grabs one frame as raw RGB pixels at 64×36 (tone-mapped when HDR, so colours are not washed out). */
 export async function framePixels(source: string, t: number, probe: ProbeInfo, tools: MediaTools, tmpDir: string): Promise<Buffer> {
-  const out = join(tmpDir, `px-${process.pid}-${Math.round(t * 1000)}.rgb`);
+  const out = join(tmpDir, uniqueName(`px-${Math.round(t * 1000)}-`, ".rgb"));
   const base = "scale=64:36:flags=area,format=rgb24";
   const hdr = "zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=hable,zscale=t=bt709:m=bt709:r=tv,";
   const run = (filters: string) =>

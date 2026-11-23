@@ -1,4 +1,5 @@
-import { spawn } from "node:child_process";
+import { CancelledError, callSignal } from "../runtime/call.js";
+import { killTree, spawnTracked } from "../tools/children.js";
 import { InvalidInputError } from "../errors.js";
 import { parseShowinfo } from "../media/frames.js";
 import type { MediaTools } from "../media/exec.js";
@@ -40,7 +41,16 @@ export async function decodeGray(
   ];
   const ffmpeg = await spawnPath(tools, "ffmpeg");
   return new Promise((resolve, reject) => {
-    const child = spawn(ffmpeg, args, { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawnTracked(ffmpeg, args);
+    // Cancelling the tool call stops the decode (and the window is not fitted from part of it).
+    const signal = callSignal();
+    let cancelled = false;
+    const onAbort = () => {
+      cancelled = true;
+      killTree(child.pid);
+    };
+    if (signal?.aborted) onAbort();
+    else signal?.addEventListener("abort", onAbort, { once: true });
     const frames: Uint8Array[] = [];
     let pending: Buffer[] = [];
     let pendingBytes = 0;
@@ -50,7 +60,7 @@ export async function decodeGray(
     const timeoutMs = options.timeoutMs ?? 5 * 60_000;
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill("SIGKILL");
+      killTree(child.pid);
     }, timeoutMs);
     child.stdout.on("data", (chunk: Buffer) => {
       pending.push(chunk);
@@ -64,7 +74,7 @@ export async function decodeGray(
         pending = [all.subarray(frameBytes)];
         pendingBytes -= frameBytes;
       }
-      if (tooMany) child.kill("SIGKILL");
+      if (tooMany) killTree(child.pid);
     });
     child.stderr.on("data", (chunk: Buffer) => {
       stderr += chunk.toString("utf8");
@@ -73,10 +83,16 @@ export async function decodeGray(
     });
     child.on("error", (error: NodeJS.ErrnoException) => {
       clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
       reject(error.code === "ENOENT" ? new InvalidInputError("ffmpeg was not found on this computer. Run `npx framelens doctor` to see how to install it.") : error);
     });
     child.on("close", (code) => {
       clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      if (cancelled) {
+        reject(new CancelledError("ffmpeg"));
+        return;
+      }
       if (tooMany) {
         reject(new InvalidInputError(`The window has more than ${options.maxFrames} frames; track a shorter window (start/end).`));
         return;

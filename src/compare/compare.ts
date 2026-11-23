@@ -1,9 +1,9 @@
 import { readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { MediaTools } from "../media/exec.js";
 import { filterValue } from "../media/sheets.js";
 import { rgbToOklab, type Swatch } from "../style/palette.js";
+import { tempPath } from "../media/temp.js";
 
 export interface SimilaritySample {
   t: number;
@@ -45,7 +45,7 @@ export function parseSsim(text: string, rate: number): SimilaritySample[] {
 
 /** Samples both videos at the same rate and size and scores how alike each pair of pictures is. */
 export async function similarity(reference: string, render: string, tools: MediaTools, rate = 4): Promise<SimilaritySample[]> {
-  const out = join(tmpdir(), `framelens-ssim-${process.pid}-${Date.now()}.txt`);
+  const out = tempPath("framelens-ssim-", ".txt");
   try {
     await tools.exec(tools.ffmpeg, [
       "-hide_banner", "-nostdin", "-v", "error",
