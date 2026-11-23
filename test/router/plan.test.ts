@@ -29,6 +29,8 @@ describe("router", () => {
     expect(classify(probe(600), bounds(5, 0.03), true).type).toBe("screen");
     expect(classify(probe(45), bounds(40, 0.2), true).type).toBe("motion-graphics");
     expect(classify(probe(200), bounds(20, 0.1), false).type).toBe("music-video");
+    // Without captions, speech is not checked (Gemini runs only for `transcript`): the reason must not claim it was.
+    expect(classify(probe(200), bounds(20, 0.1), false).reasons).toContain("no captions (speech not checked: `transcript` checks it)");
     expect(classify({ ...probe(0), frameCount: 1 }, undefined, false).type).toBe("still");
   });
 

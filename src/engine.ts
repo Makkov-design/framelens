@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
-import { InvalidInputError } from "./errors.js";
+import { AnalyzerError, InvalidInputError } from "./errors.js";
 import { oneLine } from "./text.js";
 import type { Logger } from "./logger.js";
 import { findBoundaries, type Boundaries } from "./media/boundaries.js";
@@ -11,6 +11,7 @@ import { probeMedia, type ProbeInfo } from "./media/probe.js";
 import { buildSheets, type Sheet } from "./media/sheets.js";
 import { buildPlan, type Goal, type Plan } from "./router/plan.js";
 import { countPhrase, findPhrase, readCaptions, toMarkdown, wordsAt, type Transcript } from "./speech/transcript.js";
+import type { ToolLocator } from "./tools/spawn-path.js";
 import { analyzeAudio, spectrogram, type AudioAnalysis } from "./audio/analyze.js";
 import { readPage, type PageResult } from "./browser/read.js";
 import { cleanReading, specFromPage, type PageReading } from "./browser/web.js";
@@ -116,6 +117,15 @@ const boundariesFile = (rate: number, threshold: number, start: number, end: num
  * Why there is no transcript and what can give one. Frame Lens reads captions and, for YouTube links with a key,
  * asks Gemini; it runs no speech-to-text of its own, so a local one is something the user runs.
  */
+/** A fallback failure that the same request would hit again (see `Engine.transcript`). */
+export function permanentFallbackFailure(error: Error): boolean {
+  if (error instanceof AnalyzerError) {
+    if (error.kind === "quota") return error.quota?.scope === "day";
+    return ["auth", "blocked", "video_unavailable", "model_not_found", "invalid_request", "bad_response"].includes(error.kind);
+  }
+  return false;
+}
+
 function noTranscriptMessage(source: Source, gemini: boolean): string {
   if (!source.probe.hasAudio) return "This source has no sound, so there is no speech to transcribe. Use `frames` to read what is on screen.";
   // With a key, the fallback answers for every YouTube link, so only a link without one gets here.
@@ -154,7 +164,7 @@ export function readSavedReading(file: string): { reading: PageReading; captured
 export class Engine {
   constructor(
     private readonly options: {
-      tools: MediaTools;
+      tools: MediaTools & ToolLocator;
       resolve: SourceResolver;
       root: string;
       logger: Logger;
@@ -182,17 +192,27 @@ export class Engine {
     return { ws, record, probe };
   }
 
-  /** The cached transcript, or one built from captions or the fallback engine. */
+  /** Fallback (Gemini) transcripts that failed in a way that would repeat, by source: not asked again in this session. */
+  private readonly fallbackFailures = new Map<string, Error>();
+
+  /**
+   * The cached transcript, or one built from captions. The fallback engine (Gemini: it uploads the whole video and
+   * spends the user's quota) runs only when the transcript is `required` (the `transcript` tool, `frames` with
+   * `around`); frame labels, `plan` and `style` use captions alone. A fallback failure is remembered for the session.
+   */
   async transcript(input: string | Source, options: { language?: string; required?: boolean } = {}): Promise<{ source: Source; transcript?: Transcript }> {
     const source = typeof input === "string" ? await this.source(input) : input;
-    const cached = source.ws.readJson<Transcript>("transcript.json");
-    if (cached) return { source, transcript: cached };
-
+    const language = options.language;
     const captions = [...(source.record.captions ?? [])].sort(
       (a, b) =>
         Number(a.auto) - Number(b.auto) ||
-        Number(b.language.startsWith(options.language ?? "\0")) - Number(a.language.startsWith(options.language ?? "\0")),
+        Number(b.language.startsWith(language ?? "\0")) - Number(a.language.startsWith(language ?? "\0")),
     );
+    const cached = source.ws.readJson<Transcript>("transcript.json");
+    // A cached transcript in another language is rebuilt only when captions in the asked language exist.
+    const otherLanguage = Boolean(language && cached?.language && !cached.language.startsWith(language) && captions.some((c) => c.language.startsWith(language)));
+    if (cached && !otherLanguage) return { source, transcript: cached };
+
     let transcript: Transcript | undefined;
     for (const caption of captions) {
       const parsed = readCaptions(caption.path);
@@ -200,7 +220,23 @@ export class Engine {
       transcript = { language: caption.language, source: caption.auto ? "auto-captions" : "captions", ...parsed };
       break;
     }
-    if (!transcript && this.options.transcriptFallback) transcript = await this.options.transcriptFallback(source.record, options.language);
+    if (!transcript && options.required && this.options.transcriptFallback) {
+      // The fallback does not depend on the language (Gemini hears whatever is spoken): one memo per source.
+      const failed = this.fallbackFailures.get(source.record.id);
+      if (failed) throw failed;
+      try {
+        transcript = await this.options.transcriptFallback(source.record, language);
+      } catch (error) {
+        const failure = error instanceof Error ? error : new Error(String(error));
+        // Only a failure that would repeat is remembered: a missing or wrong key, a blocked video, the day's quota,
+        // an answer that is not the expected JSON. Overload, timeouts and per-minute limits pass, so the next call tries again.
+        if (permanentFallbackFailure(failure)) {
+          failure.message += " (The Gemini transcript is not tried again for this video in this session; restart the server to retry.)";
+          this.fallbackFailures.set(source.record.id, failure);
+        }
+        throw failure;
+      }
+    }
     if (!transcript) {
       if (options.required) throw new InvalidInputError(noTranscriptMessage(source, Boolean(this.options.transcriptFallback)));
       return { source };
@@ -323,7 +359,7 @@ export class Engine {
    * easing family. Writes motion-spec.json, STYLE.md, TIMELINE.md and ANALYSIS.md (only the measured blocks are
    * refreshed on later runs; the agent's own writing is kept).
    */
-  async style(input: string, options: { start?: number; end?: number; version: string }): Promise<{ source: Source; spec: MotionSpec; files: Record<string, string> }> {
+  async style(input: string, options: { start?: number; end?: number; version: string }): Promise<{ source: Source; spec: MotionSpec; files: Record<string, string>; notes: string[] }> {
     const source = await this.source(input);
     const { probe, record, ws } = source;
     if (!probe.hasVideo) throw new InvalidInputError("This source has no picture to analyze for style.");
@@ -395,7 +431,7 @@ export class Engine {
     const analysis = ws.path("ANALYSIS.md");
     files.analysis = existsSync(analysis) ? analysis : ws.writeText("ANALYSIS.md", ANALYSIS_SKELETON(record.title ?? record.input));
     this.progress(ws, `style: ${shots.length} shots, ${transitions.length} gradual transitions, ${spec.events.length} moves, ${overall.length} palette colours (${start.toFixed(2)}–${end.toFixed(2)} s)${notes.length ? `; ${notes.join(" ")}` : ""}`);
-    return { source, spec, files };
+    return { source, spec, files, notes };
   }
 
   /**
@@ -623,7 +659,7 @@ export class Engine {
    * Checks a render against the reference: duration, cuts (matched within 3 frames), palette distance and picture
    * similarity over time, with a side-by-side sheet of the least similar moments. Writes COMPARE.md.
    */
-  async compare(reference: string, render: string, version: string): Promise<{ source: Source; comparison: Comparison; files: Record<string, string>; sheet?: Sheet }> {
+  async compare(reference: string, render: string, version: string): Promise<{ source: Source; comparison: Comparison; files: Record<string, string>; sheet?: Sheet; notes: string[] }> {
     // Both sources first, before the long style passes, and an error says which of the two it is about.
     for (const [name, input] of [["reference", reference], ["render", render]] as const) {
       try {
@@ -635,6 +671,14 @@ export class Engine {
     }
     const ref = await this.style(reference, { version });
     const out = await this.style(render, { version });
+    // The style passes can cover less than the whole file (the first 180 s), while SSIM below reads all of it.
+    const notes = [...ref.notes.map((n) => `reference: ${n}`), ...out.notes.map((n) => `render: ${n}`)];
+    const partOnly = (r: typeof ref) => r.spec.range.end - r.spec.range.start < r.source.probe.duration - 0.5;
+    if (partOnly(ref) || partOnly(out)) {
+      notes.push(
+        `Cuts and palette are compared over the analyzed ranges (reference ${ref.spec.range.start.toFixed(1)}–${ref.spec.range.end.toFixed(1)} s, render ${out.spec.range.start.toFixed(1)}–${out.spec.range.end.toFixed(1)} s); picture similarity (SSIM) covers the whole files.`,
+      );
+    }
     const fps = ref.source.probe.fps ?? 30;
     const samples = await similarity(ref.source.record.mediaPath, out.source.record.mediaPath, this.options.tools);
     let worst = [...samples].sort((a, b) => a.ssim - b.ssim).slice(0, WORST_MOMENTS).sort((a, b) => a.t - b.t);
@@ -689,10 +733,11 @@ export class Engine {
       `Palette distance (OKLab, 0 = same): ${comparison.palette.distance}.`,
       `Mean picture similarity (SSIM): ${comparison.similarity.mean}.`,
       sheet ? `\nSide by side at the ${worst.length} least similar moments (${momentList(worst)}): ${ws.display(sheet.file)}` : "",
+      ...(notes.length ? ["", ...notes.map((n) => `Note: ${n}`)] : []),
     ].join("\n");
     const files: Record<string, string> = { report: ws.writeText("COMPARE.md", `${md}\n`), json: ws.writeJson("compare.json", comparison) };
     this.progress(ws, `compare: with ${oneLine(render)}: ${comparison.verdict.join(" ")}`);
-    return { source: ref.source, comparison, files, ...(sheet && { sheet }) };
+    return { source: ref.source, comparison, files, notes, ...(sheet && { sheet }) };
   }
 
   /**

@@ -16,9 +16,9 @@ channel in [SECURITY.md](SECURITY.md), never a public issue.
 ## Development setup
 
 You need Node 20 or newer, git and ffmpeg/ffprobe on `PATH` (the media tests make their own fixtures with ffmpeg and
-are skipped without it). The suite is tested with ffmpeg 8.0, which CI uses. ffmpeg 6.1 (Ubuntu 24.04's package) is
-too old: two tests fail on it, one because its fixture uses a filter option 6.1 rejects. 7.x is expected to work but
-has not been tested. If your system ffmpeg is older, install a newer build and put it first on `PATH`. yt-dlp is only
+are skipped without it). The suite is tested with ffmpeg 8.0, which CI uses. On ffmpeg 6.1 (Ubuntu 24.04's package)
+one test fails (`test/style/style.test.ts`, the eased move is not found); 7.x is expected to work but has not been
+tested. If your system ffmpeg is older, install a newer build and put it first on `PATH`. yt-dlp is only
 needed to try links by hand.
 
 ```bash
@@ -148,7 +148,7 @@ Things learned the hard way, so the next change does not relearn them:
 - Each major update is its own PR and counts toward Dependabot's default limit of 5 open version-update PRs.
 - The first headless browser start on a busy runner can take more than 20 s; `CI` raises the deadline to 60 s. No
   retry: a retry would also hide real failures in the other browser tests.
-- Ubuntu 24.04's ffmpeg (6.1) is too old for two tests; CI's runner image has 8.0.
+- Ubuntu 24.04's ffmpeg (6.1) fails one test in `test/style/style.test.ts`; CI's runner image has 8.0.
 - macOS is not in the unit-test matrix yet: `test/tools/ffmpeg.test.ts` fails there.
 
 ## License

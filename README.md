@@ -131,7 +131,7 @@ says so. To check your machine ahead of time: `npx -y framelens doctor --prepare
 |---|---|
 | `plan` | Start here for any video. Classifies it (talking head, screen, motion graphics, music video, live action), reads the goal from the request (`listen`, `learn`, `find`, `style`, `sound`, `production`) and lists the steps with an image-token estimate |
 | `probe` | Fetches the source; duration, size, frame rate (variable or not), HDR, audio, captions, workspace folder |
-| `transcript` | Word-timed transcript from captions (Gemini as a fallback for YouTube) |
+| `transcript` | Word-timed transcript from captions (Gemini as a fallback for YouTube; only `transcript` and `frames` with `around` call it, never frame labels, `plan` or `style`) |
 | `frames` | Frames and contact sheets with time, frame number and the words spoken under each picture: `at`, `every`, `fps`, `every_frame` (every native frame with real timestamps) or `around` a phrase |
 | `boundaries` | Where the picture changes abruptly, scored, plus how dynamic the video is |
 | `style` | Cuts told apart from fast motion and flashes, dissolves, fades, dips through black or white and wipes (derived), shots split at them with palettes, moves with duration and easing family; writes `motion-spec.json`, `STYLE.md`, `TIMELINE.md`, `ANALYSIS.md` |
@@ -372,7 +372,7 @@ and grade, and keep facts apart from interpretation.
 | Tool | Version | Windows x64 | macOS arm64 and x64, Linux x64 (glibc) |
 |---|---|---|---|
 | ffmpeg, ffprobe | FFmpeg 9.0.2 | [gyan.dev](https://www.gyan.dev/ffmpeg/builds/) essentials build ([GitHub release](https://github.com/GyanD/codexffmpeg/releases/tag/9.0.2)) | [Martin Riedl's build server](https://ffmpeg.martin-riedl.de/) |
-| yt-dlp | 2026.10.21 | [github.com/yt-dlp/yt-dlp](https://github.com/yt-dlp/yt-dlp/releases/tag/2026.10.21) | same, also checked against the release's SHA2-256SUMS |
+| yt-dlp | 2026.10.21 | [github.com/yt-dlp/yt-dlp](https://github.com/yt-dlp/yt-dlp/releases/tag/2026.10.21) | same, also checked against the release's SHA2-256SUMS (Alpine and other musl Linux: the `musllinux` builds) |
 
 Gyan Doshi's Windows builds are the ones ffmpeg.org's download page links; Martin Riedl's build server publishes
 release builds with a SHA-256 for each file and keeps the old ones, so a pinned address keeps working. Other
