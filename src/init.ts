@@ -18,7 +18,8 @@ export interface InitResult {
 
 /**
  * `framelens init`: adds framelens to a project, so Claude Code (local or cloud) picks it up from the repository:
- * the server entry in `.mcp.json` (other servers are kept) and the skill in `.claude/skills/framelens/`.
+ * the server entry in `.mcp.json` (other servers, and settings added to an existing entry, are kept) and the skill in
+ * `.claude/skills/framelens/`.
  * The entry starts `npx` itself, as before: the file is shared with cloud sessions, which run Linux, so it carries no
  * Windows `cmd /c` wrapper.
  */
@@ -33,13 +34,17 @@ export function initProject(projectDir: string): InitResult {
     }
   }
   // A project set up with ytlens, the earlier name, gets the renamed server instead of a second copy.
-  const { ytlens: _legacy, ...servers } = config.mcpServers ?? {};
+  const { ytlens: legacy, ...servers } = config.mcpServers ?? {};
+  // An entry that is already there keeps what the user added (more environment variables, a timeout, ...): only the
+  // command and its arguments, which pin the version, are rewritten, and the Gemini key is added when missing.
+  const existing = asObject(servers.framelens) ?? asObject(legacy) ?? {};
   config.mcpServers = {
     ...servers,
     framelens: {
+      ...existing,
       command: "npx",
       args: ["-y", SERVER_SPEC],
-      env: { GEMINI_API_KEY: "${GEMINI_API_KEY}" },
+      env: { GEMINI_API_KEY: "${GEMINI_API_KEY}", ...asObject(existing.env) },
     },
   };
   writeFileSync(mcpPath, `${JSON.stringify(config, null, 2)}\n`);
@@ -49,6 +54,10 @@ export function initProject(projectDir: string): InitResult {
   writeFileSync(join(skillDir, "SKILL.md"), readFileSync(SKILL_SOURCE, "utf8"));
 
   return { files: [".mcp.json", ".claude/skills/framelens/SKILL.md"] };
+}
+
+function asObject(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
 }
 
 export const INIT_NEXT_STEPS = `

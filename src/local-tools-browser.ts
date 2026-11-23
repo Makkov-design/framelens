@@ -4,7 +4,7 @@ import { z } from "zod";
 import type { Engine } from "./engine.js";
 import { InvalidInputError } from "./errors.js";
 import type { Logger } from "./logger.js";
-import { withSetupNotes } from "./local-tools.js";
+import { withSetupNotes, WRITES_WORKSPACE } from "./local-tools.js";
 import { collectSetupNotes, setupNotesOf } from "./tools/setup.js";
 import { mcpCallContext, withCall } from "./runtime/call.js";
 import { oneLine } from "./text.js";
@@ -31,7 +31,7 @@ export function registerBrowserTools(server: McpServer, engine: Engine, logger: 
           .max(4000)
           .describe("The page address (http or https); or `inbox`, or the path of a .framelens.json page reading saved by the Frame Lens browser extension."),
       },
-      annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true },
+      annotations: WRITES_WORKSPACE,
     },
     async ({ url }, extra) => {
       const started = Date.now();

@@ -1,8 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { matchCuts, paletteDistance, parseSsim } from "../../src/compare/compare.js";
+import { matchCuts, paletteDistance, parseSsim, similarity, ssimSize } from "../../src/compare/compare.js";
+import type { MediaTools } from "../../src/media/exec.js";
 import { Engine, localFileResolver } from "../../src/engine.js";
 import { silentLogger } from "../../src/logger.js";
 import { cutsVideo, mediaTools, tempDir } from "../media/fixtures.js";
@@ -16,6 +17,31 @@ describe("compare helpers", () => {
       missing: [4, 6],
       extra: [4.4, 8],
     });
+  });
+
+  it("compares pictures at the reference's aspect ratio, not always 16:9", async () => {
+    expect(ssimSize(1920, 1080)).toEqual({ width: 320, height: 180 });
+    expect(ssimSize(1080, 1920)).toEqual({ width: 180, height: 320 });
+    expect(ssimSize(1080, 1080)).toEqual({ width: 320, height: 320 });
+    expect(ssimSize(1440, 1080)).toEqual({ width: 320, height: 240 });
+    expect(ssimSize()).toEqual({ width: 320, height: 180 });
+
+    let lavfi = "";
+    const fake = {
+      ffmpeg: "ffmpeg",
+      exec: async (_cmd: string, args: string[]) => {
+        lavfi = args[args.indexOf("-lavfi") + 1]!;
+        // filterValue escapes twice (option value, then filtergraph): undo both.
+        const unescape = (v: string) => v.replace(/\\(.)/g, "$1");
+        const stats = unescape(unescape(/stats_file=(.+)$/.exec(lavfi)![1]!));
+        writeFileSync(stats, "n:1 Y:1 U:1 V:1 All:1 (inf)\n");
+        return { stdout: "", stderr: "", code: 0 };
+      },
+    } as unknown as MediaTools;
+    await similarity("ref.mp4", "render.mp4", fake, 4, ssimSize(1080, 1920));
+    expect(lavfi).toContain("[0:v]fps=4,scale=180:320,");
+    expect(lavfi).toContain("[1:v]fps=4,scale=180:320,");
+    expect(lavfi).not.toContain("320:180");
   });
 
   it("measures palette distance and parses ssim stats", () => {
@@ -78,6 +104,28 @@ describe.skipIf(!tools)("export and compare on real files", () => {
     expect(comparison.similarity.mean).toBeGreaterThan(0.97);
     expect(comparison.verdict).toEqual(["Structure, timing and colour match the reference within tolerance."]);
     // Two full style passes and a similarity pass on real files: about 4 s, more on a busy machine.
+  }, 30_000);
+
+  it("scales a vertical reference by its own aspect ratio for SSIM", async () => {
+    const vertical = join(dir, "vertical.mp4");
+    execFileSync("ffmpeg", [
+      "-hide_banner", "-v", "error", "-y",
+      "-f", "lavfi", "-i", "color=c=0xE0402F:s=180x320:r=25:d=1",
+      "-c:v", "libx264", "-pix_fmt", "yuv420p", vertical,
+    ], { windowsHide: true });
+    const graphs: string[] = [];
+    const spying: MediaTools = {
+      ...tools!,
+      exec: (cmd, args, options) => {
+        const i = args.indexOf("-lavfi");
+        if (i >= 0 && args[i + 1]!.includes("ssim=")) graphs.push(args[i + 1]!);
+        return tools!.exec(cmd, args, options);
+      },
+    };
+    const spied = new Engine({ tools: spying, resolve: localFileResolver, root: join(dir, ".framelens-vertical"), logger: silentLogger });
+    await spied.compare(vertical, vertical, "test");
+    expect(graphs).toHaveLength(1);
+    expect(graphs[0]).toContain("scale=180:320");
   }, 30_000);
 
   it("names the late cut and the colour drift of a render", async () => {

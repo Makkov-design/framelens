@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -217,6 +217,20 @@ describe("resolveSource: links through yt-dlp", () => {
     expect((await resolveSource(YT, { workspaceRoot: ws, env: env({ FRAMELENS_MAX_DOWNLOAD_MB: "100" }) })).kind).toBe("youtube");
     expect(calls().find((c) => c.includes("--max-filesize"))![calls().find((c) => c.includes("--max-filesize"))!.indexOf("--max-filesize") + 1]).toBe("100M");
   });
+
+  it("stops a download of unknown size once it passes the cap", async () => {
+    process.env.FAKE_YTDLP_MODE = "stream";
+    const started = Date.now();
+    const error = await resolveSource(YT, { workspaceRoot: ws, env: env({ FRAMELENS_MAX_DOWNLOAD_MB: "3" }) }).catch((e) => e);
+    expect(error.code).toBe("too_large");
+    expect(error.message).toMatch(/passed the 3 MB limit/);
+    // The fake writes 1 MB every 50 ms for 30 s: stopped within a few seconds, and the partial file is removed.
+    expect(Date.now() - started).toBeLessThan(10_000);
+    const media = join(ws, "yt-jNQXAC9IVRw", "media");
+    const left = existsSync(media) ? readdirSync(media).filter((n) => n.startsWith("source.")) : [];
+    expect(left).toEqual([]);
+    expect(runningChildren()).toBe(0);
+  }, 20_000);
 
   it("reports a download that produced no file", async () => {
     process.env.FAKE_YTDLP_MODE = "nofile";

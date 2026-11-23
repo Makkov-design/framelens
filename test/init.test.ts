@@ -82,6 +82,35 @@ describe("initProject", () => {
     expect(mcpJson().mcpServers.framelens.args).toEqual(["-y", SERVER_SPEC]);
   });
 
+  it("keeps the environment and settings a user added to an existing entry", () => {
+    writeFileSync(
+      join(dir, ".mcp.json"),
+      JSON.stringify({
+        mcpServers: {
+          framelens: {
+            command: "npx",
+            args: ["-y", "framelens@0.9.0"],
+            env: { FRAMELENS_MAX_DOWNLOAD_MB: "500", GEMINI_API_KEY: "${MY_KEY}" },
+            timeout: 600000,
+          },
+        },
+      }),
+    );
+    initProject(dir);
+    expect(mcpJson().mcpServers.framelens).toEqual({
+      command: "npx",
+      args: ["-y", SERVER_SPEC],
+      env: { FRAMELENS_MAX_DOWNLOAD_MB: "500", GEMINI_API_KEY: "${MY_KEY}" },
+      timeout: 600000,
+    });
+  });
+
+  it("carries the settings of a ytlens entry over to framelens", () => {
+    writeFileSync(join(dir, ".mcp.json"), JSON.stringify({ mcpServers: { ytlens: { command: "npx", env: { FRAMELENS_COOKIES_FROM_BROWSER: "firefox" } } } }));
+    initProject(dir);
+    expect(mcpJson().mcpServers.framelens.env).toEqual({ GEMINI_API_KEY: "${GEMINI_API_KEY}", FRAMELENS_COOKIES_FROM_BROWSER: "firefox" });
+  });
+
   it("refuses to touch an .mcp.json it cannot parse", () => {
     writeFileSync(join(dir, ".mcp.json"), "{ not json");
     expect(() => initProject(dir)).toThrow(InvalidInputError);

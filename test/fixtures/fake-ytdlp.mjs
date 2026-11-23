@@ -33,7 +33,8 @@ if (args.includes("--dump-single-json")) {
       language: "en",
       subtitles: mode === "manual-subs" ? { en: [{}] } : {},
       automatic_captions: { "en-orig": [{}], en: [{}], de: [{}], fr: [{}] },
-      requested_formats: [{ filesize: size }, { filesize: 10 }],
+      // "stream": an HLS stream of unknown size, as live and some VOD playlists are: no filesize at all.
+      ...(mode === "stream" ? { protocol: "m3u8_native" } : { requested_formats: [{ filesize: size }, { filesize: 10 }] }),
     }),
   );
   process.exit(0);
@@ -47,6 +48,14 @@ const delay = Number(process.env.FAKE_YTDLP_DELAY_MS ?? 0);
 if (delay) {
   writeFileSync(`${base}mp4.part`, "partial");
   await new Promise((done) => setTimeout(done, delay));
+}
+// "stream": keeps appending fragments (1 MB every 50 ms) until it is stopped, like a long HLS download.
+if (mode === "stream") {
+  const chunk = Buffer.alloc(1024 * 1024);
+  for (let i = 0; i < 600; i++) {
+    appendFileSync(`${base}mp4.part`, chunk);
+    await new Promise((done) => setTimeout(done, 50));
+  }
 }
 if (mode === "fail-download") fail("ERROR: unable to download video data: HTTP Error 500: Internal Server Error");
 if (mode !== "nofile") writeFileSync(`${base}mp4`, "fake-video");
