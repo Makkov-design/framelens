@@ -15,10 +15,11 @@ channel in [SECURITY.md](SECURITY.md), never a public issue.
 
 ## Development setup
 
-You need Node 20 or newer, git and ffmpeg/ffprobe 7.0 or newer on `PATH` (the media tests make their own fixtures
-with ffmpeg and are skipped without it). CI tests with ffmpeg 8.0; on ffmpeg 6.1 (Ubuntu 24.04's package) two tests
-fail, one because its fixture uses a filter option 6.1 rejects. If your system ffmpeg is older, install a newer build
-and point `PATH` at it. yt-dlp is only needed to try links by hand.
+You need Node 20 or newer, git and ffmpeg/ffprobe on `PATH` (the media tests make their own fixtures with ffmpeg and
+are skipped without it). The suite is tested with ffmpeg 8.0, which CI uses. ffmpeg 6.1 (Ubuntu 24.04's package) is
+too old: two tests fail on it, one because its fixture uses a filter option 6.1 rejects. 7.x is expected to work but
+has not been tested. If your system ffmpeg is older, install a newer build and put it first on `PATH`. yt-dlp is only
+needed to try links by hand.
 
 ```bash
 git clone https://github.com/Makkov-design/framelens.git
@@ -63,10 +64,28 @@ npm run bundle             # updates dist/framelens.mjs
 npm run build:extension    # updates extension/dist (only when extension/ changed)
 ```
 
-Commit those files together with the source change. Dependabot's npm PRs are the exception: the
-`dependabot-bundle.yml` workflow rebuilds both, commits them to the PR branch and starts CI on that commit (the first
-CI run on Dependabot's own commit fails the bundle check; the run on the rebuild is the one that counts). After that
-commit Dependabot no longer rebases the PR by itself; comment `@dependabot recreate` to get a fresh one. `npm run check` runs typecheck, tests and bundle in one go
+Commit those files together with the source change. Dependabot's npm PRs are the exception: see below.
+
+## Dependabot PRs
+
+Dependabot opens PRs that update dependencies: every minor and patch update together in one PR, and every major
+update in a PR of its own. Because the bundle is committed, each npm update needs a rebuilt bundle, and the
+`dependabot-bundle.yml` workflow does that. What to do as the maintainer:
+
+1. Dependabot opens the PR. Its first CI run fails at "Committed bundle is up to date". That is expected.
+2. Within a few minutes a commit by `github-actions[bot]` appears on the PR: "Rebuild dist/framelens.mjs and
+   extension/dist for the dependency update".
+3. GitHub does not run CI on that commit by itself. On the PR page, click **Approve workflows to run**. If no such
+   button appears, open the **Actions** tab, choose **CI**, click **Run workflow**, pick the PR's branch
+   (`dependabot/npm_and_yarn/…`) and start it.
+4. Merge only when that CI run on the bot's commit is green. For a major update, also read its release notes.
+
+If the PR later gets a merge conflict, or `main` has changed the source since the PR was opened, comment
+`@dependabot recreate` on the PR. Dependabot no longer rebases a PR by itself once another account has committed to
+it, and the bundle is built from the PR branch as it is, not merged with the newest `main`.
+
+This path had not run end to end when it was added: the first Dependabot npm PR after it merged is its live test.
+Check there that the bot's commit appears and that CI can be approved or started on it. `npm run check` runs typecheck, tests and bundle in one go
 (pass `-- --maxWorkers=2` to the test step if you run `npm test` separately).
 
 ## Evidence labels
@@ -107,7 +126,7 @@ The single word check that decides this lives in `src/sources/access.ts`; widen 
 - Branch from `main`, one topic per pull request, and fill in the template.
 - CI must be green: typecheck, tests on Node 22 and 24 (Ubuntu) and Node 22 (Windows, without the media tests), the
   committed bundle and extension build, the bundle starting and running `probe` on Node 20, 22 and 24, and the Docker
-  build. Real-browser tests get one retry in CI.
+  build.
 - Add a line to `CHANGELOG.md` under "Unreleased" for anything a user would notice.
 - Do not bump versions; that happens at release time (`package.json`, `src/version.ts`,
   `.claude-plugin/plugin.json` and `server.json` move together, and a test checks it).
@@ -116,11 +135,19 @@ The single word check that decides this lives in `src/sources/access.ts`; widen 
 
 Things learned the hard way, so the next change does not relearn them:
 
-- A dependency bump always changes the committed bundle. Bot PRs therefore need the rebuild workflow
-  (`dependabot-bundle.yml`). Pushes made with `GITHUB_TOKEN` start no workflow, which is why it dispatches CI itself.
+- A dependency bump always changes the committed bundle, so bot PRs need the rebuild workflow (`dependabot-bundle.yml`).
 - Never give a write token to a job that runs freshly bumped packages: build in a read-only job and let the privileged
   job only check and copy the files.
-- The first headless browser start on a busy runner can take more than 20 s; `CI` raises the deadline to 60 s.
+- Check an artifact by its exact shape, not by a path prefix: file types, modes and dot-named entries too. A `.git`
+  directory or `.gitattributes` under an allowed folder is enough to change what git commits, or to run code on a later
+  `git status`. "We never run it" holds only for today's commands.
+- Read a platform rule in the current documentation before writing it down, above all in a security note. A push made
+  with `GITHUB_TOKEN` that updates a PR does create CI runs, in an approval-required state; this was first written
+  from memory as "creates no run".
+- Dependabot branches cut before `dependabot-bundle.yml` merged get no rebuild: comment `@dependabot recreate`.
+- Each major update is its own PR and counts toward Dependabot's default limit of 5 open version-update PRs.
+- The first headless browser start on a busy runner can take more than 20 s; `CI` raises the deadline to 60 s. No
+  retry: a retry would also hide real failures in the other browser tests.
 - Ubuntu 24.04's ffmpeg (6.1) is too old for two tests; CI's runner image has 8.0.
 - macOS is not in the unit-test matrix yet: `test/tools/ffmpeg.test.ts` fails there.
 

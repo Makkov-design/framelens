@@ -4,8 +4,8 @@
 
 ### Changed
 
-- Development: Dependabot's npm PRs get the bundle rebuilt and committed by a workflow, so they can pass CI; major
-  bumps come as PRs of their own. CI also runs `probe` through the built bundle on Node 20, 22 and 24 and the unit
+- Development: on Dependabot's npm PRs a workflow rebuilds and commits the bundle, so they can pass CI once a
+  maintainer approves the CI run; major bumps come as PRs of their own. CI also runs `probe` through the built bundle on Node 20, 22 and 24 and the unit
   tests on Windows.
 
 ### Fixed

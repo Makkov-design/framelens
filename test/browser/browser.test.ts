@@ -148,8 +148,7 @@ new IntersectionObserver((es) => es.forEach((e) => e.isIntersecting && e.target.
 window.gsap = { globalTimeline: { getChildren: () => [{ vars: { x: 200, ease: "expo.out", duration: 1.2 }, startTime: () => 0.5, duration: () => 1.2, targets: () => [document.querySelector("h1")] }] } };
 </script></body></html>`;
 
-// One retry in CI: a cold first browser start on a shared runner is the one known flake (PR #32, Node 22).
-describe.skipIf(!canRun)("with a real browser", { retry: process.env.CI ? 1 : 0 }, () => {
+describe.skipIf(!canRun)("with a real browser", () => {
   let dir: string;
   let server: Server;
   let base: string;

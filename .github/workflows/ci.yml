@@ -5,7 +5,9 @@ on:
     branches: [main]
     tags: ["v*"]
   pull_request:
-  # dependabot-bundle.yml starts CI this way after it commits a rebuilt bundle: its pushes start no workflow themselves.
+  # Manual fallback for a maintainer, e.g. on a Dependabot branch after dependabot-bundle.yml committed the rebuilt
+  # bundle and no approvable run appeared. Such a run is not Dependabot-triggered, so regular Actions secrets would be
+  # available to it: this workflow must keep using no secrets and `contents: read`.
   workflow_dispatch:
 
 permissions:
@@ -32,7 +34,7 @@ jobs:
       - run: npm test
       - run: npm run bundle
       - name: Committed bundle is up to date
-        run: git diff --exit-code --stat -- dist/framelens.mjs || (echo "Run npm run bundle and commit dist/framelens.mjs (on a Dependabot PR, dependabot-bundle.yml commits it)" && exit 1)
+        run: git diff --exit-code --stat -- dist/framelens.mjs || (echo "Run npm run bundle and commit dist/framelens.mjs (on a Dependabot npm PR, dependabot-bundle.yml commits it)" && exit 1)
       - run: npm run build:extension
       - name: Committed extension build is up to date
         run: git diff --exit-code --stat -- extension/dist || (echo "Run npm run build:extension and commit extension/dist" && exit 1)
