@@ -91,6 +91,9 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
+/** The Gemini Developer API version every call uses. */
+export const GEMINI_API_VERSION = "v1beta";
+
 /** Longest wait for a per-minute limit before trying again. */
 const MAX_RETRY_DELAY_MS = 60_000;
 
@@ -416,6 +419,9 @@ function quotaMessage(quota: QuotaInfo, model: string): string {
 export function createGeminiAnalyzer(config: Config, logger: Logger): GeminiAnalyzer {
   const client = new GoogleGenAI({
     apiKey: config.apiKey,
+    // @google/genai 3 defaults to v1, where the `-latest` aliases (our default models) and some preview models
+    // do not exist. Pinned here, it also wins over a GOOGLE_GENAI_API_VERSION in the user's environment.
+    apiVersion: GEMINI_API_VERSION,
     httpOptions: {
       timeout: config.timeoutMs,
       // GeminiAnalyzer retries itself, because it can tell a daily quota from a per-minute one.

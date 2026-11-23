@@ -12,6 +12,9 @@
 
 - `plan` reads the picture changes of a source longer than 10 minutes in 12 sample windows of 30 s instead of every
   second, and says so in its notes; `boundaries` over a whole long source gets a time limit that grows with its length.
+- The bundled Gemini client is `@google/genai` 3.0.0 (was 2.32.0). Calls stay on the `v1beta` API, where the
+  default `-latest` models exist (3.x defaults to `v1`), and a `GOOGLE_GENAI_API_VERSION` in the environment no
+  longer changes it. The bundle still runs on Node 20.
 
 ### Fixed
 
