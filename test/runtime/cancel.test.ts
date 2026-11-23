@@ -13,6 +13,11 @@ import { CancelledError, mcpCallContext, withCall } from "../../src/runtime/call
 import { createServer } from "../../src/server.js";
 import { motionProfile } from "../../src/style/motion.js";
 import { runningChildren } from "../../src/tools/children.js";
+import { run } from "../../src/tools/run.js";
+import { hasDrawtext } from "../../src/media/sheets.js";
+import { existsSync as exists } from "node:fs";
+import { Workspace } from "../../src/workspace/workspace.js";
+import { singleFlight } from "../../src/runtime/call.js";
 import { decodeGray } from "../../src/track/decode.js";
 import { mediaTools, tempDir } from "../media/fixtures.js";
 
@@ -72,10 +77,60 @@ describe("external programs follow the tool call", () => {
     expect((error as Error).message).toMatch(/wrote more than 64 MiB of output/);
   });
 
+  it("settles when the program exits even if a descendant outside its group holds the pipes", async () => {
+    // The descendant leaves the process group (detached: a new session on POSIX) and keeps stdout open.
+    const script = `require("node:child_process").spawn(process.execPath, ["-e", "setTimeout(() => {}, 20000)"], { detached: true, stdio: ["ignore", "inherit", "ignore"] }).unref(); process.exit(0);`;
+    const started = Date.now();
+    const result = await run(node, ["-e", script], { timeoutMs: 15_000 });
+    expect(result.code).toBe(0);
+    expect(Date.now() - started).toBeLessThan(10_000);
+  });
+
   it("does not start a program for a call that is already cancelled", async () => {
     const controller = new AbortController();
     controller.abort();
     await expect(withCall({ signal: controller.signal }, () => execTool(node, ["-e", "0"]))).rejects.toBeInstanceOf(CancelledError);
+  });
+
+  it("caches nothing under a cancelled call: no workspace file, no memoized ffmpeg answer", async () => {
+    const dir = tempDir();
+    const ws = new Workspace(dir, "file-test");
+    const controller = new AbortController();
+    controller.abort();
+    await expect(withCall({ signal: controller.signal }, async () => ws.writeJson("boundaries-x.json", { candidates: [] }))).rejects.toBeInstanceOf(CancelledError);
+    expect(exists(ws.path("boundaries-x.json"))).toBe(false);
+    // hasDrawtext: a cancelled first call is not remembered as "no drawtext".
+    const answers = [Promise.reject(new CancelledError("ffmpeg")), Promise.resolve({ stdout: " .. drawtext  V->V  Draw text\n", stderr: "" })];
+    const tools = { ffmpeg: "ffmpeg", ffprobe: "ffprobe", exec: () => answers.shift()! };
+    await expect(hasDrawtext(tools)).rejects.toBeInstanceOf(CancelledError);
+    expect(await hasDrawtext(tools)).toBe(true);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("singleFlight: waiters share the run, a cancelled waiter leaves at once, a cancelled leader is run again by a waiter", async () => {
+    const flights = new Map();
+    let runs = 0;
+    const work = (ms: number) => () => new Promise<string>((done) => {
+      runs++;
+      setTimeout(() => done(`run ${runs}`), ms);
+    });
+    const [a, b] = await Promise.all([singleFlight(flights, "k", undefined, work(100)), singleFlight(flights, "k", undefined, work(100))]);
+    expect([a.shared, b.shared].sort()).toEqual([false, true]);
+    expect(runs).toBe(1);
+    const leader = new AbortController();
+    const cancellable = () => new Promise<string>((done, fail) => {
+      runs++;
+      const t = setTimeout(() => done("done"), 300);
+      leader.signal.addEventListener("abort", () => {
+        clearTimeout(t);
+        fail(new CancelledError());
+      });
+    });
+    const first = singleFlight(flights, "j", leader.signal, cancellable);
+    const waiter = singleFlight(flights, "j", undefined, work(50));
+    leader.abort();
+    await expect(first).rejects.toBeInstanceOf(CancelledError);
+    expect((await waiter).shared).toBe(false);
   });
 
   it("sends progress only when the client asked for it, with a heartbeat while a step runs", async () => {

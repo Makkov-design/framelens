@@ -56,5 +56,14 @@ build.
 - Every child process goes through `tools/children.ts` (`spawnTracked`): its own process group, registered, and
   killed on cancel and shutdown. A bare `spawn` or `execFile` outlives the call and the server. Code that swallows an
   error to retry (`catch {}` around ffmpeg) must rethrow `CancelledError`.
-- A test for shutdown behaviour runs the real bundle over stdio (close stdin, look for the child): on main the
-  server did not even exit, because the detached child kept it alive.
+- A per-call cancel signal must never reach shared or memoized work. The first-use install was shared by all calls
+  but ran under the first caller's signal, so one cancelled call failed every other call and a client that cancels on
+  timeout restarted the install from zero each time; a memo (`hasDrawtext`) cached `false` from a cancelled call.
+  Shared work runs on its own limits and each caller waits with `untilAborted`; a memo forgets a cancelled answer;
+  workspace writes refuse under a cancelled call. Sweep for `??=`, module-level maps and `.catch(() => …)`.
+- Exit on stdin EOF only after the requests already received are answered: a client that pipes its requests and
+  closes stdin is normal (CI's start check is one). `runtime/stdio.ts` counts requests at the transport, so every
+  tool is covered, and a cancelled request counts as answered.
+- Shutdown is tested against the real server over stdio, built from the current source in the test
+  (`test/runtime/shutdown.test.ts`): a piped client that closes stdin gets every answer, and SIGTERM kills a running
+  download's process group.

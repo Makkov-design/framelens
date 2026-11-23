@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writ
 import { basename, extname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { InvalidInputError } from "../errors.js";
-import { CancelledError } from "../runtime/call.js";
+import { callSignal, singleFlight, throwIfCancelled } from "../runtime/call.js";
 import { parseVideoRef } from "../youtube.js";
 import { readToolVersion, requireTool, type Env, type ToolLocation } from "../tools/index.js";
 import { cobaltMayRetry, fetchWithCobalt } from "./cobalt.js";
@@ -99,6 +99,8 @@ function readRecord(dir: string): SourceRecord | undefined {
 }
 
 function writeRecord(dir: string, record: SourceRecord): void {
+  // A cancelled call records nothing: a later call would take it for a finished download.
+  throwIfCancelled();
   const { reused: _reused, inboxNote: _note, ...stored } = record;
   const tmp = join(dir, "source.json.tmp");
   writeFileSync(tmp, `${JSON.stringify(stored, null, 2)}\n`);
@@ -119,47 +121,9 @@ export async function resolveSource(input: string, options: ResolveOptions): Pro
   }
   // One download per workspace at a time: agents often call `transcript` and `frames` on a new link together, and a
   // second download would delete the first one's files (and a failing first call would remove the workspace).
-  for (;;) {
-    const pending = inFlight.get(dir);
-    if (!pending) break;
-    try {
-      // This call's own cancel ends its wait; the download goes on for the call that started it.
-      const record = await untilAborted(pending.promise, options.signal);
-      return { ...record, input, reused: true };
-    } catch (error) {
-      if (error instanceof CancelledError) throw error;
-      // The download this call waited for was cancelled by its own caller: try again, unless this call is cancelled too.
-      if (!pending.signal?.aborted || options.signal?.aborted) throw error;
-    }
-  }
-  const promise = fetchIntoWorkspace(dir, target, input, env, options);
-  const entry = { promise, ...(options.signal && { signal: options.signal }) };
-  inFlight.set(dir, entry);
-  try {
-    return await promise;
-  } finally {
-    if (inFlight.get(dir) === entry) inFlight.delete(dir);
-  }
-}
-
-/** `promise`, or a CancelledError as soon as `signal` aborts (the promise itself keeps running). */
-function untilAborted<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
-  if (!signal) return promise;
-  if (signal.aborted) return Promise.reject(new CancelledError("The download"));
-  return new Promise<T>((resolve, reject) => {
-    const onAbort = () => reject(new CancelledError("The download"));
-    signal.addEventListener("abort", onAbort, { once: true });
-    promise.then(
-      (value) => {
-        signal.removeEventListener("abort", onAbort);
-        resolve(value);
-      },
-      (error: unknown) => {
-        signal.removeEventListener("abort", onAbort);
-        reject(error);
-      },
-    );
-  });
+  const signal = options.signal ?? callSignal();
+  const { value, shared } = await singleFlight(inFlight, dir, signal, () => fetchIntoWorkspace(dir, target, input, env, { ...options, ...(signal && { signal }) }), "The download");
+  return shared ? { ...value, input, reused: true } : value;
 }
 
 /** Downloads in progress, by workspace folder. */

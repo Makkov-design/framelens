@@ -47,7 +47,7 @@ export async function decodeGray(
     let cancelled = false;
     const onAbort = () => {
       cancelled = true;
-      killTree(child.pid);
+      killTree(child);
     };
     if (signal?.aborted) onAbort();
     else signal?.addEventListener("abort", onAbort, { once: true });
@@ -60,7 +60,7 @@ export async function decodeGray(
     const timeoutMs = options.timeoutMs ?? 5 * 60_000;
     const timer = setTimeout(() => {
       timedOut = true;
-      killTree(child.pid);
+      killTree(child);
     }, timeoutMs);
     child.stdout.on("data", (chunk: Buffer) => {
       pending.push(chunk);
@@ -74,7 +74,7 @@ export async function decodeGray(
         pending = [all.subarray(frameBytes)];
         pendingBytes -= frameBytes;
       }
-      if (tooMany) killTree(child.pid);
+      if (tooMany) killTree(child);
     });
     child.stderr.on("data", (chunk: Buffer) => {
       stderr += chunk.toString("utf8");

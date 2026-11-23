@@ -10,6 +10,7 @@ import { oneLine } from "./text.js";
 import { EXPORT_TARGETS } from "./export/exporters.js";
 import { GOALS } from "./router/plan.js";
 import { collectSetupNotes, setupNotesOf } from "./tools/setup.js";
+import { ToolError } from "./tools/errors.js";
 import { CancelledError, mcpCallContext, withCall, type ProgressExtra } from "./runtime/call.js";
 import { curveLabel } from "./track/curve.js";
 import { transitionName } from "./style/spec.js";
@@ -84,7 +85,7 @@ export function registerLocalTools(server: McpServer, engine: Engine, logger: Lo
         logger.warn("tool failed", { tool, error: message });
         return withSetupNotes({ content: [{ type: "text", text: message }], isError: true }, setupNotesOf(error));
       }
-      if (error instanceof CancelledError) {
+      if (error instanceof CancelledError || (error instanceof ToolError && error.code === "aborted")) {
         logger.info("tool cancelled", { tool, ms: Date.now() - startedAt });
         return withSetupNotes({ content: [{ type: "text", text: `${tool} was cancelled; the programs it started were stopped.` }], isError: true }, setupNotesOf(error));
       }

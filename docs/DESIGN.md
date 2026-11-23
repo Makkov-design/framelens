@@ -58,18 +58,30 @@ research and reasoning lives in the plan page; this file is what the code must f
 Every external process goes through `tools/` (one place for timeouts, Windows quoting, `windowsHide`, killing the
 tree on abort). stdout is reserved for MCP: logs go to stderr through `logger.ts`.
 
-**Cancellation, progress, shutdown.** Each tool call runs inside a call context (`runtime/call.ts`, an
-AsyncLocalStorage) that holds the client's `extra.signal` and, when the client sent a progress token, a reporter. The
-code that starts programs (`tools/run.ts`, `media/exec.ts`, the ffmpeg pipes in `track/decode.ts` and
-`style/motion.ts`) reads the signal from there, so the engine's methods need no signal parameter. Every child is
-spawned by `tools/children.ts`: no shell, its own process group on POSIX (killing the group stops what it started,
-such as yt-dlp's ffmpeg; on Windows taskkill walks the tree), and registered until it ends. A cancelled call kills
-its children; the server kills all of them on exit, SIGINT, SIGTERM, SIGHUP and when the client closes stdin.
-Progress notifications carry each finished step (the lines written to `PROGRESS.md`, setup and download log lines)
-and a heartbeat every 15 s, so a client that resets its timeout on progress waits for a long `style` or download.
-A program that hits its time limit is reported with that limit, not as a failed command.
+**Cancellation, progress, shutdown.** Each local tool call (`probe` … `boundaries`, `web`, `exact`; not the Gemini
+tools, whose SDK call takes no signal) runs inside a call context (`runtime/call.ts`, an AsyncLocalStorage) that holds
+the client's `extra.signal` and, when the client sent a progress token, a reporter. The code that starts programs
+(`tools/run.ts`, `media/exec.ts`, the ffmpeg pipes in `track/decode.ts` and `style/motion.ts`) reads the signal from
+there, so the engine's methods need no signal parameter. Those programs are spawned by `tools/children.ts`: no
+shell, their own process group on POSIX (killing the group stops what they started, such as yt-dlp's ffmpeg; on
+Windows taskkill walks the tree), and registered until they end. The browser is the one child spawned elsewhere
+(`browser/cdp.ts`, its own group as well): it is killed when its call is cancelled, at the end of its lifetime and on
+exit. A cancelled call kills its children. The server kills all of them on exit, SIGINT, SIGTERM, SIGHUP and a broken
+stdout; when the client closes stdin, the requests it already sent are answered first (`runtime/stdio.ts` counts
+them), then the server exits. A SIGKILL of the server cannot be caught: its children, each in its own process group,
+then run until they end. `run` settles when the program exits even if a descendant that left the group keeps the
+pipes open, and never signals a pid after the child is reaped.
 
-**One download per workspace.** `resolveSource` keeps the downloads in flight by workspace folder: a second call on
+Shared work never runs under one call's signal: the first-use install of ffmpeg or yt-dlp runs on its own limits and
+each caller waits with its own signal (`untilAborted`), and memoized answers (drawtext support, tool versions) are not
+kept from a cancelled call. Nothing is written to a workspace under a cancelled call (`Workspace.writeJson` and
+`writeText` check), so a later call never trusts a result cut short. Progress notifications carry each finished
+step (the lines written to `PROGRESS.md`, setup and download log lines) and a heartbeat every 15 s, so a client that
+resets its timeout on progress waits for a long `style` or download. A program that hits its time limit is reported
+with that limit, not as a failed command.
+
+**One download per workspace.** `resolveSource` (and the login-profile capture in `index.ts`) keep the downloads in
+flight by workspace folder (`singleFlight`): a second call on
 the same new link waits for the first (and gets its record or its error) instead of starting a second yt-dlp that
 deletes the first one's files. A waiter whose download was cancelled by the other caller tries again itself.
 `source.json` is written only after the media is complete, so a cancelled download leaves nothing a later call takes

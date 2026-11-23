@@ -21,10 +21,13 @@
 
 ### Fixed
 
-- Cancelling a tool call stops the yt-dlp or ffmpeg it started, with their own children; the server stops all of
-  them when it exits or the client closes stdin (they used to run on for up to 30 minutes).
+- Cancelling a tool call stops the yt-dlp, ffmpeg or browser it started, with their own children; the server stops
+  all of them when it exits (they used to run on for up to 30 minutes). When the client closes stdin, the calls it
+  already sent are answered first. A cancelled call never stops the first-use download of ffmpeg or yt-dlp that
+  other calls wait for, and leaves no result in the workspace.
 - Two calls on the same new link at once (`transcript` and `frames` together) no longer break each other's download:
-  the second waits for the first. A cancelled download leaves nothing a later call takes for complete.
+  the second waits for the first (also for the login-profile capture). A cancelled download leaves nothing a later
+  call takes for complete.
 - A program that hits its time limit says so and names the limit, instead of reading as a failed command.
 - Temporary files get unguessable names instead of the process id and the time.
 - `style`, `track`, `compare` and `export` work when ffmpeg exists only as the automatically installed pinned build:

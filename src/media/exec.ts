@@ -18,6 +18,7 @@ export const DEFAULT_EXEC_TIMEOUT_MS = 10 * 60_000;
 /** "90 s", "10 min", "1 h 30 min": how long a time limit is, for messages. */
 export function formatLimit(ms: number): string {
   if (ms < 1000) return `${ms} ms`;
+  if (ms < 10_000) return `${Math.round(ms / 100) / 10} s`;
   const s = Math.round(ms / 1000);
   if (s < 120) return `${s} s`;
   const min = Math.round(s / 60);
@@ -39,8 +40,8 @@ export const execTool: Exec = async (file, args, options = {}) => {
     if (error.code === "not_found") throw new InvalidInputError(`${name} was not found on this computer. Run \`npx framelens doctor\` to see how to install it.`);
     if (error.code === "timeout") {
       throw new InvalidInputError(
-        `${name} hit the ${formatLimit(timeoutMs)} time limit for this step and was stopped: the source or range is too long for one pass on this computer. ` +
-          "Pass a shorter range (start/end).",
+        `${name} hit the ${formatLimit(timeoutMs)} time limit for this step and was stopped: the source is too long for one pass on this computer. ` +
+          "A tool that takes start and end can be run on a shorter range.",
       );
     }
     if (error.code === "aborted") throw new CancelledError(name);

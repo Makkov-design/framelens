@@ -12,6 +12,7 @@ import { autoInstallEnabled, collectSetupNotes, ToolSetup } from "../../src/tool
 import { prepareYtDlp, YTDLP_PIN } from "../../src/tools/ytdlp.js";
 import { withSetupNotes } from "../../src/local-tools.js";
 import { makeZip } from "../fixtures/zip.js";
+import { CancelledError } from "../../src/runtime/call.js";
 
 const sha = (data: Buffer | string) => createHash("sha256").update(data).digest("hex");
 const ffmpegBody = Buffer.from("pretend ffmpeg ".repeat(5000));
@@ -296,6 +297,32 @@ describe("automatic setup", () => {
     // With the real check, a file that is not the pinned build is never accepted.
     const real = new ToolSetup({ env: { FRAMELENS_HOME: home, PATH: "" }, platform, arch: "x64", prepareFfmpeg: fakeInstall([], "still not the pinned build") });
     await expect(real.locate("ffprobe")).rejects.toThrow(/not installed/);
+  });
+
+  it("keeps a shared install running when the call that started it is cancelled; that call alone stops waiting", async () => {
+    const calls: string[] = [];
+    let gotSignal = false;
+    const slow = fakeInstall(calls);
+    const setup = new ToolSetup({
+      env: { FRAMELENS_HOME: home, PATH: "" },
+      platform,
+      arch: "x64",
+      intact,
+      prepareFfmpeg: async (options) => {
+        gotSignal = options.signal !== undefined;
+        await new Promise((r) => setTimeout(r, 300));
+        return slow();
+      },
+    });
+    const a = new AbortController();
+    const first = setup.locate("ffmpeg", a.signal);
+    const second = setup.locate("ffprobe");
+    setTimeout(() => a.abort(), 50);
+    await expect(first).rejects.toBeInstanceOf(CancelledError);
+    expect((await second).path).toMatch(/ffprobe/);
+    // The install is no one call's work: it never got a call's signal, and it ran once.
+    expect(gotSignal).toBe(false);
+    expect(calls).toEqual(["ffmpeg"]);
   });
 
   it("does not download when FRAMELENS_AUTO_INSTALL=0, and says how to get the tool", async () => {

@@ -127,7 +127,7 @@ function streamFrames(ffmpeg: string, args: string[], frameBytes: number, expect
     let cancelled = false;
     const onAbort = () => {
       cancelled = true;
-      killTree(child.pid);
+      killTree(child);
     };
     if (signal?.aborted) onAbort();
     else signal?.addEventListener("abort", onAbort, { once: true });
@@ -138,14 +138,14 @@ function streamFrames(ffmpeg: string, args: string[], frameBytes: number, expect
     let timedOut = false;
     const timer = setTimeout(() => {
       timedOut = true;
-      killTree(child.pid);
+      killTree(child);
     }, timeoutMs);
     child.stdout.on("data", (chunk: Buffer) => {
       if (tooLarge) return;
       if (used + chunk.length > buffer.length) {
         if (used + chunk.length > maxBytes) {
           tooLarge = true;
-          killTree(child.pid);
+          killTree(child);
           return;
         }
         const grown = new Uint8Array(Math.min(maxBytes, Math.max(used + chunk.length, Math.ceil(buffer.length * 1.5))));
@@ -206,7 +206,11 @@ export async function motionProfile(
     `${hdr ? `${HDR_TONEMAP},` : ""}format=yuv444p,scale=${THUMB_WIDTH}:${THUMB_HEIGHT}:flags=area,signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=${filterValue(times)},format=rgb24`;
   const timeoutMs = 20 * 60_000;
   const energyOnly = () =>
-    tools.exec(ffmpeg, [...input, "-map", "0:v:0", "-an", "-vf", `scale=160:-2,${energyChain}`, "-fps_mode", "passthrough", "-f", "null", "-"], { timeoutMs }).catch(() => undefined);
+    tools.exec(ffmpeg, [...input, "-map", "0:v:0", "-an", "-vf", `scale=160:-2,${energyChain}`, "-fps_mode", "passthrough", "-f", "null", "-"], { timeoutMs }).catch((error: unknown) => {
+      // Energy is optional here, a cancel is not: never hand back an empty reading for a cancelled call.
+      if (error instanceof CancelledError) throw error;
+      return undefined;
+    });
   const result = (data: Uint8Array, skipped = false) => {
     const energy = existsSync(out) ? parseEnergy(readFileSync(out, "utf8")).map((s) => ({ t: Math.round((s.t + range.start) * 1000) / 1000, energy: s.energy })) : [];
     const stamps = skipped || !existsSync(times) ? [] : parseFrameTimes(readFileSync(times, "utf8"));
