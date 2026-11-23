@@ -6,13 +6,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { cleanStalePartials, placeVerified } from "../../src/tools/download.js";
-import { ffmpegAsset, ffmpegPinnedPath, FFMPEG_PIN, prepareFfmpeg, type FfmpegAsset } from "../../src/tools/ffmpeg.js";
+import { ffmpegAsset, ffmpegPinnedPath, ffmpegUnpinnedReason, FFMPEG_PIN, prepareFfmpeg, type FfmpegAsset } from "../../src/tools/ffmpeg.js";
 import { findTool } from "../../src/tools/find.js";
 import { autoInstallEnabled, collectSetupNotes, ToolSetup } from "../../src/tools/setup.js";
 import { prepareYtDlp, YTDLP_PIN } from "../../src/tools/ytdlp.js";
 import { withSetupNotes } from "../../src/local-tools.js";
 import { makeZip } from "../fixtures/zip.js";
-import { CancelledError } from "../../src/runtime/call.js";
+import { CancelledError, withCall } from "../../src/runtime/call.js";
 
 const sha = (data: Buffer | string) => createHash("sha256").update(data).digest("hex");
 const ffmpegBody = Buffer.from("pretend ffmpeg ".repeat(5000));
@@ -357,9 +357,48 @@ describe("automatic setup", () => {
     expect(calls).toEqual(["ffmpeg"]);
   });
 
+  it.skipIf(process.platform !== "linux" || !["x64", "arm64"].includes(process.arch))("offers no pinned ffmpeg on a glibc system without the loader it needs (Guix, NixOS), and says why", () => {
+    const arch = process.arch;
+    const loader = FFMPEG_PIN.assets[`linux-${arch}`]!.interpreter!;
+    expect(ffmpegAsset("linux", arch, FFMPEG_PIN, false, () => false)).toBeUndefined();
+    expect(ffmpegAsset("linux", arch, FFMPEG_PIN, false, (path) => path === loader)).toBeDefined();
+    expect(ffmpegUnpinnedReason("linux", arch, false, () => false)).toMatch(new RegExp(`needs ${loader.replace(/[.]/g, "\\.")}, which this system does not have`));
+    expect(ffmpegUnpinnedReason("linux", arch, true)).toMatch(/musl \(Alpine\).*apk add ffmpeg/);
+    expect(ffmpegUnpinnedReason("linux", arch, false, () => true)).toBeUndefined();
+    // Another arch's loader is not this machine's to check: that asset is offered as is.
+    const other = arch === "x64" ? "arm64" : "x64";
+    expect(ffmpegAsset("linux", other, FFMPEG_PIN, false, () => false)).toBeDefined();
+  });
+
+  it("sends the shared install's download lines to every call waiting for it that reports progress", async () => {
+    const calls: string[] = [];
+    const done = fakeInstall(calls);
+    const setup = new ToolSetup({
+      env: { FRAMELENS_HOME: home, PATH: "" },
+      platform,
+      arch: "x64",
+      intact,
+      prepareFfmpeg: async (options) => {
+        options.log?.("Downloading FFmpeg (test)");
+        await new Promise((r) => setTimeout(r, 50));
+        return done();
+      },
+    });
+    const heardA: string[] = [];
+    const heardB: string[] = [];
+    await Promise.all([
+      withCall({ progress: (line) => heardA.push(line) }, () => setup.locate("ffmpeg")),
+      withCall({ progress: (line) => heardB.push(line) }, () => setup.locate("ffprobe")),
+    ]);
+    expect(heardA).toEqual(["Downloading FFmpeg (test)"]);
+    expect(heardB).toEqual(["Downloading FFmpeg (test)"]);
+    expect(calls).toEqual(["ffmpeg"]);
+  });
+
   it("finds the pinned build of the platform and arch it was asked for, not the machine's (an arm64 Mac running the linux-x64 tests)", async () => {
     const real = Object.getOwnPropertyDescriptor(process, "arch")!;
-    Object.defineProperty(process, "arch", { ...real, value: process.arch === "arm64" ? "x64" : "arm64" });
+    // An arch with no pinned build at all: the lookup must use the arch it was asked for, not the machine's.
+    Object.defineProperty(process, "arch", { ...real, value: "riscv64" });
     try {
       const calls: string[] = [];
       const setup = new ToolSetup({ env: { FRAMELENS_HOME: home, PATH: "" }, platform, arch: "x64", prepareFfmpeg: fakeInstall(calls), intact });

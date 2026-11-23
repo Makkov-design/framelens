@@ -70,3 +70,7 @@ build.
 - Shutdown is tested against the real server over stdio, built from the current source in the test
   (`test/runtime/shutdown.test.ts`): a piped client that closes stdin gets every answer, and SIGTERM kills a running
   download's process group.
+- "The parent died" is not "the client died": launchers such as `npx` put `sh -c` and `npm exec` between client and
+  server, and they outlive the client. The reliable sign is the pipe itself: a write to the client fails once its
+  end is closed, so a server that must notice a dead client writes something valid (an MCP `ping`) and treats EPIPE
+  as gone. Test it through a launcher that stays alive, not only with the client as the direct parent.

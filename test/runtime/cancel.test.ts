@@ -17,7 +17,7 @@ import { run } from "../../src/tools/run.js";
 import { hasDrawtext } from "../../src/media/sheets.js";
 import { existsSync as exists } from "node:fs";
 import { Workspace } from "../../src/workspace/workspace.js";
-import { singleFlight } from "../../src/runtime/call.js";
+import { callSignal, singleFlight } from "../../src/runtime/call.js";
 import { decodeGray } from "../../src/track/decode.js";
 import { mediaTools, tempDir } from "../media/fixtures.js";
 
@@ -107,7 +107,19 @@ describe("external programs follow the tool call", () => {
     let checks = 0;
     let release!: () => void;
     const slow = new Promise<void>((done) => (release = done));
-    const tools = { ffmpeg: "ffmpeg", ffprobe: "ffprobe", exec: async () => (checks++, await slow, { stdout: " .. drawtext  V->V  Draw text\n", stderr: "" }) };
+    // Like the real exec, the fake stops when the call it runs in is cancelled: only a check outside any call survives.
+    let ranInCall = false;
+    const tools = {
+      ffmpeg: "ffmpeg",
+      ffprobe: "ffprobe",
+      exec: async () => {
+        checks++;
+        const signal = callSignal();
+        ranInCall ||= signal !== undefined;
+        await Promise.race([slow, new Promise((_, fail) => signal?.addEventListener("abort", () => fail(new CancelledError("ffmpeg"))))]);
+        return { stdout: " .. drawtext  V->V  Draw text\n", stderr: "" };
+      },
+    };
     const cancelling = new AbortController();
     const cancelled = withCall({ signal: cancelling.signal }, () => hasDrawtext(tools));
     const other = withCall({ signal: new AbortController().signal }, () => hasDrawtext(tools));
@@ -117,6 +129,7 @@ describe("external programs follow the tool call", () => {
     expect(await other).toBe(true);
     expect(await hasDrawtext(tools)).toBe(true);
     expect(checks).toBe(1);
+    expect(ranInCall).toBe(false);
     rmSync(dir, { recursive: true, force: true });
   });
 

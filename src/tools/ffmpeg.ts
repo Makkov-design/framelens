@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { chmodSync, closeSync, createReadStream, createWriteStream, mkdirSync, openSync, readSync, rmSync, statSync } from "node:fs";
+import { chmodSync, closeSync, existsSync, createReadStream, createWriteStream, mkdirSync, openSync, readSync, rmSync, statSync } from "node:fs";
 import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { join } from "node:path";
@@ -29,6 +29,8 @@ export interface FfmpegAsset {
   /** Who builds it, for messages. */
   source: string;
   archives: FfmpegArchive[];
+  /** Linux: the program interpreter (glibc's loader) the binaries need; without it they cannot start. */
+  interpreter?: string;
 }
 
 const RIEDL = "https://ffmpeg.martin-riedl.de/download";
@@ -95,6 +97,7 @@ export const FFMPEG_PIN: { version: string; assets: Record<string, FfmpegAsset> 
     // read from the verified archives. ELF aarch64, glibc (/lib/ld-linux-aarch64.so.1) and libstdc++.
     "linux-arm64": {
       source: "ffmpeg.martin-riedl.de",
+      interpreter: "/lib/ld-linux-aarch64.so.1",
       archives: [
         {
           url: `${RIEDL}/linux/arm64/1789931697_9.0.2/ffmpeg.zip`,
@@ -112,6 +115,7 @@ export const FFMPEG_PIN: { version: string; assets: Record<string, FfmpegAsset> 
     },
     "linux-x64": {
       source: "ffmpeg.martin-riedl.de",
+      interpreter: "/lib64/ld-linux-x86-64.so.2",
       archives: [
         {
           url: `${RIEDL}/linux/amd64/1789931100_9.0.2/ffmpeg.zip`,
@@ -132,11 +136,35 @@ export const FFMPEG_PIN: { version: string; assets: Record<string, FfmpegAsset> 
 
 /**
  * The pinned build for a platform. The Linux builds (x64 and arm64) are linked against glibc (and libstdc++), so on
- * Alpine and other musl systems there is none: ffmpeg comes from their own packages there (apk add ffmpeg).
+ * Alpine and other musl systems there is none, nor on a glibc system without the standard loader path (Guix, NixOS
+ * without stub-ld): ffmpeg comes from their own packages there. `unpinnedReason` says which.
  */
-export function ffmpegAsset(platform: NodeJS.Platform = process.platform, arch: string = process.arch, pin = FFMPEG_PIN, musl = platform === "linux" && isMusl()): FfmpegAsset | undefined {
+export function ffmpegAsset(
+  platform: NodeJS.Platform = process.platform,
+  arch: string = process.arch,
+  pin = FFMPEG_PIN,
+  musl = platform === "linux" && isMusl(),
+  exists: (path: string) => boolean = existsSync,
+): FfmpegAsset | undefined {
   if (musl) return undefined;
-  return pin.assets[`${platform}-${arch}`];
+  const asset = pin.assets[`${platform}-${arch}`];
+  // Only this machine's loader can be checked; an asset asked for another platform or arch is returned as is.
+  if (asset?.interpreter && platform === process.platform && arch === process.arch && !exists(asset.interpreter)) return undefined;
+  return asset;
+}
+
+/** Why there is no pinned ffmpeg for this system, as the end of a sentence, or undefined when there is one. */
+export function ffmpegUnpinnedReason(
+  platform: NodeJS.Platform = process.platform,
+  arch: string = process.arch,
+  musl = platform === "linux" && isMusl(),
+  exists: (path: string) => boolean = existsSync,
+): string | undefined {
+  if (ffmpegAsset(platform, arch, FFMPEG_PIN, musl, exists)) return undefined;
+  if (musl) return "the pinned Linux builds need glibc, and this system uses musl (Alpine). Install ffmpeg from the system packages: apk add ffmpeg.";
+  const interpreter = FFMPEG_PIN.assets[`${platform}-${arch}`]?.interpreter;
+  if (interpreter) return `the pinned build needs ${interpreter}, which this system does not have (Guix, NixOS). Install ffmpeg from the system packages.`;
+  return `there is no pinned build for ${platform}/${arch}. Install ffmpeg from the system packages.`;
 }
 
 /** Where the pinned ffmpeg or ffprobe lives (it may not exist yet); undefined on platforms with no pinned build. */

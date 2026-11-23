@@ -29,6 +29,11 @@ export function callSignal(): AbortSignal | undefined {
   return store.getStore()?.signal;
 }
 
+/** The current call's progress reporter, for shared work that reports to every call waiting for it. */
+export function callProgress(): ((message: string) => void) | undefined {
+  return store.getStore()?.progress;
+}
+
 /** Tells the client what the call is doing now (an MCP progress notification when it asked for them). */
 export function reportProgress(message: string): void {
   store.getStore()?.progress?.(message);

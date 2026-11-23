@@ -4,6 +4,7 @@ import { findBrowser } from "./browser/cdp.js";
 import {
   autoInstallEnabled,
   ffmpegAsset,
+  ffmpegUnpinnedReason,
   FFMPEG_PIN,
   findTool,
   missingToolMessage,
@@ -14,7 +15,6 @@ import {
   TOOL_ENV,
   ToolError,
   YTDLP_PIN,
-  isMusl,
   ytDlpAsset,
   type Env,
   type ToolName,
@@ -73,7 +73,7 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<number> {
     } else if (!ffmpegAsset()) {
       // No pinned build here: the Linux builds need glibc (Alpine and other musl systems), and some platforms have none.
       exitCode = 1;
-      warn(`No pinned ffmpeg for this system${process.platform === "linux" && isMusl() ? " (musl: the pinned Linux builds need glibc). Install it from the system packages: apk add ffmpeg" : `. ${missingToolMessage("ffmpeg")}`}`);
+      warn(`No pinned ffmpeg for this system: ${ffmpegUnpinnedReason()}`);
     } else {
       try {
         const prepared = await (options.prepareFfmpeg ?? prepareFfmpeg)({ env, ...(options.signal && { signal: options.signal }), log: out });

@@ -130,6 +130,43 @@ describe("server shutdown when the client is gone", () => {
     expect(await until(() => children.every((pid) => !alive(pid)), 5_000)).toBe(true);
   }, 30_000);
 
+  it.skipIf(process.platform === "win32")("also when a launcher between client and server outlives the client (npx: sh -c, npm exec)", async () => {
+    const cwd = join(dir, "orphan-npx");
+    mkdirSync(cwd, { recursive: true });
+    const pids = join(cwd, "pids.txt");
+    const serverPidFile = join(cwd, "server.pid");
+    // Like `npm exec`: starts the server with the same stdio and stays alive until it ends, so the server's parent
+    // never goes away when the client does.
+    const launcher = join(cwd, "launcher.cjs");
+    writeFileSync(
+      launcher,
+      `const { spawn } = require("node:child_process");
+       const server = spawn(process.execPath, [${JSON.stringify(bundle)}], { stdio: "inherit" });
+       require("node:fs").writeFileSync(${JSON.stringify(serverPidFile)}, String(server.pid));
+       server.on("exit", (code) => process.exit(code ?? 1));`,
+    );
+    const client = `
+      const { spawn } = require("node:child_process");
+      const server = spawn("sh", ["-c", ${JSON.stringify(`"${process.execPath}" "${launcher}"; true`)}], { cwd: ${JSON.stringify(cwd)}, stdio: ["pipe", "pipe", "ignore"], env: { ...process.env,
+        FRAMELENS_YTDLP: ${JSON.stringify(fake)}, FRAMELENS_FFMPEG: ${JSON.stringify(fake)}, FRAMELENS_FFPROBE: ${JSON.stringify(fake)}, FRAMELENS_AUTO_INSTALL: "0",
+        FRAMELENS_HOME: ${JSON.stringify(join(cwd, "home"))}, FAKE_YTDLP_DELAY_MS: "60000", FAKE_YTDLP_PIDS: ${JSON.stringify(pids)}, GEMINI_API_KEY: "" } });
+      const send = (m) => server.stdin.write(JSON.stringify(m) + "\\n");
+      send({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "0" } } });
+      send({ jsonrpc: "2.0", method: "notifications/initialized" });
+      send({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "probe", arguments: { source: ${JSON.stringify(LINK)} } } });
+      setTimeout(() => process.exit(0), 2500);
+    `;
+    const parent = spawn(process.execPath, ["-e", client], { stdio: "ignore" });
+    await new Promise((done) => parent.once("exit", done));
+    expect(await until(() => existsSync(serverPidFile), 5_000)).toBe(true);
+    const serverPid = Number(readFileSync(serverPidFile, "utf8"));
+    // The parent check cannot see this client go (the launcher lives on); the ping that fails to write does.
+    expect(await until(() => !alive(serverPid), 20_000)).toBe(true);
+    const children = downloaderPids(pids);
+    expect(children.length).toBeGreaterThanOrEqual(2);
+    expect(await until(() => children.every((pid) => !alive(pid)), 5_000)).toBe(true);
+  }, 40_000);
+
   it("kills the children it started from the exit handler (taskkill on Windows, the process group elsewhere)", async () => {
     const entry = join(dir, "exit-entry.ts");
     writeFileSync(
