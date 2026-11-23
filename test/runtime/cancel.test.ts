@@ -67,6 +67,11 @@ describe("external programs follow the tool call", () => {
     expect(formatLimit(150 * 60_000)).toBe("2 h 30 min");
   });
 
+  it("fails rather than return output it had to cut off (64 MiB per stream)", async () => {
+    const error = await execTool(node, ["-e", "process.stdout.write(Buffer.alloc(65 * 1024 * 1024, 97))"]).catch((e: Error) => e);
+    expect((error as Error).message).toMatch(/wrote more than 64 MiB of output/);
+  });
+
   it("does not start a program for a call that is already cancelled", async () => {
     const controller = new AbortController();
     controller.abort();

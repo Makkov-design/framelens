@@ -278,6 +278,21 @@ describe("one download per workspace at a time", () => {
     expect(existsSync(join(ws, "yt-jNQXAC9IVRw"))).toBe(false);
   });
 
+  it("lets a waiting call be cancelled on its own, while the download goes on for the call that started it", async () => {
+    process.env.FAKE_YTDLP_DELAY_MS = "800";
+    const leader = resolveSource(YT, { workspaceRoot: ws, env: env() });
+    await new Promise((done) => setTimeout(done, 200));
+    const controller = new AbortController();
+    const waiter = resolveSource(YT, { workspaceRoot: ws, env: env(), signal: controller.signal });
+    const started = Date.now();
+    controller.abort();
+    await expect(waiter).rejects.toThrow(/cancelled/);
+    // At once, not when the download ends.
+    expect(Date.now() - started).toBeLessThan(300);
+    expect(readFileSync((await leader).mediaPath, "utf8")).toBe("fake-video");
+    expect(downloads()).toBe(1);
+  });
+
   it("stops a cancelled download, leaves nothing a later call takes for complete, and lets the other caller try again", async () => {
     process.env.FAKE_YTDLP_DELAY_MS = "1500";
     const controller = new AbortController();

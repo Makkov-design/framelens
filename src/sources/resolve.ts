@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writ
 import { basename, extname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { InvalidInputError } from "../errors.js";
+import { CancelledError } from "../runtime/call.js";
 import { parseVideoRef } from "../youtube.js";
 import { readToolVersion, requireTool, type Env, type ToolLocation } from "../tools/index.js";
 import { cobaltMayRetry, fetchWithCobalt } from "./cobalt.js";
@@ -122,9 +123,11 @@ export async function resolveSource(input: string, options: ResolveOptions): Pro
     const pending = inFlight.get(dir);
     if (!pending) break;
     try {
-      const record = await pending.promise;
+      // This call's own cancel ends its wait; the download goes on for the call that started it.
+      const record = await untilAborted(pending.promise, options.signal);
       return { ...record, input, reused: true };
     } catch (error) {
+      if (error instanceof CancelledError) throw error;
       // The download this call waited for was cancelled by its own caller: try again, unless this call is cancelled too.
       if (!pending.signal?.aborted || options.signal?.aborted) throw error;
     }
@@ -137,6 +140,26 @@ export async function resolveSource(input: string, options: ResolveOptions): Pro
   } finally {
     if (inFlight.get(dir) === entry) inFlight.delete(dir);
   }
+}
+
+/** `promise`, or a CancelledError as soon as `signal` aborts (the promise itself keeps running). */
+function untilAborted<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) return Promise.reject(new CancelledError("The download"));
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(new CancelledError("The download"));
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
 }
 
 /** Downloads in progress, by workspace folder. */

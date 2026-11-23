@@ -50,6 +50,8 @@ export const execTool: Exec = async (file, args, options = {}) => {
     const tail = result.stderr.trim().split("\n").slice(-6).join("\n");
     throw new Error(`${name} failed: ${tail || (result.code === null ? "it was ended by a signal" : `exit code ${result.code}`)}`);
   }
+  // A cut-off output would be read as the whole (a probe's packet list, a filter's per-frame log): fail instead.
+  if (result.truncated) throw new Error(`${name} wrote more than ${MAX_BUFFER / 1024 / 1024} MiB of output, more than Frame Lens reads; analyze a shorter range (start/end).`);
   return { stdout: result.stdout, stderr: result.stderr };
 };
 
