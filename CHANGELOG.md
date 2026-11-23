@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 2.2.0 — 2026-11-23
+
+Frame Lens now follows the client: a cancelled call stops the yt-dlp, ffmpeg or browser it started, long calls send
+progress, and a server whose client is gone exits. Automatic setup now covers Linux on arm64, and yt-dlp on Alpine
+(where ffmpeg comes from `apk`). Link downloads
+stop at their size limit also when the site gives no size, and `exact` and cobalt downloads never follow a redirect
+into your network. The local tools are no longer marked read-only, because they write workspaces and may download
+and install tools. Every change went through an independent audit, fixes and a re-check.
+
 ### Added
 
 - Local tools send MCP progress notifications when the client passes a progress token: each finished step, setup and
@@ -37,16 +46,17 @@
 - A shared first-use install of ffmpeg or yt-dlp, and the one ffmpeg feature check, no longer stop for one call's
   cancel or report to its progress; an install whose waiting calls were all cancelled is reported on the next call.
 - Two calls on the same new link at once (`transcript` and `frames` together) no longer break each other's download:
-  the second waits for the first (also for the login-profile capture). A cancelled download leaves nothing a later
-  call takes for complete.
+  the second waits for the first (also for the login-profile capture). A cancelled or failed download removes its
+  partial files, and leaves nothing a later call takes for complete.
 - A download from a site that does not say the size up front (HLS and DASH streams) is measured as it runs and
   stopped once past `FRAMELENS_MAX_DOWNLOAD_MB` instead of running on; yt-dlp's `--max-filesize` only covered a known
-  size.
+  size. The copies yt-dlp makes while it merges video and sound are not counted.
 - `exact` link downloads check every redirect, like the cobalt route: a redirect to another host must be https to a
   public address and may not add a user name or password, so a redirect cannot send the download to this computer,
   the local network or a cloud metadata address. The host of the link itself may still be local (a dev server).
   gzip, deflate and br answers are decoded (zstd and lists of encodings are refused), and a stalled, cut or broken
-  answer ends the call with a message instead of a crash.
+  answer ends the call with a message instead of a crash. The cobalt download follows the same rule: no address it
+  is sent to may add a user name or password, not even one on your instance.
 - A program that hits its time limit says so and names the limit, instead of reading as a failed command. Output a
   stray descendant writes after its program exited is flagged as possibly incomplete.
 - Temporary files get unguessable names instead of the process id and the time.

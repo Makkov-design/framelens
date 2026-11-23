@@ -232,12 +232,40 @@ describe("resolveSource: links through yt-dlp", () => {
     expect(runningChildren()).toBe(0);
   }, 20_000);
 
-  it("does not count the merger's temporary output against the cap", async () => {
-    // 3 MB downloaded; while merging, 6 MB are on disk. A 4 MB cap must let it through.
+  it("does not count the merger's temporary output, nor the finished file beside its inputs, against the cap", async () => {
+    // 3 MB downloaded; while merging, and after the rename while the inputs remain, 6 MB are on disk. A 4 MB cap must
+    // let it through.
     process.env.FAKE_YTDLP_MODE = "merge";
     const record = await resolveSource(YT, { workspaceRoot: ws, env: env({ FRAMELENS_MAX_DOWNLOAD_MB: "4" }) });
     expect(record.mediaPath).toBe(join(ws, "yt-jNQXAC9IVRw", "media", "source.mp4"));
   }, 20_000);
+
+  it("removes what a cancelled download wrote, before the error reaches its caller", async () => {
+    const { fetchWithYtDlp } = await import("../../src/sources/ytdlp.js");
+    const media = join(ws, "cancelled-media");
+    const controller = new AbortController();
+    process.env.FAKE_YTDLP_DELAY_MS = "20000";
+    try {
+      const fetching = fetchWithYtDlp({
+        url: YT,
+        mediaDir: media,
+        ytdlp: { name: "yt-dlp", path: fake, source: "env" },
+        ffmpeg: { name: "ffmpeg", path: fake, source: "env" },
+        env: env(),
+        signal: controller.signal,
+        timeoutMs: 60_000,
+      });
+      // The fake writes source.mp4.part as soon as it starts downloading.
+      const started = Date.now();
+      while (!existsSync(join(media, "source.mp4.part")) && Date.now() - started < 10_000) await new Promise((done) => setTimeout(done, 50));
+      expect(existsSync(join(media, "source.mp4.part"))).toBe(true);
+      controller.abort();
+      await expect(fetching).rejects.toThrow();
+      expect(readdirSync(media).filter((n) => n.startsWith("source."))).toEqual([]);
+    } finally {
+      delete process.env.FAKE_YTDLP_DELAY_MS;
+    }
+  }, 30_000);
 
   it("reports a download that produced no file", async () => {
     process.env.FAKE_YTDLP_MODE = "nofile";

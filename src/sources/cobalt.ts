@@ -155,9 +155,10 @@ const COBALT_WORDING: HopWording = { who: "Your cobalt instance", what: "a media
 export async function checkHop(url: URL, trusted: URL, lookup: Lookup = systemLookup, wording: HopWording = COBALT_WORDING): Promise<string | undefined> {
   const { who, what } = wording;
   if (url.protocol !== "http:" && url.protocol !== "https:") throw new SourceError("download_failed", `${who} pointed to ${what} that is not http(s); it was not downloaded.`);
+  // No hop may add a user name or password, not even one to the trusted host.
+  if (url.username || url.password) throw new SourceError("download_failed", `${who} pointed to ${what} with a user name or password; it was not downloaded.`);
   if (url.origin === trusted.origin) return undefined;
   if (url.protocol !== "https:") throw new SourceError("download_failed", `${who} pointed to ${what} on another host that is not https; it was not downloaded.`);
-  if (url.username || url.password) throw new SourceError("download_failed", `${who} pointed to ${what} with credentials; it was not downloaded.`);
   const host = url.hostname.toLowerCase().replace(/\.+$/, "").replace(/^\[|\]$/g, "");
   let addresses: string[];
   if (isIP(host)) addresses = [host];

@@ -242,7 +242,7 @@ agent skill [`skills/framelens/SKILL.md`](skills/framelens/SKILL.md); repository
 ### Install in your client
 
 `npx -y framelens` starts the server on stdio. In the [MCP Registry](https://registry.modelcontextprotocol.io) its name
-is `io.github.Makkov-design/framelens` ([server.json](server.json)). Pin a version (`framelens@2.1.0`) when you want to choose when to
+is `io.github.Makkov-design/framelens` ([server.json](server.json)). Pin a version (`framelens@2.2.0`) when you want to choose when to
 upgrade. On **Windows**, clients that start the server themselves need `cmd /c` in front of `npx` (in JSON:
 `"command": "cmd", "args": ["/c", "npx", "-y", "framelens"]`). Add `GEMINI_API_KEY` only if you want the Gemini tools.
 
@@ -298,8 +298,8 @@ directly, without the Windows `cmd /c` wrapper, because the file is shared with 
 your own Windows computer, add Frame Lens for every project as in the table above (`-- cmd /c npx -y framelens`).
 
 **From GitHub instead of npm.** The same version also runs straight from its release tag, without the npm registry:
-`npx -y github:Makkov-design/framelens#v<version>` (for example `#v2.1.0`; in JSON, `"args": ["-y",
-"github:Makkov-design/framelens#v2.1.0"]`). npm then downloads the tagged commit, a larger download than the
+`npx -y github:Makkov-design/framelens#v<version>` (for example `#v2.2.0`; in JSON, `"args": ["-y",
+"github:Makkov-design/framelens#v2.2.0"]`). npm then downloads the tagged commit, a larger download than the
 package.
 </details>
 

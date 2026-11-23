@@ -60,15 +60,17 @@ if (mode === "stream" || mode === "stream-temp-id") {
   }
 }
 // "merge": separate video and audio (2 + 1 MB), then the merger's temporary output (3 MB) next to them for a while,
-// then the inputs removed and the output renamed, as yt-dlp's FFmpegMergerPP does.
+// then, as yt-dlp's FFmpegMergerPP does, the output renamed to its final name while the inputs are still there, and
+// only then the inputs removed. Each state is held long enough for the size watch to see it.
 if (mode === "merge") {
   writeFileSync(`${base}f1.mp4`, Buffer.alloc(2 * 1024 * 1024));
   writeFileSync(`${base}f2.m4a`, Buffer.alloc(1024 * 1024));
   writeFileSync(`${base}temp.mp4`, Buffer.alloc(3 * 1024 * 1024));
-  await new Promise((done) => setTimeout(done, 1500));
+  await new Promise((done) => setTimeout(done, 1000));
+  renameSync(`${base}temp.mp4`, `${base}mp4`);
+  await new Promise((done) => setTimeout(done, 1000));
   rmSync(`${base}f1.mp4`);
   rmSync(`${base}f2.m4a`);
-  renameSync(`${base}temp.mp4`, `${base}mp4`);
   process.exit(0);
 }
 if (mode === "fail-download") fail("ERROR: unable to download video data: HTTP Error 500: Internal Server Error");
