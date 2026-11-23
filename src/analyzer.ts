@@ -168,6 +168,10 @@ export class GeminiAnalyzer implements VideoAnalyzer {
     if (finishReason && BLOCKING_FINISH_REASONS.has(finishReason)) {
       throw new AnalyzerError("blocked", `Gemini stopped the answer because of its content filters (${finishReason}).`);
     }
+    // The model produced something the API could not turn into an answer (e.g. a function call it cannot parse).
+    if (finishReason === "MALFORMED_RESPONSE" || finishReason === "MALFORMED_FUNCTION_CALL") {
+      throw new AnalyzerError("bad_response", `Gemini returned an answer it could not complete (${finishReason}). Try again, or rephrase the request.`, undefined, undefined, true);
+    }
     if (!text.trim()) {
       throw new AnalyzerError(
         "empty_response",
@@ -288,6 +292,10 @@ export class GeminiAnalyzer implements VideoAnalyzer {
       }
       if (/fetch failed|ECONNRESET|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|network/i.test(raw)) {
         return new AnalyzerError("unavailable", withDetail("Could not reach the Gemini API (network error)."));
+      }
+      // A 200 whose body is not JSON (a proxy's page, a cut-off answer): the SDK's JSON.parse fails.
+      if (error instanceof SyntaxError || /Unexpected token|is not valid JSON|JSON at position|Unexpected end of JSON/i.test(raw)) {
+        return new AnalyzerError("bad_response", withDetail("Gemini answered with something that is not the API's JSON (a proxy or a cut-off response?)."), undefined, undefined, true);
       }
       return new AnalyzerError("unknown", withDetail("Gemini request failed."));
     }

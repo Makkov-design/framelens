@@ -128,6 +128,8 @@ const BOUNDARIES_MS_PER_SECOND = 500;
 /** A fallback failure that the same request would hit again (see `Engine.transcript`). */
 export function permanentFallbackFailure(error: Error): boolean {
   if (error instanceof AnalyzerError) {
+    // A one-off malformed answer or a proxy's page is tried again; a transcript whose JSON never parses is not.
+    if (error.transient) return false;
     if (error.kind === "quota") return error.quota?.scope === "day";
     return ["auth", "blocked", "video_unavailable", "model_not_found", "invalid_request", "bad_response"].includes(error.kind);
   }

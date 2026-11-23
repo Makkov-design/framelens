@@ -24,6 +24,8 @@ export interface ToolLocation {
 export interface FindOptions {
   env?: Env;
   platform?: NodeJS.Platform;
+  /** The architecture whose pinned build to look for (the machine's by default). */
+  arch?: string;
 }
 
 function isFile(path: string, platform: NodeJS.Platform): boolean {
@@ -88,6 +90,7 @@ function fromWinget(name: ToolName, env: Env): string | undefined {
 export function findTool(name: ToolName, options: FindOptions = {}): ToolLocation | undefined {
   const env = options.env ?? process.env;
   const platform = options.platform ?? process.platform;
+  const arch = options.arch ?? process.arch;
 
   const override = readEnv(env, TOOL_ENV[name]);
   if (override) {
@@ -98,7 +101,7 @@ export function findTool(name: ToolName, options: FindOptions = {}): ToolLocatio
   }
 
   if (name === "yt-dlp") {
-    const pinned = ytDlpPinnedPath(framelensHome(env), platform);
+    const pinned = ytDlpPinnedPath(framelensHome(env), platform, arch);
     if (pinned && isFile(pinned, platform)) return { name, path: pinned, source: "pinned" };
   }
 
@@ -112,7 +115,7 @@ export function findTool(name: ToolName, options: FindOptions = {}): ToolLocatio
 
   // The pinned ffmpeg comes last: an ffmpeg the user installed is preferred over the one Frame Lens fetched.
   if (name !== "yt-dlp") {
-    const pinned = ffmpegPinnedPath(framelensHome(env), name, platform);
+    const pinned = ffmpegPinnedPath(framelensHome(env), name, platform, arch);
     if (pinned && isFile(pinned, platform)) return { name, path: pinned, source: "pinned" };
   }
   return undefined;

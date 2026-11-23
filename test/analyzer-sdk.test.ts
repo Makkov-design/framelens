@@ -2,6 +2,7 @@
 // toAnalyzerError depends on (status on the error, Google's JSON body in the message).
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createGeminiAnalyzer, GEMINI_API_VERSION } from "../src/analyzer.js";
+import { permanentFallbackFailure } from "../src/engine.js";
 import { loadConfig } from "../src/config.js";
 import { AnalyzerError } from "../src/errors.js";
 import { silentLogger } from "../src/logger.js";
@@ -102,5 +103,23 @@ describe("the real @google/genai client", () => {
     expect((await failure(analyzer().analyze(request))).kind).toBe("model_not_found");
     stubFetch(() => json(503, { error: { code: 503, message: "The model is overloaded.", status: "UNAVAILABLE" } }));
     expect((await failure(analyzer().analyze(request))).kind).toBe("unavailable");
+  });
+
+  it("maps the SDK's MALFORMED_RESPONSE finish reason to bad_response, not an empty answer", async () => {
+    stubFetch(() => json(200, { candidates: [{ content: { parts: [] }, finishReason: "MALFORMED_RESPONSE" }] }));
+    const error = await failure(analyzer().analyze(request));
+    expect(error.kind).toBe("bad_response");
+    expect(error.message).toMatch(/MALFORMED_RESPONSE/);
+    // The transcript memo tries such an answer again on the next call; it remembers only failures that repeat.
+    expect(permanentFallbackFailure(error)).toBe(false);
+  });
+
+  it("maps a 200 whose body is not JSON to bad_response, not unknown", async () => {
+    stubFetch(() => new Response("<html>proxy error</html>", { status: 200, headers: { "content-type": "application/json" } }));
+    const error = await failure(analyzer().analyze(request));
+    expect(error.kind).toBe("bad_response");
+    expect(permanentFallbackFailure(error)).toBe(false);
+    // A transcript answer that is not the expected JSON stays remembered (the same video gives the same answer).
+    expect(permanentFallbackFailure(new AnalyzerError("bad_response", "not the expected JSON"))).toBe(true);
   });
 });

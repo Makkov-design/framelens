@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { cleanStalePartials, placeVerified } from "../../src/tools/download.js";
-import { ffmpegPinnedPath, FFMPEG_PIN, prepareFfmpeg, type FfmpegAsset } from "../../src/tools/ffmpeg.js";
+import { ffmpegAsset, ffmpegPinnedPath, FFMPEG_PIN, prepareFfmpeg, type FfmpegAsset } from "../../src/tools/ffmpeg.js";
 import { findTool } from "../../src/tools/find.js";
 import { autoInstallEnabled, collectSetupNotes, ToolSetup } from "../../src/tools/setup.js";
 import { prepareYtDlp, YTDLP_PIN } from "../../src/tools/ytdlp.js";
@@ -100,9 +100,9 @@ const asset = (url = `${base}/ffmpeg.zip`, over: Partial<FfmpegAsset["archives"]
 const pinnedDir = () => join(home, "tools", "ffmpeg", FFMPEG_PIN.version);
 
 describe("pinned ffmpeg", () => {
-  it("pins one FFmpeg version with archive and binary hashes for Windows x64, macOS arm64 and x64, and Linux x64", () => {
+  it("pins one FFmpeg version with archive and binary hashes for Windows x64, macOS arm64 and x64, and Linux x64 and arm64", () => {
     expect(FFMPEG_PIN.version).toMatch(/^\d+\.\d+(\.\d+)?$/);
-    expect(Object.keys(FFMPEG_PIN.assets).sort()).toEqual(["darwin-arm64", "darwin-x64", "linux-x64", "win32-x64"]);
+    expect(Object.keys(FFMPEG_PIN.assets).sort()).toEqual(["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64", "win32-x64"]);
     for (const a of Object.values(FFMPEG_PIN.assets)) {
       const tools = a.archives.flatMap((x) => x.files.map((f) => f.tool)).sort();
       expect(tools).toEqual(["ffmpeg", "ffprobe"]);
@@ -153,7 +153,7 @@ describe("pinned ffmpeg", () => {
   it("stops a download that is larger than the pinned archive, and reports HTTP errors and unsupported platforms", async () => {
     await expect(prepareFfmpeg({ env: { FRAMELENS_HOME: home }, platform: "win32", arch: "x64", asset: asset(`${base}/huge.zip`) })).rejects.toThrow(/larger than the pinned/);
     await expect(prepareFfmpeg({ env: { FRAMELENS_HOME: home }, platform: "win32", arch: "x64", asset: asset(`${base}/nope.zip`) })).rejects.toMatchObject({ code: "download_failed" });
-    await expect(prepareFfmpeg({ env: { FRAMELENS_HOME: home }, platform: "linux", arch: "arm64" })).rejects.toMatchObject({ code: "unsupported_platform" });
+    await expect(prepareFfmpeg({ env: { FRAMELENS_HOME: home }, platform: "win32", arch: "arm64" })).rejects.toMatchObject({ code: "unsupported_platform" });
   });
 
   it("gives up on a stalled or too slow download with a clear message and leaves nothing behind", async () => {
@@ -323,6 +323,28 @@ describe("automatic setup", () => {
     // The install is no one call's work: it never got a call's signal, and it ran once.
     expect(gotSignal).toBe(false);
     expect(calls).toEqual(["ffmpeg"]);
+  });
+
+  it("offers no pinned ffmpeg on musl (the builds are glibc), and the glibc builds on x64 and arm64", () => {
+    expect(ffmpegAsset("linux", "x64", FFMPEG_PIN, true)).toBeUndefined();
+    expect(ffmpegAsset("linux", "arm64", FFMPEG_PIN, true)).toBeUndefined();
+    expect(ffmpegAsset("linux", "arm64", FFMPEG_PIN, false)?.archives[0]!.url).toMatch(/linux\/arm64\/\d+_9\.0\.2\/ffmpeg\.zip$/);
+    expect(ffmpegAsset("linux", "x64", FFMPEG_PIN, false)).toBeDefined();
+    // macOS and Windows never ask about the C library.
+    expect(ffmpegAsset("darwin", "arm64", FFMPEG_PIN)).toBeDefined();
+  });
+
+  it("finds the pinned build of the platform and arch it was asked for, not the machine's (an arm64 Mac running the linux-x64 tests)", async () => {
+    const real = Object.getOwnPropertyDescriptor(process, "arch")!;
+    Object.defineProperty(process, "arch", { ...real, value: process.arch === "arm64" ? "x64" : "arm64" });
+    try {
+      const calls: string[] = [];
+      const setup = new ToolSetup({ env: { FRAMELENS_HOME: home, PATH: "" }, platform, arch: "x64", prepareFfmpeg: fakeInstall(calls), intact });
+      expect((await setup.locate("ffmpeg")).source).toBe("pinned");
+      expect(calls).toEqual(["ffmpeg"]);
+    } finally {
+      Object.defineProperty(process, "arch", real);
+    }
   });
 
   it("does not download when FRAMELENS_AUTO_INSTALL=0, and says how to get the tool", async () => {

@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { chmodSync, closeSync, createReadStream, createWriteStream, existsSync, mkdirSync, openSync, readSync, rmSync, statSync } from "node:fs";
+import { chmodSync, closeSync, createReadStream, createWriteStream, mkdirSync, openSync, readSync, rmSync, statSync } from "node:fs";
 import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { join } from "node:path";
@@ -7,6 +7,7 @@ import { createInflateRaw } from "node:zlib";
 import { cleanStalePartials, downloadToFile, hasHash, partialName, placeVerified } from "./download.js";
 import { ToolError } from "./errors.js";
 import { framelensHome, type Env } from "./env.js";
+import { isMusl } from "./libc.js";
 
 export interface FfmpegFile {
   tool: "ffmpeg" | "ffprobe";
@@ -90,6 +91,25 @@ export const FFMPEG_PIN: { version: string; assets: Record<string, FfmpegAsset> 
         },
       ],
     },
+    // Build 1789931697_9.0.2 for linux/arm64: archive hashes match the server's published .sha256 files; binary hashes
+    // read from the verified archives. ELF aarch64, glibc (/lib/ld-linux-aarch64.so.1) and libstdc++.
+    "linux-arm64": {
+      source: "ffmpeg.martin-riedl.de",
+      archives: [
+        {
+          url: `${RIEDL}/linux/arm64/1789931697_9.0.2/ffmpeg.zip`,
+          sha256: "93a76ae90db5474eecdf951a729857c64f3de23567228d6a7d5e6e8e3cd1021b",
+          bytes: 28_753_826,
+          files: [{ tool: "ffmpeg", entry: "ffmpeg", sha256: "d8802725e54217a3fcb22dfb14d95cb648c0383685802bb155091575cf44a3ff" }],
+        },
+        {
+          url: `${RIEDL}/linux/arm64/1789931697_9.0.2/ffprobe.zip`,
+          sha256: "bcbe80fb741c180083327afaf5434812e006b33cacde2016b9aeaf6936128330",
+          bytes: 28_655_683,
+          files: [{ tool: "ffprobe", entry: "ffprobe", sha256: "814bee3ef4bd807ec3c0baa0dd83acf6f7d399d7df4fe14218f5492211183e76" }],
+        },
+      ],
+    },
     "linux-x64": {
       source: "ffmpeg.martin-riedl.de",
       archives: [
@@ -111,11 +131,11 @@ export const FFMPEG_PIN: { version: string; assets: Record<string, FfmpegAsset> 
 };
 
 /**
- * The pinned build for a platform. The Linux one is linked against glibc (and libstdc++), so on Alpine and other musl
- * systems there is none: ffmpeg comes from their own packages there.
+ * The pinned build for a platform. The Linux builds (x64 and arm64) are linked against glibc (and libstdc++), so on
+ * Alpine and other musl systems there is none: ffmpeg comes from their own packages there (apk add ffmpeg).
  */
-export function ffmpegAsset(platform: NodeJS.Platform = process.platform, arch: string = process.arch, pin = FFMPEG_PIN): FfmpegAsset | undefined {
-  if (platform === "linux" && process.platform === "linux" && !existsSync("/lib64/ld-linux-x86-64.so.2")) return undefined;
+export function ffmpegAsset(platform: NodeJS.Platform = process.platform, arch: string = process.arch, pin = FFMPEG_PIN, musl = platform === "linux" && isMusl()): FfmpegAsset | undefined {
+  if (musl) return undefined;
   return pin.assets[`${platform}-${arch}`];
 }
 

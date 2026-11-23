@@ -75,14 +75,14 @@ export class ToolSetup {
   async locate(name: ToolName, signal?: AbortSignal): Promise<ToolLocation> {
     const cached = this.located.get(name);
     if (cached) return cached;
-    const find = () => findTool(name, { env: this.env, ...(this.options.platform && { platform: this.options.platform }) });
+    const find = () => findTool(name, { env: this.env, ...(this.options.platform && { platform: this.options.platform }), ...(this.options.arch && { arch: this.options.arch }) });
     let found = find();
     if (found && !this.intact(found)) found = undefined;
     if (!found) {
       const group = name === "yt-dlp" ? "yt-dlp" : "ffmpeg";
       const platform = this.options.platform ?? process.platform;
       const arch = this.options.arch ?? process.arch;
-      const pinned = group === "yt-dlp" ? Boolean(ytDlpAsset(platform, arch)) : Boolean(ffmpegAsset(platform, arch)) && !(platform === "linux" && isMusl());
+      const pinned = group === "yt-dlp" ? Boolean(ytDlpAsset(platform, arch)) : Boolean(ffmpegAsset(platform, arch));
       if (!autoInstallEnabled(this.env)) {
         throw new ToolError("not_found", `${missingToolMessage(name)} (Automatic setup is off: FRAMELENS_AUTO_INSTALL=0.)`);
       }
@@ -148,7 +148,7 @@ export class ToolSetup {
    */
   startPath(name: "ffmpeg" | "ffprobe"): string {
     try {
-      const found = findTool(name, { env: this.env, ...(this.options.platform && { platform: this.options.platform }) });
+      const found = findTool(name, { env: this.env, ...(this.options.platform && { platform: this.options.platform }), ...(this.options.arch && { arch: this.options.arch }) });
       return found && found.source !== "pinned" ? found.path : name;
     } catch {
       return name;
