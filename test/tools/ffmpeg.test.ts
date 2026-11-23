@@ -224,13 +224,13 @@ describe("pinned ffmpeg", () => {
 
   it("is found after PATH and WinGet, so an ffmpeg the user installed wins", async () => {
     const env = { FRAMELENS_HOME: home, PATH: "" };
-    expect(findTool("ffmpeg", { env, platform: "win32" })).toBeUndefined();
+    expect(findTool("ffmpeg", { env, platform: "win32", arch: "x64" })).toBeUndefined();
     await prepareFfmpeg({ env, platform: "win32", arch: "x64", asset: asset() });
-    expect(findTool("ffprobe", { env, platform: "win32" })).toMatchObject({ source: "pinned" });
+    expect(findTool("ffprobe", { env, platform: "win32", arch: "x64" })).toMatchObject({ source: "pinned" });
     const own = join(home, "own");
     mkdirSync(own);
     writeFileSync(join(own, "ffmpeg.exe"), "mine");
-    expect(findTool("ffmpeg", { env: { ...env, PATH: own }, platform: "win32" })).toMatchObject({ source: "path" });
+    expect(findTool("ffmpeg", { env: { ...env, PATH: own }, platform: "win32", arch: "x64" })).toMatchObject({ source: "path" });
   });
 });
 
