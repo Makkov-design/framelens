@@ -130,7 +130,7 @@ describe("server shutdown when the client is gone", () => {
     expect(await until(() => children.every((pid) => !alive(pid)), 5_000)).toBe(true);
   }, 30_000);
 
-  it.skipIf(process.platform === "win32")("also when a launcher between client and server outlives the client (npx: sh -c, npm exec)", async () => {
+  it("also when a launcher between client and server outlives the client (npx: sh -c or cmd /c, npm exec)", async () => {
     const cwd = join(dir, "orphan-npx");
     mkdirSync(cwd, { recursive: true });
     const pids = join(cwd, "pids.txt");
@@ -145,9 +145,16 @@ describe("server shutdown when the client is gone", () => {
        require("node:fs").writeFileSync(${JSON.stringify(serverPidFile)}, String(server.pid));
        server.on("exit", (code) => process.exit(code ?? 1));`,
     );
+    // The shell a launcher like npx runs under: `sh -c` (kept alive by the `; true`), or on Windows `cmd /d /s /c`,
+    // which is how `cmd /c npx framelens` starts it.
+    const command = `"${process.execPath}" "${launcher}"`;
+    const shell =
+      process.platform === "win32"
+        ? [JSON.stringify(process.env.ComSpec ?? "cmd.exe"), JSON.stringify(["/d", "/s", "/c", `"${command}"`])]
+        : [JSON.stringify("sh"), JSON.stringify(["-c", `${command}; true`])];
     const client = `
       const { spawn } = require("node:child_process");
-      const server = spawn("sh", ["-c", ${JSON.stringify(`"${process.execPath}" "${launcher}"; true`)}], { cwd: ${JSON.stringify(cwd)}, stdio: ["pipe", "pipe", "ignore"], env: { ...process.env,
+      const server = spawn(${shell[0]}, ${shell[1]}, { cwd: ${JSON.stringify(cwd)}, stdio: ["pipe", "pipe", "ignore"], windowsVerbatimArguments: true, env: { ...process.env,
         FRAMELENS_YTDLP: ${JSON.stringify(fake)}, FRAMELENS_FFMPEG: ${JSON.stringify(fake)}, FRAMELENS_FFPROBE: ${JSON.stringify(fake)}, FRAMELENS_AUTO_INSTALL: "0",
         FRAMELENS_HOME: ${JSON.stringify(join(cwd, "home"))}, FAKE_YTDLP_DELAY_MS: "60000", FAKE_YTDLP_PIDS: ${JSON.stringify(pids)}, GEMINI_API_KEY: "" } });
       const send = (m) => server.stdin.write(JSON.stringify(m) + "\\n");

@@ -72,7 +72,12 @@ them), then the server exits — unless the client itself is gone, in which case
 server exits at once, killing the children. While draining it checks every second that the process that started it
 is still there, and every 5 s writes an MCP `ping` to the client: a write that fails (EPIPE) means the client's end
 of stdout is closed. The ping is what works under launchers that outlive the client (`npx` runs the server under
-`sh -c` and `npm exec`); before stdin closes nothing of this runs, so a call in progress is never stopped by it. A SIGKILL of the server cannot be caught: its children, each in its own process group,
+`sh -c` or `cmd /c`, and `npm exec`; `test/runtime/shutdown.test.ts` goes through such a launcher on POSIX and
+Windows); before stdin closes nothing of this runs, so a call in progress is never stopped by it. A script client
+that pipes its requests, closes stdin and reads stdout by hand therefore sees
+`{"jsonrpc":"2.0","id":"framelens-alive-N","method":"ping"}` lines between the answers during a call longer than
+5 s: a valid JSON-RPC request (MCP allows `ping` from either side) that it may ignore or answer, and that nothing
+waits for. A SIGKILL of the server cannot be caught: its children, each in its own process group,
 then run until they end. `run` settles when the program exits even if a descendant that left the group keeps the
 pipes open, and never signals a pid after the child is reaped.
 

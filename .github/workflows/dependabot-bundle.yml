@@ -16,12 +16,15 @@ name: Dependabot bundle
 # 1. Trigger is `pull_request`, never `pull_request_target`; `build` keeps every condition of its `if:` gate.
 # 2. `build` (runs the packages) stays `contents: read`, `persist-credentials: false`, no secrets, no cache step.
 # 3. `commit` (holds the write token) runs no package code: no npm, no node, no script from the repo or the artifact.
-# 4. The artifact is downloaded outside the repo and only checked plain files are copied in: exactly
-#    dist/framelens.mjs and files under extension/dist/, no links, no dot-named entries at any depth, under 50 MB.
+# 4. The artifact zip is fetched outside the repo and checked before anything is extracted: under 50 MB as a zip
+#    and under 50 MB unpacked, and its entries are exactly the names in `allowed` (dist/framelens.mjs and the files
+#    of extension/dist; test/workflows.test.ts keeps the list equal to what is committed), plain files only. Only
+#    those names are extracted, each again checked to be a plain file, and copied in.
 #    After `git add`, every staged entry must be a plain 100644 blob (no gitlinks, no executables, no links).
 # 5. git in `commit` runs with fsmonitor and hooks off, and no `git submodule`, `git status` or other command that
 #    reads config or attributes from the copied files is added.
-# 6. The push is a plain fast-forward to the PR branch (never --force) and `commit` gets no other permission.
+# 6. The push is a plain fast-forward to the PR branch (never --force). `commit` gets no other permission than
+#    `actions: read`, which only reads this run's artifact.
 
 on:
   pull_request:
@@ -67,36 +70,64 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     permissions:
-      contents: write # push the rebuilt files to the Dependabot branch; nothing else
+      contents: write # push the rebuilt files to the Dependabot branch
+      actions: read # read this run's artifact; nothing else
     env:
       HEAD_REF: ${{ github.event.pull_request.head.ref }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: bundle
-          path: ${{ runner.temp }}/bundle
-      - name: Check the artifact and copy it in
+      - name: Check the artifact, then extract and copy in only the expected files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.run_id }}
+          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
+          # The exact files the build writes. A new or renamed file under extension/dist goes here too
+          # (test/workflows.test.ts fails until it does).
+          allowed=(
+            dist/framelens.mjs
+            extension/dist/background.js
+            extension/dist/icons/128.png
+            extension/dist/icons/16.png
+            extension/dist/icons/32.png
+            extension/dist/icons/48.png
+            extension/dist/manifest.json
+            extension/dist/offscreen.html
+            extension/dist/offscreen.js
+            extension/dist/popup.html
+            extension/dist/popup.js
+            extension/dist/reader.js
+          )
+          max=52428800 # 50 MB, for the zip and for its unpacked total
+          api="https://api.github.com/repos/$REPO/actions/runs/$RUN_ID/artifacts?name=bundle"
+          meta="$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$api")"
+          test "$(jq '.artifacts | length' <<<"$meta")" = 1
+          size="$(jq '.artifacts[0].size_in_bytes' <<<"$meta")"
+          if [ "$size" -gt "$max" ]; then echo "The artifact is $size bytes, more than 50 MB."; exit 1; fi
+          zip="$RUNNER_TEMP/bundle.zip"
+          curl -fsSL --max-filesize "$max" -H "Authorization: Bearer $GH_TOKEN" -o "$zip" "$(jq -r '.artifacts[0].archive_download_url' <<<"$meta")"
+          # Before extracting: exactly the allowed names (directory entries aside), all plain files, small unpacked.
+          names="$(unzip -Z1 "$zip" | grep -v '/$' | LC_ALL=C sort)"
+          want="$(printf '%s\n' "${allowed[@]}" | LC_ALL=C sort)"
+          if [ "$names" != "$want" ]; then echo "The artifact's files differ from the allowed list:"; diff <(echo "$want") <(echo "$names") || true; exit 1; fi
+          # zipinfo's first column is the entry type: no links, devices, pipes or sockets.
+          if unzip -Z -l "$zip" | grep -E '^[lbcps]'; then echo "The artifact holds entries that are not plain files."; exit 1; fi
+          unpacked="$(unzip -Zt "$zip" | sed -nE 's/^[0-9]+ files?, ([0-9]+) bytes uncompressed.*/\1/p')"
+          if [ -z "$unpacked" ] || [ "$unpacked" -gt "$max" ]; then echo "The artifact unpacks to ${unpacked:-an unknown size}, more than 50 MB."; exit 1; fi
           src="$RUNNER_TEMP/bundle"
-          # Only plain files at the two expected places: no links, devices or dot-named entries (.git, .gitattributes).
-          odd="$(cd "$src" && find . -mindepth 1 \( \( ! -type d ! -type f \) -o -name '.*' -o \( -type f ! -path ./dist/framelens.mjs ! -path './extension/dist/*' \) \) -print)"
-          if [ -n "$odd" ]; then echo "Unexpected entries in the artifact:"; echo "$odd"; exit 1; fi
-          test -f "$src/dist/framelens.mjs" && test -f "$src/extension/dist/manifest.json"
-          size="$(du -sk "$src" | cut -f1)"
-          if [ "$size" -gt 51200 ]; then echo "The artifact is ${size} KB, more than 50 MB."; exit 1; fi
-          cp "$src/dist/framelens.mjs" dist/framelens.mjs
+          mkdir "$src"
+          # Only the allowed names, and no file larger than the cap even if the zip lies about its sizes.
+          (ulimit -f $((max / 1024)); unzip -q "$zip" "${allowed[@]}" -d "$src")
           rm -rf extension/dist
-          mkdir extension/dist
-          (cd "$src/extension/dist" && find . -type f -print0) | while IFS= read -r -d '' f; do
-            mkdir -p "extension/dist/$(dirname "$f")"
-            cp "$src/extension/dist/$f" "extension/dist/$f"
-            chmod 644 "extension/dist/$f"
+          for f in "${allowed[@]}"; do
+            if [ -L "$src/$f" ] || [ ! -f "$src/$f" ]; then echo "$f is not a plain file."; exit 1; fi
+            mkdir -p "$(dirname "$f")"
+            cp "$src/$f" "$f"
+            chmod 644 "$f"
           done
-          chmod 644 dist/framelens.mjs
       - name: Commit and push the rebuild
         run: |
           set -euo pipefail

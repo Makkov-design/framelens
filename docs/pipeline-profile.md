@@ -74,3 +74,8 @@ build.
   server, and they outlive the client. The reliable sign is the pipe itself: a write to the client fails once its
   end is closed, so a server that must notice a dead client writes something valid (an MCP `ping`) and treats EPIPE
   as gone. Test it through a launcher that stays alive, not only with the client as the direct parent.
+- A safety check written for one download route belongs to every route that fetches third-party addresses: the
+  cobalt path checked each redirect hop while `exact` link downloads followed any redirect. Reuse the one check
+  (`checkHop`, `pinnedGet`) rather than writing a second, and test a hop to a private address over a real socket.
+- A limit that a tool enforces only from metadata is no limit when the metadata is missing: yt-dlp's
+  `--max-filesize` skips streams of unknown size. Enforce caps on what is actually written or read.
