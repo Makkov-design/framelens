@@ -9,7 +9,7 @@ The list holds the packages whose code is in the bundle of this version (found w
 
 | Package | Version | Licence |
 |---|---|---|
-| [@google/genai](https://github.com/googleapis/js-genai) | 2.32.0 | Apache-2.0 |
+| [@google/genai](https://github.com/googleapis/js-genai) | 3.0.0 | Apache-2.0 |
 | [@modelcontextprotocol/sdk](https://github.com/modelcontextprotocol/typescript-sdk) | 1.32.2 | MIT |
 | [agent-base](https://github.com/TooTallNate/proxy-agents) | 7.1.4 | MIT |
 | [ajv](https://github.com/ajv-validator/ajv) | 8.20.0 | MIT |
@@ -47,7 +47,7 @@ The list holds the packages whose code is in the bundle of this version (found w
 
 ## Notices
 
-### @google/genai 2.32.0
+### @google/genai 3.0.0
 
 Apache-2.0. Source: https://github.com/googleapis/js-genai
 
