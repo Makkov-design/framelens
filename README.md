@@ -369,14 +369,14 @@ and grade, and keep facts apart from interpretation.
 <details>
 <summary><b>Automatic setup: versions and sources</b></summary>
 
-| Tool | Version | Windows x64 | macOS arm64 and x64, Linux x64 (glibc) |
+| Tool | Version | Windows x64 | macOS arm64 and x64, Linux x64 and arm64 (glibc) |
 |---|---|---|---|
 | ffmpeg, ffprobe | FFmpeg 9.0.2 | [gyan.dev](https://www.gyan.dev/ffmpeg/builds/) essentials build ([GitHub release](https://github.com/GyanD/codexffmpeg/releases/tag/9.0.2)) | [Martin Riedl's build server](https://ffmpeg.martin-riedl.de/) |
 | yt-dlp | 2026.10.21 | [github.com/yt-dlp/yt-dlp](https://github.com/yt-dlp/yt-dlp/releases/tag/2026.10.21) | same, also checked against the release's SHA2-256SUMS (Alpine and other musl Linux: the `musllinux` builds) |
 
 Gyan Doshi's Windows builds are the ones ffmpeg.org's download page links; Martin Riedl's build server publishes
 release builds with a SHA-256 for each file and keeps the old ones, so a pinned address keeps working. Other
-platforms (Alpine and other musl systems, Linux on ARM, Windows on ARM) install ffmpeg from their own packages.
+platforms (Alpine and other musl systems, Windows on ARM) install ffmpeg from their own packages.
 Nothing that fails the check is kept.
 </details>
 
@@ -479,7 +479,7 @@ you type yourself in Frame Lens's separate browser profile. It never gets around
 <details>
 <summary><b>Windows, macOS, Linux?</b></summary>
 
-All three. Automatic ffmpeg setup covers Windows x64, macOS (arm64 and x64) and Linux x64 with glibc; elsewhere,
+All three. Automatic ffmpeg setup covers Windows x64, macOS (arm64 and x64) and Linux x64 and arm64 with glibc; elsewhere,
 install ffmpeg from your package manager. On Windows, start the server with `cmd /c npx …` in client configs.
 </details>
 

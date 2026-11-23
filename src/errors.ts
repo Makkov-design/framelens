@@ -49,6 +49,8 @@ export class AnalyzerError extends Error {
     message: string,
     readonly status?: number,
     readonly quota?: QuotaInfo,
+    /** The same request may well succeed on the next try (a proxy's page, a one-off malformed answer). */
+    readonly transient = false,
   ) {
     super(message);
   }

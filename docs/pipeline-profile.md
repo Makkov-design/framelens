@@ -59,11 +59,18 @@ build.
 - A per-call cancel signal must never reach shared or memoized work. The first-use install was shared by all calls
   but ran under the first caller's signal, so one cancelled call failed every other call and a client that cancels on
   timeout restarted the install from zero each time; a memo (`hasDrawtext`) cached `false` from a cancelled call.
-  Shared work runs on its own limits and each caller waits with `untilAborted`; a memo forgets a cancelled answer;
+  Shared work runs outside any call (`outsideCall`) on its own limits and each caller waits with `untilAborted`;
   workspace writes refuse under a cancelled call. Sweep for `??=`, module-level maps and `.catch(() => …)`.
+- Pinned-build lookups take the platform and arch they are asked for, never `process.arch` behind the caller's back:
+  tests that fake `linux-x64` failed on arm64 macOS runners because `findTool` looked for the machine's arch.
+  Reproduce such a failure on any host by overriding `process.arch` in the test.
 - Exit on stdin EOF only after the requests already received are answered: a client that pipes its requests and
   closes stdin is normal (CI's start check is one). `runtime/stdio.ts` counts requests at the transport, so every
   tool is covered, and a cancelled request counts as answered.
 - Shutdown is tested against the real server over stdio, built from the current source in the test
   (`test/runtime/shutdown.test.ts`): a piped client that closes stdin gets every answer, and SIGTERM kills a running
   download's process group.
+- "The parent died" is not "the client died": launchers such as `npx` put `sh -c` and `npm exec` between client and
+  server, and they outlive the client. The reliable sign is the pipe itself: a write to the client fails once its
+  end is closed, so a server that must notice a dead client writes something valid (an MCP `ping`) and treats EPIPE
+  as gone. Test it through a launcher that stays alive, not only with the client as the direct parent.

@@ -64,6 +64,22 @@ export function killAllChildren(sync = false): void {
 }
 
 let installed = false;
+/** How often a server that is finishing its calls after stdin closed checks that its client still exists. */
+const ORPHAN_CHECK_MS = 1000;
+/** Every this many checks (5 s), a ping is written to the client: it fails once the client's end of stdout is closed. */
+const PROBE_EVERY_TICKS = 5;
+
+/** Whether the process that started the server is still there (on POSIX an orphan is also given a new parent). */
+function parentAlive(parent: number): boolean {
+  if (process.platform !== "win32" && process.ppid !== parent) return false;
+  try {
+    process.kill(parent, 0);
+    return true;
+  } catch (error) {
+    // EPERM: it exists, it is just not ours to signal.
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
 
 /** What the server tells the cleanup about the requests it is answering (see `trackRequests`). */
 export interface RequestState {
@@ -71,6 +87,8 @@ export interface RequestState {
   pending(): number;
   /** Calls `callback` once when nothing is pending (at once if nothing is). */
   whenIdle(callback: () => void): void;
+  /** Writes a harmless message to the client; rejects (or the output errors) when the client is gone. */
+  probe?(): Promise<void>;
 }
 
 /**
@@ -102,11 +120,28 @@ export function installChildCleanup(requests?: RequestState, input: NodeJS.Reada
     output.write("", () => process.exit(0));
   };
   let ending = false;
+  const parent = process.ppid;
   const drained = () => {
     if (ending) return;
     ending = true;
-    if (!requests) flushThenExit();
-    else requests.whenIdle(flushThenExit);
+    if (!requests || requests.pending() === 0) {
+      flushThenExit();
+      return;
+    }
+    // Answer what was already sent, unless the client itself is gone (it died with both pipes closed): then nobody
+    // reads the answers, and a 30-minute download must not run on for nobody.
+    // Two signs: the process that started the server is gone (a direct child of the client), or a write to the
+    // client fails (launchers such as `npx`, whose `sh -c` and `npm exec` outlive the client, hide the first one).
+    let ticks = 0;
+    const watch = setInterval(() => {
+      if (!parentAlive(parent)) now();
+      if (requests.probe && ++ticks % PROBE_EVERY_TICKS === 0) requests.probe().catch(now);
+    }, ORPHAN_CHECK_MS);
+    watch.unref();
+    requests.whenIdle(() => {
+      clearInterval(watch);
+      flushThenExit();
+    });
   };
   input.once("end", drained);
   input.once("close", drained);

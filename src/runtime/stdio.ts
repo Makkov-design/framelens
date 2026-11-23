@@ -38,8 +38,12 @@ export function trackRequests(transport: Transport): RequestState {
       if (id !== undefined && !("method" in message) && open.delete(id)) settle();
     }
   };
+  let pings = 0;
   return {
     pending: () => open.size,
+    // A ping is valid from either side at any time (MCP). Its only use here is the write: once the client is gone,
+    // writing to its stdout fails, and the server stops instead of finishing calls nobody will read.
+    probe: () => transport.send({ jsonrpc: "2.0", id: `framelens-alive-${++pings}`, method: "ping" }),
     whenIdle: (callback) => {
       waiters.push(callback);
       settle();

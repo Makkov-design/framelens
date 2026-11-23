@@ -17,7 +17,7 @@ import { run } from "../../src/tools/run.js";
 import { hasDrawtext } from "../../src/media/sheets.js";
 import { existsSync as exists } from "node:fs";
 import { Workspace } from "../../src/workspace/workspace.js";
-import { singleFlight } from "../../src/runtime/call.js";
+import { callSignal, singleFlight } from "../../src/runtime/call.js";
 import { decodeGray } from "../../src/track/decode.js";
 import { mediaTools, tempDir } from "../media/fixtures.js";
 
@@ -84,6 +84,9 @@ describe("external programs follow the tool call", () => {
     const result = await run(node, ["-e", script], { timeoutMs: 15_000 });
     expect(result.code).toBe(0);
     expect(Date.now() - started).toBeLessThan(10_000);
+    // Said, not silent: what the descendant writes from here on is missing.
+    expect(result.heldOpen).toBe(true);
+    expect((await run(node, ["-e", "0"])).heldOpen).toBeUndefined();
   });
 
   it("does not start a program for a call that is already cancelled", async () => {
@@ -99,11 +102,34 @@ describe("external programs follow the tool call", () => {
     controller.abort();
     await expect(withCall({ signal: controller.signal }, async () => ws.writeJson("boundaries-x.json", { candidates: [] }))).rejects.toBeInstanceOf(CancelledError);
     expect(exists(ws.path("boundaries-x.json"))).toBe(false);
-    // hasDrawtext: a cancelled first call is not remembered as "no drawtext".
-    const answers = [Promise.reject(new CancelledError("ffmpeg")), Promise.resolve({ stdout: " .. drawtext  V->V  Draw text\n", stderr: "" })];
-    const tools = { ffmpeg: "ffmpeg", ffprobe: "ffprobe", exec: () => answers.shift()! };
-    await expect(hasDrawtext(tools)).rejects.toBeInstanceOf(CancelledError);
+    // hasDrawtext: the one shared check runs outside any call. A cancelled caller stops waiting; the check itself is
+    // not cancelled, so another call sharing it (and every later one) gets the real answer.
+    let checks = 0;
+    let release!: () => void;
+    const slow = new Promise<void>((done) => (release = done));
+    // Like the real exec, the fake stops when the call it runs in is cancelled: only a check outside any call survives.
+    let ranInCall = false;
+    const tools = {
+      ffmpeg: "ffmpeg",
+      ffprobe: "ffprobe",
+      exec: async () => {
+        checks++;
+        const signal = callSignal();
+        ranInCall ||= signal !== undefined;
+        await Promise.race([slow, new Promise((_, fail) => signal?.addEventListener("abort", () => fail(new CancelledError("ffmpeg"))))]);
+        return { stdout: " .. drawtext  V->V  Draw text\n", stderr: "" };
+      },
+    };
+    const cancelling = new AbortController();
+    const cancelled = withCall({ signal: cancelling.signal }, () => hasDrawtext(tools));
+    const other = withCall({ signal: new AbortController().signal }, () => hasDrawtext(tools));
+    cancelling.abort();
+    await expect(cancelled).rejects.toBeInstanceOf(CancelledError);
+    release();
+    expect(await other).toBe(true);
     expect(await hasDrawtext(tools)).toBe(true);
+    expect(checks).toBe(1);
+    expect(ranInCall).toBe(false);
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -146,6 +172,10 @@ describe("external programs follow the tool call", () => {
     expect(sent.length).toBeGreaterThanOrEqual(3);
     // Increasing progress values, as the protocol requires.
     expect(sent.map((p) => p.progress)).toEqual(sent.map((_, i) => i + 1));
+    // Nothing after the call has ended (shared work started inside it can still log).
+    const count = sent.length;
+    call.context.progress?.("late line");
+    expect(sent.length).toBe(count);
     const silent = mcpCallContext("style", { ...extra, _meta: {} }, 50);
     silent.context.progress?.("x");
     silent.stop();

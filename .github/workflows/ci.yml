@@ -41,14 +41,13 @@ jobs:
       - run: npm audit --audit-level=high
 
   unit-other-os:
-    # The same suite on Windows, for path, process and file handling. The runner has no ffmpeg, so the media and
-    # real-browser tests skip there; they run on Ubuntu above. macOS is left out until test/tools/ffmpeg.test.ts
-    # passes there (five pinned-ffmpeg tests fail on macos-latest).
+    # The same suite on Windows and macOS, for path, process and file handling. The runners have no ffmpeg, so the
+    # media and real-browser tests skip there; they run on Ubuntu above.
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest]
+        os: [windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:

@@ -21,6 +21,23 @@
 
 ### Fixed
 
+- Automatic setup and `doctor --prepare` offer the pinned ffmpeg on glibc Linux on arm64 too (FFmpeg 9.0.2 from the
+  same build server, SHA-256 verified), and on Alpine and other musl systems none (they need `apk add ffmpeg`): the
+  check now asks for the C library instead of looking for the x64 loader, and a glibc build left on disk is not used.
+  A glibc system without the loader the build needs (Guix, NixOS without stub-ld) is told so instead of downloading
+  60 MB that cannot start.
+- The pinned ffmpeg and yt-dlp are looked for under the platform and architecture asked for (tests that check the
+  Linux x64 setup failed on arm64 Macs); CI runs the unit tests on macOS as well.
+- Gemini tools stop their request when the call is cancelled and send progress while Gemini works. An answer Gemini
+  could not complete (`MALFORMED_RESPONSE`) or a reply that is not the API's JSON reads as a bad response that is
+  tried again on the next call, not as an empty answer or an unknown error.
+- A server whose client died during a call exits and stops the call's downloads instead of running on until their
+  own time limits, also when started through `npx` (whose `sh -c` and `npm exec` outlive the client): while it
+  finishes its calls after stdin closed, a ping it cannot write tells it the client is gone.
+- A shared first-use check or install no longer stops for one call's cancel or reports to its progress, a cancelled
+  call sends no progress after its answer, and an install whose waiters were all cancelled is reported on the next
+  call. Output a stray descendant writes after its program exited is flagged as possibly incomplete.
+
 - Cancelling a tool call stops the yt-dlp, ffmpeg or browser it started, with their own children; the server stops
   all of them when it exits (they used to run on for up to 30 minutes). When the client closes stdin, the calls it
   already sent are answered first. A cancelled call never stops the first-use download of ffmpeg or yt-dlp that
