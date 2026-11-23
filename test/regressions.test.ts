@@ -22,6 +22,19 @@ describe("regressions", () => {
     const plugin = JSON.parse(readFileSync(join(root, ".claude-plugin", "plugin.json"), "utf8")) as { version: string };
     expect(VERSION).toBe(pkg.version);
     expect(plugin.version).toBe(pkg.version);
+    // A release moves every copy of the version together: the lockfile, the extension build, the README's examples
+    // and the CHANGELOG's latest release.
+    const lock = JSON.parse(readFileSync(join(root, "package-lock.json"), "utf8")) as { version: string; packages: Record<string, { version?: string }> };
+    expect(lock.version).toBe(pkg.version);
+    expect(lock.packages[""]!.version).toBe(pkg.version);
+    expect(JSON.parse(readFileSync(join(root, "extension", "dist", "manifest.json"), "utf8")).version).toBe(pkg.version);
+    expect(readFileSync(join(root, "extension", "dist", "background.js"), "utf8")).toContain(`Frame Lens extension ${"$"}{"${pkg.version}"}`);
+    const readme = readFileSync(join(root, "README.md"), "utf8");
+    const pins = [...readme.matchAll(/framelens@(\d+\.\d+\.\d+)|framelens#v(\d+\.\d+\.\d+)/g)].map((m) => m[1] ?? m[2]);
+    expect(pins.length).toBeGreaterThan(0);
+    for (const pin of pins) expect(pin, "a version named in README.md").toBe(pkg.version);
+    const changelog = readFileSync(join(root, "CHANGELOG.md"), "utf8");
+    expect(/^## (\d+\.\d+\.\d+) — \d{4}-\d{2}-\d{2}$/m.exec(changelog)?.[1], "the latest release in CHANGELOG.md").toBe(pkg.version);
   });
 
   it("keeps the MCP Registry entry in step with package.json", () => {

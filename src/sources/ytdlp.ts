@@ -36,6 +36,26 @@ const SIZE_CHECK_MS = 250;
  * named source.f<format id>.<ext>, and a site chooses the format id (a DASH Representation@id), dots included.
  */
 const POSTPROCESSOR_OUTPUT = /^source\.temp\.[A-Za-z0-9]+$/;
+/** The finished file yt-dlp leaves: source.<ext>, one extension and nothing else. */
+const FINISHED_MEDIA = /^source\.[A-Za-z0-9]+$/;
+
+/** Removes every source.* file in the folder: partial downloads, fragments, captions. Windows may hold a file a moment. */
+function removeSourceFiles(dir: string): void {
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    if (!name.startsWith("source.")) continue;
+    try {
+      rmSync(join(dir, name), { force: true, maxRetries: 5, retryDelay: 100 });
+    } catch {
+      // Left for the next download into this folder, which removes leftovers before it starts.
+    }
+  }
+}
 
 /**
  * Bytes yt-dlp has downloaded so far: the result, its parts and fragments, and captions, all named source.*. A
@@ -45,8 +65,13 @@ const POSTPROCESSOR_OUTPUT = /^source\.temp\.[A-Za-z0-9]+$/;
 export function writtenBytes(dir: string): number {
   let total = 0;
   try {
-    for (const name of readdirSync(dir)) {
+    const names = readdirSync(dir);
+    // After a merge yt-dlp renames its output to source.<ext> before it deletes the inputs (source.f<id>.<ext>): for
+    // that moment the same bytes are on disk twice, so the finished file is not counted while inputs remain.
+    const inputsLeft = names.some((n) => n.startsWith("source.f") && !n.endsWith(".part") && !/\.part-Frag/.test(n));
+    for (const name of names) {
       if (!name.startsWith("source.") || POSTPROCESSOR_OUTPUT.test(name)) continue;
+      if (inputsLeft && FINISHED_MEDIA.test(name)) continue;
       try {
         total += statSync(join(dir, name)).size;
       } catch {
@@ -221,7 +246,7 @@ export async function fetchWithYtDlp(params: FetchParams): Promise<FetchResult> 
 
   // 2. Download. Leftovers from an interrupted run are removed so they cannot be mistaken for the result.
   mkdirSync(mediaDir, { recursive: true });
-  for (const name of readdirSync(mediaDir)) if (name.startsWith("source.")) rmSync(join(mediaDir, name), { force: true });
+  removeSourceFiles(mediaDir);
   const langs = pickCaptionLanguages(info);
   const args = [
     ...common,
@@ -246,15 +271,20 @@ export async function fetchWithYtDlp(params: FetchParams): Promise<FetchResult> 
   try {
     result = await exec(args, timeoutMs, overLimit.signal);
   } catch (error) {
+    // Stopped for any reason (cancel, time limit, the size watch): what it wrote is incomplete. Removed here, in one
+    // place, so no caller can take a partial file for the result.
+    removeSourceFiles(mediaDir);
     if (overLimit.signal.aborted && !(signal ?? callSignal())?.aborted) {
-      for (const name of readdirSync(mediaDir)) if (name.startsWith("source.")) rmSync(join(mediaDir, name), { force: true });
       throw new SourceError("too_large", `The download passed the ${maxMb} MB limit and was stopped (the site did not say its full size up front, so it is checked as it downloads). Raise FRAMELENS_MAX_DOWNLOAD_MB or use a shorter video.`);
     }
     throw error;
   } finally {
     clearInterval(watch);
   }
-  if (result.code !== 0) throw mapYtDlpFailure(result.stderr, url);
+  if (result.code !== 0) {
+    removeSourceFiles(mediaDir);
+    throw mapYtDlpFailure(result.stderr, url);
+  }
 
   // 3. Find what was written.
   let media: { path: string; size: number } | undefined;

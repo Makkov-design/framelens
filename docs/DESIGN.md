@@ -205,12 +205,14 @@ in `sources/cobalt.ts`, wording in `sources/access.ts`). One video per request, 
 
 Redirects are followed by hand wherever a download takes an address from third-party data: `checkHop` and
 `pinnedGet` in `sources/cobalt.ts`, shared by cobalt and `exact` links (`exact/http.ts`). The trusted origin (the
-user's cobalt instance, or the host of the link given to `exact`) may be local; every other hop must be https, resolve
-only to public addresses and carry no user name or password, and is connected to at the address that was checked.
+user's cobalt instance, or the host of the link given to `exact`) may be local; no hop may add a user name or
+password; every hop to another host must be https and resolve only to public addresses, and is connected to at the
+address that was checked.
 `exact` decodes gzip, deflate and br through `stream.pipeline` (never `pipe`, which left the socket open and let the
 time limit's abort surface as an unhandled error) and refuses other encodings. yt-dlp's `--max-filesize` covers only a
 size known up front, so `sources/ytdlp.ts` also measures the `source.*` files every 250 ms (not the postprocessor's
-`source.temp.<ext>`) and stops the download past the limit.
+`source.temp.<ext>`, nor the finished `source.<ext>` while the merge's inputs are still beside it) and stops the
+download past the limit. Whatever a stopped, cancelled or failed download wrote is removed in `fetchWithYtDlp`.
 
 ## Engineering rules
 

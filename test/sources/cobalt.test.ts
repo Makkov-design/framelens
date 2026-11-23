@@ -229,6 +229,13 @@ describe("where the media download may go", () => {
     expect(existsSync(dir) ? readdirSync(dir) : []).toEqual([]);
   });
 
+  it("refuses a tunnel address with a user name or password, also on the instance's own host", async () => {
+    answer = (b) => ({ json: { status: "tunnel", url: b.replace("://", "://user:secret@") + "/tunnel?id=1" } });
+    const dir = join(ws, "userinfo");
+    await expect(fetchWithCobalt({ url: REEL, mediaDir: dir, env: env(), maxBytes: 1e6 })).rejects.toThrow(/user name or password/);
+    expect(seen.some((r) => r.url?.startsWith("/tunnel"))).toBe(false);
+  });
+
   it("refuses https addresses on this computer or the local network, by name, address or what the name resolves to", async () => {
     for (const media of ["https://localhost:8443/admin", "https://169.254.169.254/latest/meta-data/", "https://[::1]/x", "https://10.0.0.5/v.mp4", "https://router/v.mp4", "https://nas.local/v.mp4"]) {
       answer = () => ({ json: { status: "redirect", url: media } });
