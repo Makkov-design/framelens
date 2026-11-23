@@ -12,6 +12,9 @@
 
 - `plan` reads the picture changes of a source longer than 10 minutes in 12 sample windows of 30 s instead of every
   second, and says so in its notes; `boundaries` over a whole long source gets a time limit that grows with its length.
+- Development: on Dependabot's npm PRs a workflow rebuilds and commits the bundle, so they can pass CI once a
+  maintainer approves the CI run; major bumps come as PRs of their own. CI also runs `probe` through the built
+  bundle on Node 20, 22 and 24 and the unit tests on Windows.
 - The bundled Gemini client is `@google/genai` 3.0.0 (was 2.32.0). Calls stay on the `v1beta` API, where the
   default `-latest` models exist (3.x defaults to `v1`), and a `GOOGLE_GENAI_API_VERSION` in the environment no
   longer changes it. The bundle still runs on Node 20.
@@ -40,6 +43,8 @@
   release's signed SHA2-256SUMS); ffmpeg's automatic setup no longer offers its glibc build there and says
   `apk add ffmpeg`. The Docker image installs ffmpeg from Alpine's packages (its version, not the pinned 9.0.2).
 - A `file://` link with a host answers with a clear source error instead of a raw TypeError.
+- In CI (the `CI` variable set), a browser gets 60 s instead of 20 s to start, so a cold start on a busy runner does
+  not fail `web`.
 
 ## 2.1.0 — 2026-11-09
 

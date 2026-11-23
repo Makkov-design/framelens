@@ -1,0 +1,116 @@
+name: Dependabot bundle
+
+# Every dependency is a devDependency bundled into the committed dist/framelens.mjs and extension/dist, so CI's
+# "committed bundle is up to date" check fails on every Dependabot npm PR. This workflow rebuilds both on those PRs and
+# commits the result to the PR branch.
+#
+# After that commit, GitHub creates the PR's CI run in an approval-required state (a push made with GITHUB_TOKEN that
+# updates a pull request does that). A maintainer clicks "Approve workflows to run" on the PR, or, if no run appears,
+# runs CI by hand from the Actions tab on that branch (ci.yml keeps workflow_dispatch for this), and merges only when
+# that run is green. See CONTRIBUTING.md, "Dependabot PRs". This path had not run end to end when it was added: the
+# first Dependabot npm PR after it merged is its live test.
+#
+# Security: the bumped packages are untrusted code, and no job that runs them holds a write token.
+#
+# Invariants a future edit must keep:
+# 1. Trigger is `pull_request`, never `pull_request_target`; `build` keeps every condition of its `if:` gate.
+# 2. `build` (runs the packages) stays `contents: read`, `persist-credentials: false`, no secrets, no cache step.
+# 3. `commit` (holds the write token) runs no package code: no npm, no node, no script from the repo or the artifact.
+# 4. The artifact is downloaded outside the repo and only checked plain files are copied in: exactly
+#    dist/framelens.mjs and files under extension/dist/, no links, no dot-named entries at any depth, under 50 MB.
+#    After `git add`, every staged entry must be a plain 100644 blob (no gitlinks, no executables, no links).
+# 5. git in `commit` runs with fsmonitor and hooks off, and no `git submodule`, `git status` or other command that
+#    reads config or attributes from the copied files is added.
+# 6. The push is a plain fast-forward to the PR branch (never --force) and `commit` gets no other permission.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions: {}
+
+concurrency:
+  group: dependabot-bundle-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    if: >-
+      github.actor == 'dependabot[bot]' &&
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.event.pull_request.head.ref, 'dependabot/npm_and_yarn/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - run: npm ci --ignore-scripts
+      - run: npm run bundle
+      - run: npm run build:extension
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: bundle
+          path: |
+            dist/framelens.mjs
+            extension/dist/
+          if-no-files-found: error
+          retention-days: 1
+
+  commit:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # push the rebuilt files to the Dependabot branch; nothing else
+    env:
+      HEAD_REF: ${{ github.event.pull_request.head.ref }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: bundle
+          path: ${{ runner.temp }}/bundle
+      - name: Check the artifact and copy it in
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/bundle"
+          # Only plain files at the two expected places: no links, devices or dot-named entries (.git, .gitattributes).
+          odd="$(cd "$src" && find . -mindepth 1 \( \( ! -type d ! -type f \) -o -name '.*' -o \( -type f ! -path ./dist/framelens.mjs ! -path './extension/dist/*' \) \) -print)"
+          if [ -n "$odd" ]; then echo "Unexpected entries in the artifact:"; echo "$odd"; exit 1; fi
+          test -f "$src/dist/framelens.mjs" && test -f "$src/extension/dist/manifest.json"
+          size="$(du -sk "$src" | cut -f1)"
+          if [ "$size" -gt 51200 ]; then echo "The artifact is ${size} KB, more than 50 MB."; exit 1; fi
+          cp "$src/dist/framelens.mjs" dist/framelens.mjs
+          rm -rf extension/dist
+          mkdir extension/dist
+          (cd "$src/extension/dist" && find . -type f -print0) | while IFS= read -r -d '' f; do
+            mkdir -p "extension/dist/$(dirname "$f")"
+            cp "$src/extension/dist/$f" "extension/dist/$f"
+            chmod 644 "extension/dist/$f"
+          done
+          chmod 644 dist/framelens.mjs
+      - name: Commit and push the rebuild
+        run: |
+          set -euo pipefail
+          git() { command git -c core.fsmonitor=false -c core.hooksPath=/dev/null "$@"; }
+          git add -A -- dist/framelens.mjs extension/dist
+          # Every staged entry must be a plain file blob: no gitlink (160000), link (120000) or executable (100755).
+          bad="$(git ls-files -s -- dist/framelens.mjs extension/dist | grep -v '^100644 ' || true)"
+          if [ -n "$bad" ]; then echo "Unexpected entry types:"; echo "$bad"; exit 1; fi
+          if git diff --cached --quiet; then
+            echo "The committed bundle is already up to date."
+            exit 0
+          fi
+          git diff --cached --stat
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -q -m "Rebuild dist/framelens.mjs and extension/dist for the dependency update"
+          git push origin "HEAD:refs/heads/$HEAD_REF"
+          echo "Pushed. A maintainer now approves the PR's CI run (see CONTRIBUTING.md, Dependabot PRs)."
