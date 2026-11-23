@@ -1,4 +1,3 @@
-import type { ToolLocator } from "./tools/spawn-path.js";
 import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
@@ -12,6 +11,7 @@ import { probeMedia, type ProbeInfo } from "./media/probe.js";
 import { buildSheets, type Sheet } from "./media/sheets.js";
 import { buildPlan, type Goal, type Plan } from "./router/plan.js";
 import { countPhrase, findPhrase, readCaptions, toMarkdown, wordsAt, type Transcript } from "./speech/transcript.js";
+import type { ToolLocator } from "./tools/spawn-path.js";
 import { analyzeAudio, spectrogram, type AudioAnalysis } from "./audio/analyze.js";
 import { readPage, type PageResult } from "./browser/read.js";
 import { cleanReading, specFromPage, type PageReading } from "./browser/web.js";
@@ -660,8 +660,8 @@ export class Engine {
     const out = await this.style(render, { version });
     // The style passes can cover less than the whole file (the first 180 s), while SSIM below reads all of it.
     const notes = [...ref.notes.map((n) => `reference: ${n}`), ...out.notes.map((n) => `render: ${n}`)];
-    const styled = (r: typeof ref) => r.spec.range.end - r.spec.range.start < r.source.probe.duration - 0.5;
-    if (styled(ref) || styled(out)) {
+    const partOnly = (r: typeof ref) => r.spec.range.end - r.spec.range.start < r.source.probe.duration - 0.5;
+    if (partOnly(ref) || partOnly(out)) {
       notes.push(
         `Cuts and palette are compared over the analyzed ranges (reference ${ref.spec.range.start.toFixed(1)}–${ref.spec.range.end.toFixed(1)} s, render ${out.spec.range.start.toFixed(1)}–${out.spec.range.end.toFixed(1)} s); picture similarity (SSIM) covers the whole files.`,
       );
