@@ -55,7 +55,7 @@ export function classify(probe: ProbeInfo, boundaries: Boundaries | undefined, h
   }
   const cpm = boundaries?.changesPerMinute ?? 0;
   const dyn = boundaries?.dynamics ?? 0;
-  const reasons = [`${cpm} picture changes per minute`, `mean change ${dyn}`, hasSpeech ? "has speech" : "no captions or speech found"];
+  const reasons = [`${cpm} picture changes per minute`, `mean change ${dyn}`, hasSpeech ? "has speech" : "no captions (speech not checked: `transcript` checks it)"];
   if (!hasSpeech && probe.hasAudio && cpm >= 10) return { type: "music-video", reasons };
   if (cpm >= 15 || dyn >= 0.08) return { type: "motion-graphics", reasons };
   if (cpm < 1.5 && dyn < 0.02) return { type: "talking-head", reasons };

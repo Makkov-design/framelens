@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
-import { InvalidInputError } from "./errors.js";
+import { AnalyzerError, InvalidInputError } from "./errors.js";
 import { oneLine } from "./text.js";
 import type { Logger } from "./logger.js";
 import { findBoundaries, type Boundaries } from "./media/boundaries.js";
@@ -117,6 +117,15 @@ const boundariesFile = (rate: number, threshold: number, start: number, end: num
  * Why there is no transcript and what can give one. Frame Lens reads captions and, for YouTube links with a key,
  * asks Gemini; it runs no speech-to-text of its own, so a local one is something the user runs.
  */
+/** A fallback failure that the same request would hit again (see `Engine.transcript`). */
+export function permanentFallbackFailure(error: Error): boolean {
+  if (error instanceof AnalyzerError) {
+    if (error.kind === "quota") return error.quota?.scope === "day";
+    return ["auth", "blocked", "video_unavailable", "model_not_found", "invalid_request", "bad_response"].includes(error.kind);
+  }
+  return false;
+}
+
 function noTranscriptMessage(source: Source, gemini: boolean): string {
   if (!source.probe.hasAudio) return "This source has no sound, so there is no speech to transcribe. Use `frames` to read what is on screen.";
   // With a key, the fallback answers for every YouTube link, so only a link without one gets here.
@@ -183,7 +192,7 @@ export class Engine {
     return { ws, record, probe };
   }
 
-  /** Fallback (Gemini) transcripts that failed, by source and language: not asked again in this session. */
+  /** Fallback (Gemini) transcripts that failed in a way that would repeat, by source: not asked again in this session. */
   private readonly fallbackFailures = new Map<string, Error>();
 
   /**
@@ -212,15 +221,19 @@ export class Engine {
       break;
     }
     if (!transcript && options.required && this.options.transcriptFallback) {
-      const key = `${source.record.id}\0${language ?? ""}`;
-      const failed = this.fallbackFailures.get(key);
+      // The fallback does not depend on the language (Gemini hears whatever is spoken): one memo per source.
+      const failed = this.fallbackFailures.get(source.record.id);
       if (failed) throw failed;
       try {
         transcript = await this.options.transcriptFallback(source.record, language);
       } catch (error) {
         const failure = error instanceof Error ? error : new Error(String(error));
-        failure.message += " (The Gemini transcript is not tried again for this video in this session; restart the server to retry.)";
-        this.fallbackFailures.set(key, failure);
+        // Only a failure that would repeat is remembered: a missing or wrong key, a blocked video, the day's quota,
+        // an answer that is not the expected JSON. Overload, timeouts and per-minute limits pass, so the next call tries again.
+        if (permanentFallbackFailure(failure)) {
+          failure.message += " (The Gemini transcript is not tried again for this video in this session; restart the server to retry.)";
+          this.fallbackFailures.set(source.record.id, failure);
+        }
         throw failure;
       }
     }

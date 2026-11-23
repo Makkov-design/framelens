@@ -7,7 +7,7 @@ import { ToolError } from "./errors.js";
 import { ffmpegAsset, pinnedFfmpegIntact, prepareFfmpeg, type PrepareFfmpegOptions, type PrepareFfmpegResult } from "./ffmpeg.js";
 import type { ToolLocator } from "./spawn-path.js";
 import { findTool, missingToolMessage, type ToolLocation, type ToolName } from "./find.js";
-import { pinnedYtDlpIntact, prepareYtDlp, ytDlpAsset, type PrepareOptions, type PrepareResult } from "./ytdlp.js";
+import { isMusl, pinnedYtDlpIntact, prepareYtDlp, ytDlpAsset, type PrepareOptions, type PrepareResult } from "./ytdlp.js";
 
 /** Automatic setup is on unless FRAMELENS_AUTO_INSTALL is 0, false, no or off. */
 export function autoInstallEnabled(env: Env = process.env): boolean {
@@ -81,11 +81,15 @@ export class ToolSetup {
       const group = name === "yt-dlp" ? "yt-dlp" : "ffmpeg";
       const platform = this.options.platform ?? process.platform;
       const arch = this.options.arch ?? process.arch;
-      const pinned = group === "yt-dlp" ? Boolean(ytDlpAsset(platform, arch)) : Boolean(ffmpegAsset(platform, arch));
+      const pinned = group === "yt-dlp" ? Boolean(ytDlpAsset(platform, arch)) : Boolean(ffmpegAsset(platform, arch)) && !(platform === "linux" && isMusl());
       if (!autoInstallEnabled(this.env)) {
         throw new ToolError("not_found", `${missingToolMessage(name)} (Automatic setup is off: FRAMELENS_AUTO_INSTALL=0.)`);
       }
-      if (!pinned) throw new ToolError("not_found", missingToolMessage(name));
+      if (!pinned) {
+        // The pinned ffmpeg is built against glibc: on Alpine and other musl systems it would download and not start.
+        const musl = group === "ffmpeg" && platform === "linux" && isMusl() ? " On Alpine: apk add ffmpeg." : "";
+        throw new ToolError("not_found", `${missingToolMessage(name)}${musl}`);
+      }
       let pending = this.installing.get(group);
       if (!pending) {
         pending = this.install(group, signal);

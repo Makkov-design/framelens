@@ -44,5 +44,9 @@ build.
   Use `spawnPath(tools, "ffmpeg")` (`src/tools/spawn-path.ts`). A test can only catch this with the process PATH
   emptied too (`test/tools/pinned-only.test.ts`), because a bare spawn otherwise finds the system ffmpeg.
 - A paid or remote fallback (Gemini) belongs behind the call that needs its result, not behind a helper several
-  tools share for optional data; remember its failures, or every retry spends the user's quota again.
+  tools share for optional data.
+- A memo of failures must not outlive the failure. Remember only what the same request would hit again (a missing
+  key, a blocked video, the day's quota, an unreadable answer); let overload, timeouts and per-minute limits through,
+  or one bad minute blocks a tool until a restart the agent cannot do. Key the memo by exactly what the call depends
+  on (the Gemini transcript ignores `language`, so the key is the source alone). Test a transient and a permanent kind.
 - Warnings a tool writes to `PROGRESS.md` are not seen by the agent: return them in the tool result as well.

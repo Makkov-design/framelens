@@ -3,6 +3,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Engine, type TranscriptFallback } from "../../src/engine.js";
+import { AnalyzerError } from "../../src/errors.js";
 import { silentLogger } from "../../src/logger.js";
 import { readCaptions, type Transcript } from "../../src/speech/transcript.js";
 import type { CaptionTrack, SourceRecord } from "../../src/sources/types.js";
@@ -35,6 +36,12 @@ describe("caption files", () => {
     const lrc = join(dir, "source.en.lrc");
     writeFileSync(lrc, "[00:01.00]Hi\n");
     for (const file of [ttml, ass, lrc]) expect(readCaptions(file)).toEqual({ words: [], segments: [] });
+  });
+
+  it("keeps cues apart when the separator line holds only spaces", () => {
+    const file = join(dir, "spaces.en.srt");
+    writeFileSync(file, "1\n00:00:01,000 --> 00:00:02,000\nA\n  \n2\n00:00:03,000 --> 00:00:04,000\nB\n");
+    expect(readCaptions(file).segments.map((s) => s.text)).toEqual(["A", "B"]);
   });
 
   it("treats a broken json3 file as no captions", () => {
@@ -79,17 +86,40 @@ describe.skipIf(!tools)("the Gemini transcript fallback", () => {
     expect(calls).toBe(1);
   });
 
-  it("remembers a failure for the session instead of asking Gemini again", async () => {
+  it("remembers a failure that would repeat (the day's quota) for the session, in any language", async () => {
     let calls = 0;
     const engine = engineWith(async () => {
       calls++;
-      throw new Error("quota exceeded");
+      throw new AnalyzerError("quota", "daily quota exceeded", 429, { scope: "day" });
     }, "yt-failing");
-    await expect(engine.transcript("x", { required: true })).rejects.toThrow(/quota exceeded.*not tried again/);
-    await expect(engine.frames("x", { around: "hello" })).rejects.toThrow(/quota exceeded/);
+    await expect(engine.transcript("x", { required: true })).rejects.toThrow(/daily quota exceeded.*not tried again/);
+    await expect(engine.frames("x", { around: "hello" })).rejects.toThrow(/daily quota exceeded/);
+    // The fallback ignores the language, so another language is the same request.
+    await expect(engine.transcript("x", { required: true, language: "en" })).rejects.toThrow(/daily quota exceeded/);
     // Optional readers still work: they never needed Gemini.
     await expect(engine.frames("x", { at: [0.5] })).resolves.toBeDefined();
     expect(calls).toBe(1);
+  });
+
+  it("tries again after a transient failure (overload, timeout, per-minute quota)", async () => {
+    const failures = [
+      new AnalyzerError("unavailable", "model overloaded", 503),
+      new AnalyzerError("timeout", "timed out"),
+      new AnalyzerError("quota", "per-minute quota", 429, { scope: "minute" }),
+      new Error("socket hang up"),
+    ];
+    let calls = 0;
+    const engine = engineWith(async () => {
+      const failure = failures[calls++];
+      if (failure) throw failure;
+      return geminiTranscript;
+    }, "yt-transient");
+    for (const failure of failures) {
+      const error = await engine.transcript("x", { required: true }).catch((e: Error) => e);
+      expect((error as Error).message).toBe(failure.message);
+    }
+    expect((await engine.transcript("x", { required: true })).transcript?.source).toBe("gemini");
+    expect(calls).toBe(5);
   });
 
   it("rebuilds a cached transcript when captions in the asked language exist", async () => {

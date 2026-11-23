@@ -7,14 +7,18 @@
 - `style`, `track`, `compare` and `export` work when ffmpeg exists only as the automatically installed pinned build:
   the code that pipes frames from ffmpeg now locates it first instead of spawning the bare name.
 - The Gemini transcript fallback for YouTube links without captions runs only when a transcript is required
-  (`transcript`, `frames` with `around`), no longer for frame labels, `plan` or `style`; a failure is remembered for
-  the session instead of sending the whole video to Gemini on every call.
+  (`transcript`, `frames` with `around`), no longer for frame labels, `plan` or `style`. A failure that would repeat
+  (key, blocked video, the day's quota, an unreadable answer) is remembered for the session instead of sending the
+  whole video to Gemini on every call; overload, timeouts and per-minute limits are tried again on the next call.
+  `plan` says "no captions (speech not checked)" instead of claiming no speech was found.
 - `style` and `compare` return their notes (only the first 180 s analyzed, transitions not looked for); `compare`
   says when its cuts and palette cover less of the files than its picture similarity.
-- SubRip (`.srt`) captions are read (they parsed to NaN times); TTML, ASS, LRC and broken caption files are skipped.
+- SubRip (`.srt`) captions are read (they parsed to NaN times); TTML, ASS, LRC and broken caption files are skipped;
+  a separator line holding only spaces no longer merges two cues.
 - A cached transcript is rebuilt when `language` asks for one the captions have in another language.
 - yt-dlp's automatic setup downloads the `musllinux` build on Alpine and other musl Linux (pinned from the
-  release's signed SHA2-256SUMS); the Docker image installs ffmpeg from Alpine's packages.
+  release's signed SHA2-256SUMS); ffmpeg's automatic setup no longer offers its glibc build there and says
+  `apk add ffmpeg`. The Docker image installs ffmpeg from Alpine's packages (its version, not the pinned 9.0.2).
 - A `file://` link with a host answers with a clear source error instead of a raw TypeError.
 
 ## 2.1.0 — 2026-11-09

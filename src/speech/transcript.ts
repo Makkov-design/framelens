@@ -61,7 +61,7 @@ function vttTime(value: string): number {
 export function parseVtt(text: string): { words: Word[]; segments: Segment[] } {
   const words: Word[] = [];
   const segments: Segment[] = [];
-  const blocks = text.replace(/\r/g, "").split(/\n\n+/);
+  const blocks = text.replace(/\r/g, "").split(/\n[ \t]*\n(?:[ \t]*\n)*/);
   for (const block of blocks) {
     const lines = block.split("\n");
     const timing = lines.findIndex((l) => l.includes("-->"));
