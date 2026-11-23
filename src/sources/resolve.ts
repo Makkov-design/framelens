@@ -32,7 +32,13 @@ export function classifyInput(rawInput: string, env: Env = process.env): Classif
   if (!input) throw new SourceError("bad_input", "The source is empty. Pass a YouTube link or ID, any video link, a file path, or \"inbox\".");
 
   if (input.toLowerCase() === "inbox") return fileClassification(newestInboxFile(env));
-  if (/^file:\/\//i.test(input)) input = fileURLToPath(input);
+  if (/^file:\/\//i.test(input)) {
+    try {
+      input = fileURLToPath(input);
+    } catch {
+      throw new SourceError("bad_input", `"${input.slice(0, 200)}" is not a file on this computer: a file:// link must have no host (file:///path/to/video.mp4). Pass the path instead.`);
+    }
+  }
 
   if (HTTP.test(input)) {
     try {

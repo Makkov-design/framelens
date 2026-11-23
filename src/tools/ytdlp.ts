@@ -14,6 +14,9 @@ export const YTDLP_PIN = {
     "win32-x64": { file: "yt-dlp.exe", sha256: "33121d192d706e62f684a06f80918e3f3a8ba52ac3a65213b6951c39c7d9f555" },
     "linux-x64": { file: "yt-dlp_linux", sha256: "d8bd33fca9d5b23bd5b9952b3fca36db5c46331933fda9f598a3da14ce2c243f" },
     "linux-arm64": { file: "yt-dlp_linux_aarch64", sha256: "e137c2171b0b8ef648e6136e86aa70c65923e93e434f01c93901d64744b190aa" },
+    // Alpine and other musl systems: the glibc builds above do not start there.
+    "linux-x64-musl": { file: "yt-dlp_musllinux", sha256: "d39487ff5c8eb1254d6f142bea05f495440d87ff529b2df786dcd3b5f66b23a8" },
+    "linux-arm64-musl": { file: "yt-dlp_musllinux_aarch64", sha256: "105ccea5684c00c71cb391e91342cf70c580aea7c57b03892dbadc4ee2e61dd8" },
     "darwin-x64": { file: "yt-dlp_macos", sha256: "7a6fe71d7d680f1fb0ac18d4949873d77db2859e90017c0f44bd94b23be4ee40" },
     "darwin-arm64": { file: "yt-dlp_macos", sha256: "7a6fe71d7d680f1fb0ac18d4949873d77db2859e90017c0f44bd94b23be4ee40" },
   },
@@ -21,8 +24,23 @@ export const YTDLP_PIN = {
 
 type AssetKey = keyof typeof YTDLP_PIN.assets;
 
+let muslCache: boolean | undefined;
+
+/** True on a Linux whose C library is musl (Alpine): Node reports no glibc version there. */
+export function isMusl(): boolean {
+  if (process.platform !== "linux") return false;
+  // A diagnostic report takes a few milliseconds: read it once.
+  muslCache ??= !(process.report?.getReport() as { header?: { glibcVersionRuntime?: string } } | undefined)?.header?.glibcVersionRuntime;
+  return muslCache;
+}
+
+/** The pinned asset for a platform; on Linux, the musl build when the C library is musl. */
+export function ytDlpAsset(platform: NodeJS.Platform = process.platform, arch: string = process.arch, musl = platform === "linux" && isMusl()) {
+  return YTDLP_PIN.assets[`${platform}-${arch}${musl ? "-musl" : ""}` as AssetKey];
+}
+
 function assetFor(platform: NodeJS.Platform, arch: string) {
-  return YTDLP_PIN.assets[`${platform}-${arch}` as AssetKey];
+  return ytDlpAsset(platform, arch);
 }
 
 /** Where the pinned binary lives (it may not exist yet). undefined on platforms with no pinned build. */

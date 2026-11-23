@@ -7,7 +7,7 @@ import { ToolError } from "./errors.js";
 import { ffmpegAsset, pinnedFfmpegIntact, prepareFfmpeg, type PrepareFfmpegOptions, type PrepareFfmpegResult } from "./ffmpeg.js";
 import type { ToolLocator } from "./spawn-path.js";
 import { findTool, missingToolMessage, type ToolLocation, type ToolName } from "./find.js";
-import { pinnedYtDlpIntact, prepareYtDlp, YTDLP_PIN, type PrepareOptions, type PrepareResult } from "./ytdlp.js";
+import { pinnedYtDlpIntact, prepareYtDlp, ytDlpAsset, type PrepareOptions, type PrepareResult } from "./ytdlp.js";
 
 /** Automatic setup is on unless FRAMELENS_AUTO_INSTALL is 0, false, no or off. */
 export function autoInstallEnabled(env: Env = process.env): boolean {
@@ -81,7 +81,7 @@ export class ToolSetup {
       const group = name === "yt-dlp" ? "yt-dlp" : "ffmpeg";
       const platform = this.options.platform ?? process.platform;
       const arch = this.options.arch ?? process.arch;
-      const pinned = group === "yt-dlp" ? Boolean(YTDLP_PIN.assets[`${platform}-${arch}` as keyof typeof YTDLP_PIN.assets]) : Boolean(ffmpegAsset(platform, arch));
+      const pinned = group === "yt-dlp" ? Boolean(ytDlpAsset(platform, arch)) : Boolean(ffmpegAsset(platform, arch));
       if (!autoInstallEnabled(this.env)) {
         throw new ToolError("not_found", `${missingToolMessage(name)} (Automatic setup is off: FRAMELENS_AUTO_INSTALL=0.)`);
       }

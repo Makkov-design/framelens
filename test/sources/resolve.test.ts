@@ -29,6 +29,11 @@ const calls = () => (existsSync(argLog) ? readFileSync(argLog, "utf8").trim().sp
 const YT = "https://www.youtube.com/watch?v=jNQXAC9IVRw&list=PL123";
 
 describe("classifyInput", () => {
+  // On Windows the same link is a UNC path and is valid.
+  it.skipIf(process.platform === "win32")("answers a file:// link with a host with a source error, not a raw TypeError", () => {
+    expect(() => classifyInput("file://server/share/clip.mp4")).toThrow(expect.objectContaining({ code: "bad_input", message: expect.stringMatching(/must have no host/) }));
+  });
+
   it("recognises YouTube links, IDs and other links", () => {
     expect(classifyInput(YT)).toEqual({ kind: "youtube", id: "yt-jNQXAC9IVRw", url: "https://www.youtube.com/watch?v=jNQXAC9IVRw" });
     expect(classifyInput("https://youtu.be/jNQXAC9IVRw").id).toBe("yt-jNQXAC9IVRw");
