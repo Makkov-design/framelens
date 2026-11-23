@@ -131,7 +131,7 @@ describe("resolveSource: links through yt-dlp", () => {
     expect(download![download!.indexOf("--max-filesize") + 1]).toBe("2048M");
     expect(download![download!.indexOf("-f") + 1]).toContain("height<=1080");
     expect(download![download!.indexOf("--sub-langs") + 1]).toBe("en-orig");
-    expect(download![download!.indexOf("--sub-format") + 1]).toBe("json3/vtt/best");
+    expect(download![download!.indexOf("--sub-format") + 1]).toBe("json3/vtt/srt/best");
   });
 
   it("leaves no empty workspace folder behind when a link cannot be fetched", async () => {

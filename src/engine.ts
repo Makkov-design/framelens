@@ -183,17 +183,27 @@ export class Engine {
     return { ws, record, probe };
   }
 
-  /** The cached transcript, or one built from captions or the fallback engine. */
+  /** Fallback (Gemini) transcripts that failed, by source and language: not asked again in this session. */
+  private readonly fallbackFailures = new Map<string, Error>();
+
+  /**
+   * The cached transcript, or one built from captions. The fallback engine (Gemini: it uploads the whole video and
+   * spends the user's quota) runs only when the transcript is `required` (the `transcript` tool, `frames` with
+   * `around`); frame labels, `plan` and `style` use captions alone. A fallback failure is remembered for the session.
+   */
   async transcript(input: string | Source, options: { language?: string; required?: boolean } = {}): Promise<{ source: Source; transcript?: Transcript }> {
     const source = typeof input === "string" ? await this.source(input) : input;
-    const cached = source.ws.readJson<Transcript>("transcript.json");
-    if (cached) return { source, transcript: cached };
-
+    const language = options.language;
     const captions = [...(source.record.captions ?? [])].sort(
       (a, b) =>
         Number(a.auto) - Number(b.auto) ||
-        Number(b.language.startsWith(options.language ?? "\0")) - Number(a.language.startsWith(options.language ?? "\0")),
+        Number(b.language.startsWith(language ?? "\0")) - Number(a.language.startsWith(language ?? "\0")),
     );
+    const cached = source.ws.readJson<Transcript>("transcript.json");
+    // A cached transcript in another language is rebuilt only when captions in the asked language exist.
+    const otherLanguage = Boolean(language && cached?.language && !cached.language.startsWith(language) && captions.some((c) => c.language.startsWith(language)));
+    if (cached && !otherLanguage) return { source, transcript: cached };
+
     let transcript: Transcript | undefined;
     for (const caption of captions) {
       const parsed = readCaptions(caption.path);
@@ -201,7 +211,19 @@ export class Engine {
       transcript = { language: caption.language, source: caption.auto ? "auto-captions" : "captions", ...parsed };
       break;
     }
-    if (!transcript && this.options.transcriptFallback) transcript = await this.options.transcriptFallback(source.record, options.language);
+    if (!transcript && options.required && this.options.transcriptFallback) {
+      const key = `${source.record.id}\0${language ?? ""}`;
+      const failed = this.fallbackFailures.get(key);
+      if (failed) throw failed;
+      try {
+        transcript = await this.options.transcriptFallback(source.record, language);
+      } catch (error) {
+        const failure = error instanceof Error ? error : new Error(String(error));
+        failure.message += " (The Gemini transcript is not tried again for this video in this session; restart the server to retry.)";
+        this.fallbackFailures.set(key, failure);
+        throw failure;
+      }
+    }
     if (!transcript) {
       if (options.required) throw new InvalidInputError(noTranscriptMessage(source, Boolean(this.options.transcriptFallback)));
       return { source };
