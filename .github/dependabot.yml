@@ -4,9 +4,12 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # Minor and patch bumps come together; every major bump gets a PR of its own, so a breaking change is reviewed
+    # and merged (or declined) on its own. The bundle is rebuilt on these PRs by dependabot-bundle.yml.
     groups:
-      dependencies:
+      minor-and-patch:
         patterns: ["*"]
+        update-types: [minor, patch]
   - package-ecosystem: github-actions
     directory: /
     schedule:

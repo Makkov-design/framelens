@@ -4,7 +4,7 @@ import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { captureVideo, chooseMedia } from "../../src/browser/capture.js";
-import { findBrowser } from "../../src/browser/cdp.js";
+import { browserStartDeadlineMs, findBrowser } from "../../src/browser/cdp.js";
 import { readPage } from "../../src/browser/read.js";
 import { easingFamily, effectiveEasing, mergeReadings, specFromPage, type PageAnimation, type PageReading } from "../../src/browser/web.js";
 import { createHash } from "node:crypto";
@@ -120,6 +120,11 @@ describe("web animation data", () => {
 
   it("finds no browser where none is configured", () => {
     expect(findBrowser({ FRAMELENS_BROWSER: "/nope/chrome" })).toBeUndefined();
+  });
+
+  it("gives a cold browser start a minute in CI and 20 s elsewhere", () => {
+    expect(browserStartDeadlineMs({})).toBe(20_000);
+    expect(browserStartDeadlineMs({ CI: "true" })).toBe(60_000);
   });
 });
 
