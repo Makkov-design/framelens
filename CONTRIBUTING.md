@@ -105,8 +105,7 @@ The single word check that decides this lives in `src/sources/access.ts`; widen 
 ## Pull requests
 
 - Branch from `main`, one topic per pull request, and fill in the template.
-- CI must be green: typecheck, tests on Node 22 and 24 (Ubuntu) and Node 22 (macOS and Windows, without the media
-  tests), the committed bundle and extension build, the bundle starting and running `probe` on Node 20, 22 and 24,
+- CI must be green: typecheck, tests on Node 22 and 24 (Ubuntu) and Node 22 (Windows, without the media tests), the committed bundle and extension build, the bundle starting and running `probe` on Node 20, 22 and 24,
   and the Docker build. Real-browser tests get one retry in CI.
 - Add a line to `CHANGELOG.md` under "Unreleased" for anything a user would notice.
 - Do not bump versions; that happens at release time (`package.json`, `src/version.ts`,
