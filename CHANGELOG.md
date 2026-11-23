@@ -7,6 +7,9 @@
 - Development: on Dependabot's npm PRs a workflow rebuilds and commits the bundle, so they can pass CI once a
   maintainer approves the CI run; major bumps come as PRs of their own. CI also runs `probe` through the built
   bundle on Node 20, 22 and 24 and the unit tests on Windows.
+- The bundled Gemini client is `@google/genai` 3.0.0 (was 2.32.0). Calls stay on the `v1beta` API, where the
+  default `-latest` models exist (3.x defaults to `v1`), and a `GOOGLE_GENAI_API_VERSION` in the environment no
+  longer changes it. The bundle still runs on Node 20.
 
 ### Fixed
 
