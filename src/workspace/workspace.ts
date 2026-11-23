@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, rmdirSync, rmSync, w
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, posix, relative, resolve, win32 } from "node:path";
 import { framelensHome } from "../tools/env.js";
+import { throwIfCancelled } from "../runtime/call.js";
 
 /** What the sources layer writes to `source.json` and hands to the core. */
 export interface SourceRecord {
@@ -157,6 +158,8 @@ export class Workspace {
   }
 
   writeJson(name: string, value: unknown): string {
+    // Results are cached by file name: a cancelled call must not leave one behind for a later call to trust.
+    throwIfCancelled();
     this.ensure();
     const file = this.path(name);
     writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
@@ -164,6 +167,7 @@ export class Workspace {
   }
 
   writeText(name: string, text: string): string {
+    throwIfCancelled();
     this.ensure();
     const file = this.path(name);
     writeFileSync(file, text);

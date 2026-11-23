@@ -133,7 +133,9 @@ export async function readToolVersion(location: ToolLocation, signal?: AbortSign
     const version = location.name === "yt-dlp" ? line : /^\w+ version (\S+)/.exec(line)?.[1];
     if (version) versionCache.set(key, version);
     return version || undefined;
-  } catch {
+  } catch (error) {
+    // A cancelled call stops here instead of recording a source without its tool versions.
+    if (error instanceof ToolError && error.code === "aborted") throw error;
     return undefined;
   }
 }

@@ -1,11 +1,11 @@
-import { spawn } from "node:child_process";
+import { CancelledError, callSignal } from "../runtime/call.js";
+import { killTree, spawnTracked } from "../tools/children.js";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { InvalidInputError } from "../errors.js";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import type { MediaTools } from "../media/exec.js";
 import { spawnPath, type ToolLocator } from "../tools/spawn-path.js";
 import { filterValue } from "../media/sheets.js";
+import { tempPath } from "../media/temp.js";
 
 export interface EnergySample {
   t: number;
@@ -121,7 +121,16 @@ export interface ProfileOptions {
 /** Raw frames from ffmpeg's stdout into one buffer, grown as needed; rejects when they would pass `maxBytes`. */
 function streamFrames(ffmpeg: string, args: string[], frameBytes: number, expected: number, maxBytes: number, timeoutMs: number): Promise<{ data: Uint8Array; tooLarge: boolean }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(ffmpeg, args, { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawnTracked(ffmpeg, args);
+    // Cancelling the tool call stops the decode (and the window is not fitted from part of it).
+    const signal = callSignal();
+    let cancelled = false;
+    const onAbort = () => {
+      cancelled = true;
+      killTree(child);
+    };
+    if (signal?.aborted) onAbort();
+    else signal?.addEventListener("abort", onAbort, { once: true });
     let buffer = new Uint8Array(Math.min(maxBytes, Math.max(64, expected) * frameBytes));
     let used = 0;
     let tooLarge = false;
@@ -129,14 +138,14 @@ function streamFrames(ffmpeg: string, args: string[], frameBytes: number, expect
     let timedOut = false;
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill("SIGKILL");
+      killTree(child);
     }, timeoutMs);
     child.stdout.on("data", (chunk: Buffer) => {
       if (tooLarge) return;
       if (used + chunk.length > buffer.length) {
         if (used + chunk.length > maxBytes) {
           tooLarge = true;
-          child.kill("SIGKILL");
+          killTree(child);
           return;
         }
         const grown = new Uint8Array(Math.min(maxBytes, Math.max(used + chunk.length, Math.ceil(buffer.length * 1.5))));
@@ -151,10 +160,16 @@ function streamFrames(ffmpeg: string, args: string[], frameBytes: number, expect
     });
     child.on("error", (error: NodeJS.ErrnoException) => {
       clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
       reject(error.code === "ENOENT" ? new InvalidInputError("ffmpeg was not found on this computer. Run `npx framelens doctor` to see how to install it.") : error);
     });
     child.on("close", (code) => {
       clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      if (cancelled) {
+        reject(new CancelledError("ffmpeg"));
+        return;
+      }
       if (tooLarge) resolve({ data: new Uint8Array(0), tooLarge: true });
       else if (timedOut) reject(new Error(`ffmpeg timed out after ${Math.round(timeoutMs / 1000)} s reading the frames.`));
       else if (code !== 0) reject(new Error(`ffmpeg failed: ${stderr.trim().split("\n").slice(-6).join("\n") || `exit code ${code}`}`));
@@ -178,9 +193,8 @@ export async function motionProfile(
 ): Promise<{ energy: EnergySample[]; frames: PictureFrames; skipped?: boolean }> {
   // streamFrames spawns ffmpeg itself: locate it first (a pinned-only install is not on PATH).
   const ffmpeg = await spawnPath(tools, "ffmpeg");
-  const stamp = `${process.pid}-${Date.now()}`;
-  const out = join(tmpdir(), `framelens-energy-${stamp}.txt`);
-  const times = join(tmpdir(), `framelens-thumbs-${stamp}.txt`);
+  const out = tempPath("framelens-energy-", ".txt");
+  const times = tempPath("framelens-thumbs-", ".txt");
   const size = THUMB_WIDTH * THUMB_HEIGHT * 3;
   const maxBytes = options.maxBytes ?? MAX_FRAME_BYTES;
   const expected = options.expectedFrames ?? 0;
@@ -192,7 +206,11 @@ export async function motionProfile(
     `${hdr ? `${HDR_TONEMAP},` : ""}format=yuv444p,scale=${THUMB_WIDTH}:${THUMB_HEIGHT}:flags=area,signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=${filterValue(times)},format=rgb24`;
   const timeoutMs = 20 * 60_000;
   const energyOnly = () =>
-    tools.exec(ffmpeg, [...input, "-map", "0:v:0", "-an", "-vf", `scale=160:-2,${energyChain}`, "-fps_mode", "passthrough", "-f", "null", "-"], { timeoutMs }).catch(() => undefined);
+    tools.exec(ffmpeg, [...input, "-map", "0:v:0", "-an", "-vf", `scale=160:-2,${energyChain}`, "-fps_mode", "passthrough", "-f", "null", "-"], { timeoutMs }).catch((error: unknown) => {
+      // Energy is optional here, a cancel is not: never hand back an empty reading for a cancelled call.
+      if (error instanceof CancelledError) throw error;
+      return undefined;
+    });
   const result = (data: Uint8Array, skipped = false) => {
     const energy = existsSync(out) ? parseEnergy(readFileSync(out, "utf8")).map((s) => ({ t: Math.round((s.t + range.start) * 1000) / 1000, energy: s.energy })) : [];
     const stamps = skipped || !existsSync(times) ? [] : parseFrameTimes(readFileSync(times, "utf8"));
@@ -224,8 +242,9 @@ export async function motionProfile(
       try {
         read = await both(hdr);
         break;
-      } catch {
+      } catch (error) {
         clear();
+        if (error instanceof CancelledError) throw error;
       }
     }
     if (!read) {

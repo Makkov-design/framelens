@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writ
 import { basename, extname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { InvalidInputError } from "../errors.js";
+import { callSignal, singleFlight, throwIfCancelled } from "../runtime/call.js";
 import { parseVideoRef } from "../youtube.js";
 import { readToolVersion, requireTool, type Env, type ToolLocation } from "../tools/index.js";
 import { cobaltMayRetry, fetchWithCobalt } from "./cobalt.js";
@@ -98,6 +99,8 @@ function readRecord(dir: string): SourceRecord | undefined {
 }
 
 function writeRecord(dir: string, record: SourceRecord): void {
+  // A cancelled call records nothing: a later call would take it for a finished download.
+  throwIfCancelled();
   const { reused: _reused, inboxNote: _note, ...stored } = record;
   const tmp = join(dir, "source.json.tmp");
   writeFileSync(tmp, `${JSON.stringify(stored, null, 2)}\n`);
@@ -112,10 +115,24 @@ export async function resolveSource(input: string, options: ResolveOptions): Pro
   const env = options.env ?? process.env;
   const target = classifyInput(input, env);
   const dir = join(resolve(options.workspaceRoot), target.id);
+  if (target.kind === "file") {
+    mkdirSync(dir, { recursive: true });
+    return recordFile(dir, target, input, new Date().toISOString(), env);
+  }
+  // One download per workspace at a time: agents often call `transcript` and `frames` on a new link together, and a
+  // second download would delete the first one's files (and a failing first call would remove the workspace).
+  const signal = options.signal ?? callSignal();
+  const { value, shared } = await singleFlight(inFlight, dir, signal, () => fetchIntoWorkspace(dir, target, input, env, { ...options, ...(signal && { signal }) }), "The download");
+  return shared ? { ...value, input, reused: true } : value;
+}
+
+/** Downloads in progress, by workspace folder. */
+const inFlight = new Map<string, { promise: Promise<SourceRecord>; signal?: AbortSignal }>();
+
+async function fetchIntoWorkspace(dir: string, target: Exclude<Classified, { kind: "file" }>, input: string, env: Env, options: ResolveOptions): Promise<SourceRecord> {
   const existed = existsSync(dir);
   mkdirSync(dir, { recursive: true });
   const fetchedAt = new Date().toISOString();
-  if (target.kind === "file") return recordFile(dir, target, input, fetchedAt, env);
   try {
     return await fetchLink(dir, target, input, fetchedAt, env, options);
   } catch (error) {

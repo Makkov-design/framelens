@@ -6,6 +6,7 @@ import { readEnv, type Env } from "./env.js";
 import { ToolError } from "./errors.js";
 import { ffmpegAsset, pinnedFfmpegIntact, prepareFfmpeg, type PrepareFfmpegOptions, type PrepareFfmpegResult } from "./ffmpeg.js";
 import type { ToolLocator } from "./spawn-path.js";
+import { callSignal, untilAborted } from "../runtime/call.js";
 import { findTool, missingToolMessage, type ToolLocation, type ToolName } from "./find.js";
 import { isMusl, pinnedYtDlpIntact, prepareYtDlp, ytDlpAsset, type PrepareOptions, type PrepareResult } from "./ytdlp.js";
 
@@ -92,14 +93,16 @@ export class ToolSetup {
       }
       let pending = this.installing.get(group);
       if (!pending) {
-        pending = this.install(group, signal);
+        // Shared by every call that needs the tool: it runs without any one call's signal (it has its own time and
+        // stall limits), and each caller stops waiting when its own call is cancelled.
+        pending = this.install(group);
         this.installing.set(group, pending);
         pending.then(
           () => undefined,
           () => this.installing.delete(group),
         );
       }
-      const note = await pending;
+      const note = await untilAborted(pending, signal ?? callSignal(), `Waiting for the ${group} download`);
       callNotes.getStore()?.push(note);
       found = find();
       if (!found || !this.intact(found)) throw new ToolError("not_found", missingToolMessage(name));
@@ -111,12 +114,11 @@ export class ToolSetup {
     return found;
   }
 
-  private async install(group: "ffmpeg" | "yt-dlp", signal?: AbortSignal): Promise<string> {
+  private async install(group: "ffmpeg" | "yt-dlp"): Promise<string> {
     const common = {
       env: this.env,
       ...(this.options.platform && { platform: this.options.platform }),
       ...(this.options.arch && { arch: this.options.arch }),
-      ...(signal && { signal }),
       ...(this.options.log && { log: this.options.log }),
     };
     try {

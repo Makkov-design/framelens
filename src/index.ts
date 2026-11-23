@@ -16,13 +16,25 @@ import { capturableLogin, captureVideo, hasLoginProfile } from "./browser/captur
 import { maxDownloadMb, resolveSource, SourceError } from "./sources/index.js";
 import { geminiTranscriptFallback } from "./speech/gemini.js";
 import { ToolSetup } from "./tools/index.js";
+import { installChildCleanup } from "./tools/children.js";
+import { callSignal, reportProgress, singleFlight } from "./runtime/call.js";
+import type { SourceRecord } from "./sources/types.js";
+import { trackRequests } from "./runtime/stdio.js";
 import { chooseWorkspaceRoot, Workspace } from "./workspace/workspace.js";
 import type { Logger } from "./logger.js";
+
+/** Browser captures of login-walled links in progress, by workspace folder. */
+const captures = new Map<string, { promise: Promise<SourceRecord>; signal?: AbortSignal }>();
 
 function createEngine(logger: Logger, transcriptFallback?: TranscriptFallback): Engine {
   // Found once at start: env override, PATH, WinGet folders, then the pinned copy. When ffmpeg is nowhere, the bare
   // name stays and automatic setup downloads the pinned build on first use (unless FRAMELENS_AUTO_INSTALL=0).
-  const setup = new ToolSetup({ log: (line) => logger.info(line) });
+  const setup = new ToolSetup({
+    log: (line) => {
+      logger.info(line);
+      reportProgress(line);
+    },
+  });
   const tools = setup.mediaTools(execTool);
   const workspace = chooseWorkspaceRoot();
   if (workspace.from !== "cwd") logger.info(`workspace folder ${workspace.root}: ${workspace.reason}`);
@@ -30,17 +42,25 @@ function createEngine(logger: Logger, transcriptFallback?: TranscriptFallback): 
     tools,
     resolve: async (input, options) => {
       try {
-        return await resolveSource(input, { ...options, log: (line) => logger.info(line), locate: (name, signal) => setup.locate(name, signal) });
+        const log = (line: string) => {
+          logger.info(line);
+          reportProgress(line);
+        };
+        return await resolveSource(input, { ...options, log, locate: (name, signal) => setup.locate(name, signal) });
       } catch (error) {
         // Tier 3: a site that needs a login, and the user has logged in to the Frame Lens browser profile.
         if (!(error instanceof SourceError) || error.code !== "login_required" || !hasLoginProfile() || !capturableLogin(input, error.detail ?? error.message)) throw error;
         const id = `url-${createHash("sha1").update(input.trim()).digest("hex").slice(0, 10)}`;
         const ws = new Workspace(options.workspaceRoot, id);
-        logger.info("login required; capturing through the Frame Lens browser profile", { id });
-        const mediaPath = await captureVideo(input.trim(), ws.ensure("media"), tools, maxDownloadMb(process.env) * 1024 * 1024);
-        const record = { id, kind: "url" as const, input, url: input.trim(), mediaPath, fetchedAt: new Date().toISOString(), tools: {} };
-        ws.writeJson("source.json", record);
-        return record;
+        // One capture per link at a time, like downloads: two calls would drive the same browser profile.
+        const { value } = await singleFlight(captures, ws.dir, options.signal ?? callSignal(), async () => {
+          logger.info("login required; capturing through the Frame Lens browser profile", { id });
+          const mediaPath = await captureVideo(input.trim(), ws.ensure("media"), tools, maxDownloadMb(process.env) * 1024 * 1024);
+          const record = { id, kind: "url" as const, input, url: input.trim(), mediaPath, fetchedAt: new Date().toISOString(), tools: {} };
+          ws.writeJson("source.json", record);
+          return record;
+        }, "The capture");
+        return value;
       }
     },
     root: workspace.root,
@@ -69,7 +89,9 @@ async function main(): Promise<void> {
       logger: setupLogger,
       engine: createEngine(setupLogger),
     });
-    await setupServer.connect(new StdioServerTransport());
+    const setupTransport = new StdioServerTransport();
+    await setupServer.connect(setupTransport);
+    installChildCleanup(trackRequests(setupTransport));
     setupLogger.warn(`framelens ${VERSION} started without a Gemini key; local tools work, Gemini tools explain how to add one`);
     return;
   }
@@ -77,7 +99,11 @@ async function main(): Promise<void> {
   const analyzer = new CachedAnalyzer(createGeminiAnalyzer(config, logger), { ttlMs: config.cacheTtlMs });
   const server = createServer({ analyzer, logger, engine: createEngine(logger, geminiTranscriptFallback(analyzer)) });
 
-  await server.connect(new StdioServerTransport());
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+  // yt-dlp and ffmpeg run in their own process groups: end them when the server stops; when the client closes stdin,
+  // answer the calls it already sent first.
+  installChildCleanup(trackRequests(transport));
   logger.info(`framelens ${VERSION} ready`, { model: config.model });
 }
 

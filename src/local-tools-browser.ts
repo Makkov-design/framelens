@@ -6,6 +6,7 @@ import { InvalidInputError } from "./errors.js";
 import type { Logger } from "./logger.js";
 import { withSetupNotes } from "./local-tools.js";
 import { collectSetupNotes, setupNotesOf } from "./tools/setup.js";
+import { mcpCallContext, withCall } from "./runtime/call.js";
 import { oneLine } from "./text.js";
 
 /** Tools that drive a local browser: reading the animations of a live web page. */
@@ -32,10 +33,11 @@ export function registerBrowserTools(server: McpServer, engine: Engine, logger: 
       },
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true },
     },
-    async ({ url }) => {
+    async ({ url }, extra) => {
       const started = Date.now();
+      const call = mcpCallContext("web", extra);
       try {
-        const { value, notes } = await collectSetupNotes(() => engine.web(url, options.version ?? "dev"));
+        const { value, notes } = await withCall(call.context, () => collectSetupNotes(() => engine.web(url, options.version ?? "dev")));
         const { ws, spec, result, files, savedReading, inboxNote } = value;
         const r = result.reading;
         const ended = r.animations.filter((a) => a.ended).length;
@@ -71,6 +73,8 @@ export function registerBrowserTools(server: McpServer, engine: Engine, logger: 
         const message = error instanceof Error ? error.message : String(error);
         logger.warn("tool failed", { tool: "web", error: message });
         return withSetupNotes({ content: [{ type: "text", text: error instanceof InvalidInputError ? message : `web failed: ${message}` }], isError: true }, setupNotesOf(error));
+      } finally {
+        call.stop();
       }
     },
   );

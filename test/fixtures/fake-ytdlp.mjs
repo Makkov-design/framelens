@@ -5,6 +5,8 @@ import { dirname } from "node:path";
 const args = process.argv.slice(2);
 const mode = process.env.FAKE_YTDLP_MODE ?? "ok";
 if (process.env.FAKE_YTDLP_LOG) appendFileSync(process.env.FAKE_YTDLP_LOG, `${JSON.stringify(args)}\n`);
+// FAKE_YTDLP_PIDS: each run appends its process id, so a test can check it was stopped.
+if (process.env.FAKE_YTDLP_PIDS) appendFileSync(process.env.FAKE_YTDLP_PIDS, `${process.pid}\n`);
 
 if (args.includes("--version") || args.includes("-version")) {
   console.log(args.includes("-version") ? "ffmpeg version 0.0-fake Copyright" : "0.0.0-fake");
@@ -40,6 +42,13 @@ if (args.includes("--dump-single-json")) {
 const template = args[args.indexOf("-o") + 1];
 const base = template.replace("%(ext)s", "");
 mkdirSync(dirname(template), { recursive: true });
+// FAKE_YTDLP_DELAY_MS: a download that takes a while, with its partial file on disk meanwhile (concurrency, cancel).
+const delay = Number(process.env.FAKE_YTDLP_DELAY_MS ?? 0);
+if (delay) {
+  writeFileSync(`${base}mp4.part`, "partial");
+  await new Promise((done) => setTimeout(done, delay));
+}
+if (mode === "fail-download") fail("ERROR: unable to download video data: HTTP Error 500: Internal Server Error");
 if (mode !== "nofile") writeFileSync(`${base}mp4`, "fake-video");
 const langs = args.includes("--sub-langs") ? args[args.indexOf("--sub-langs") + 1].split(",") : [];
 for (const lang of langs) writeFileSync(`${base}${lang}.json3`, "{}");

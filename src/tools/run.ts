@@ -1,4 +1,5 @@
-import { spawn, execFile } from "node:child_process";
+import { callSignal } from "../runtime/call.js";
+import { killTree, spawnTracked } from "./children.js";
 import { ToolError } from "./errors.js";
 import type { Env } from "./env.js";
 
@@ -24,6 +25,8 @@ export interface RunResult {
 }
 
 const DEFAULT_MAX_OUTPUT = 8 * 1024 * 1024;
+/** How long output may still arrive after the program exits before its pipes are closed from this side. */
+const EXIT_GRACE_MS = 2000;
 
 class Collector {
   private chunks: Buffer[] = [];
@@ -69,24 +72,6 @@ class Collector {
   }
 }
 
-/** Ends the process and everything it started. Windows has no process groups, so taskkill walks the tree. */
-function killTree(pid: number | undefined): void {
-  if (pid === undefined) return;
-  if (process.platform === "win32") {
-    execFile("taskkill", ["/pid", String(pid), "/T", "/F"], { windowsHide: true }, () => {});
-    return;
-  }
-  try {
-    process.kill(-pid, "SIGKILL"); // the child leads its own group (detached below)
-  } catch {
-    try {
-      process.kill(pid, "SIGKILL");
-    } catch {
-      // already gone
-    }
-  }
-}
-
 /** A .js/.mjs/.cjs path runs under this Node, so a script can stand in for a binary (tests, custom wrappers). */
 function commandFor(binary: string, args: string[]): { file: string; args: string[] } {
   return /\.(c|m)?js$/i.test(binary)
@@ -99,7 +84,9 @@ function commandFor(binary: string, args: string[]): { file: string; args: strin
  * Throws ToolError for: program missing/unrunnable, timeout, abort.
  */
 export function run(binary: string, args: string[], options: RunOptions = {}): Promise<RunResult> {
-  const { timeoutMs, signal, cwd, env } = options;
+  const { timeoutMs, cwd, env } = options;
+  // Without its own signal, a program stops when the tool call it runs for is cancelled.
+  const signal = options.signal ?? callSignal();
   const max = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT;
   const started = Date.now();
 
@@ -110,13 +97,7 @@ export function run(binary: string, args: string[], options: RunOptions = {}): P
     }
     const cmd = commandFor(binary, args);
     const mergedEnv: Record<string, string | undefined> = { ...process.env, ...env };
-    const child = spawn(cmd.file, cmd.args, {
-      cwd,
-      env: mergedEnv as NodeJS.ProcessEnv,
-      windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"],
-      detached: process.platform !== "win32",
-    });
+    const child = spawnTracked(cmd.file, cmd.args, { ...(cwd && { cwd }), env: mergedEnv as NodeJS.ProcessEnv });
 
     const out = new Collector(max, "head");
     const err = new Collector(max, "tail");
@@ -125,10 +106,14 @@ export function run(binary: string, args: string[], options: RunOptions = {}): P
 
     let stopped: "timeout" | "aborted" | undefined;
     let settled = false;
+    let exitCode: number | null = null;
+    let grace: NodeJS.Timeout | undefined;
     const stop = (why: "timeout" | "aborted") => {
       if (stopped || settled) return;
       stopped = why;
-      killTree(child.pid);
+      killTree(child);
+      // A descendant outside the group can hold the pipes open after everything here is gone: stop waiting for them.
+      if (child.exitCode !== null || child.signalCode !== null) finish(exitCode);
     };
     const timer = timeoutMs !== undefined ? setTimeout(() => stop("timeout"), timeoutMs) : undefined;
     const onAbort = () => stop("aborted");
@@ -136,19 +121,14 @@ export function run(binary: string, args: string[], options: RunOptions = {}): P
     const cleanup = () => {
       settled = true;
       if (timer) clearTimeout(timer);
+      if (grace) clearTimeout(grace);
       signal?.removeEventListener("abort", onAbort);
     };
-
-    child.on("error", (error: NodeJS.ErrnoException) => {
+    const finish = (code: number | null) => {
+      if (settled) return;
       cleanup();
-      reject(
-        error.code === "ENOENT"
-          ? new ToolError("not_found", `Cannot run ${binary}: file not found.`)
-          : new ToolError("spawn_failed", `Cannot run ${binary}: ${error.message}`),
-      );
-    });
-    child.on("close", (code) => {
-      cleanup();
+      child.stdout.destroy();
+      child.stderr.destroy();
       const output = { stdout: out.text(), stderr: err.text() };
       if (stopped === "timeout") {
         reject(new ToolError("timeout", `${binary} did not finish within ${Math.round((timeoutMs ?? 0) / 1000)} s and was stopped.`, output));
@@ -157,6 +137,23 @@ export function run(binary: string, args: string[], options: RunOptions = {}): P
       } else {
         resolve({ code, ...output, truncated: out.dropped || err.dropped, durationMs: Date.now() - started });
       }
+    };
+
+    child.on("error", (error: NodeJS.ErrnoException) => {
+      if (settled) return;
+      cleanup();
+      reject(
+        error.code === "ENOENT"
+          ? new ToolError("not_found", `Cannot run ${binary}: file not found.`)
+          : new ToolError("spawn_failed", `Cannot run ${binary}: ${error.message}`),
+      );
     });
+    // `close` waits for the pipes; a descendant that left the process group (setsid) can keep them open after the
+    // program ended. Its exit settles the call after a short grace for the last output.
+    child.on("exit", (code) => {
+      exitCode = code;
+      grace = setTimeout(() => finish(code), EXIT_GRACE_MS);
+    });
+    child.on("close", (code) => finish(code ?? exitCode));
   });
 }

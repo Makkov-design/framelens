@@ -2,6 +2,8 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { MediaTools } from "./exec.js";
 import type { ExtractedFrame } from "./frames.js";
+import { uniqueName } from "./temp.js";
+import { CancelledError } from "../runtime/call.js";
 
 export interface SheetOptions {
   columns: number;
@@ -42,11 +44,18 @@ let drawtextSupport: Promise<boolean> | undefined;
 
 /** Whether this ffmpeg build has drawtext (needs libfreetype); sheets fall back to unlabelled cells. */
 export function hasDrawtext(tools: MediaTools): Promise<boolean> {
-  drawtextSupport ??= tools
+  const check = (drawtextSupport ??= tools
     .exec(tools.ffmpeg, ["-hide_banner", "-filters"], { timeoutMs: 30_000 })
     .then(({ stdout }) => /\sdrawtext\s/.test(stdout))
-    .catch(() => false);
-  return drawtextSupport;
+    .catch((error: unknown) => {
+      // A cancelled call learned nothing about this ffmpeg: forget it, so the next call asks again.
+      if (error instanceof CancelledError) {
+        drawtextSupport = undefined;
+        throw error;
+      }
+      return false;
+    }));
+  return check;
 }
 
 /** Keeps a label to two short lines. */
@@ -81,7 +90,7 @@ export async function buildSheets(
   const labels = await hasDrawtext(tools);
   const font = findFont();
   const sheets: Sheet[] = [];
-  const tmp = join(outDir, `.labels-${process.pid}-${Date.now()}`);
+  const tmp = join(outDir, uniqueName(".labels-"));
   mkdirSync(tmp, { recursive: true });
   try {
     for (let page = 0; page * perSheet < frames.length; page++) {

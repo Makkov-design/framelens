@@ -4,6 +4,7 @@ import { get } from "node:http";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { InvalidInputError } from "../errors.js";
+import { callSignal, throwIfCancelled } from "../runtime/call.js";
 
 /** Chrome or Edge on this computer, or `FRAMELENS_BROWSER`. */
 export function findBrowser(env: Record<string, string | undefined> = process.env, platform = process.platform): string | undefined {
@@ -163,7 +164,7 @@ function endAllOnExit(): void {
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
     process.once(signal, () => {
       for (const child of running) killTree(child);
-      process.exit(signal === "SIGINT" ? 130 : 143);
+      process.exit(signal === "SIGINT" ? 130 : signal === "SIGHUP" ? 129 : 143);
     });
   }
 }
@@ -202,6 +203,7 @@ export async function launchBrowser(options: {
   height?: number;
   maxLifetimeMs?: number;
 }): Promise<BrowserSession> {
+  throwIfCancelled();
   mkdirSync(options.profile, { recursive: true });
   const portFile = join(options.profile, "DevToolsActivePort");
   rmSync(portFile, { force: true });
@@ -225,6 +227,12 @@ export async function launchBrowser(options: {
   running.add(child);
   child.once("exit", () => running.delete(child));
   endAllOnExit();
+  // A cancelled `web` call ends its browser now, not at the end of its lifetime.
+  const signal = callSignal();
+  const onAbort = () => killTree(child);
+  if (signal?.aborted) onAbort();
+  else signal?.addEventListener("abort", onAbort, { once: true });
+  child.once("exit", () => signal?.removeEventListener("abort", onAbort));
   const lifetime = setTimeout(() => killTree(child), options.maxLifetimeMs ?? 5 * 60_000);
   lifetime.unref();
   const fail = (message: string) => {

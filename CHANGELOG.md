@@ -2,8 +2,16 @@
 
 ## Unreleased
 
+### Added
+
+- Local tools send MCP progress notifications when the client passes a progress token: each finished step, setup and
+  download lines, and a heartbeat every 15 s, so a client that resets its timeout on progress keeps waiting for a
+  long `style`, `track` or download.
+
 ### Changed
 
+- `plan` reads the picture changes of a source longer than 10 minutes in 12 sample windows of 30 s instead of every
+  second, and says so in its notes; `boundaries` over a whole long source gets a time limit that grows with its length.
 - Development: on Dependabot's npm PRs a workflow rebuilds and commits the bundle, so they can pass CI once a
   maintainer approves the CI run; major bumps come as PRs of their own. CI also runs `probe` through the built
   bundle on Node 20, 22 and 24 and the unit tests on Windows.
@@ -13,6 +21,15 @@
 
 ### Fixed
 
+- Cancelling a tool call stops the yt-dlp, ffmpeg or browser it started, with their own children; the server stops
+  all of them when it exits (they used to run on for up to 30 minutes). When the client closes stdin, the calls it
+  already sent are answered first. A cancelled call never stops the first-use download of ffmpeg or yt-dlp that
+  other calls wait for, and leaves no result in the workspace.
+- Two calls on the same new link at once (`transcript` and `frames` together) no longer break each other's download:
+  the second waits for the first (also for the login-profile capture). A cancelled download leaves nothing a later
+  call takes for complete.
+- A program that hits its time limit says so and names the limit, instead of reading as a failed command.
+- Temporary files get unguessable names instead of the process id and the time.
 - `style`, `track`, `compare` and `export` work when ffmpeg exists only as the automatically installed pinned build:
   the code that pipes frames from ffmpeg now locates it first instead of spawning the bare name.
 - The Gemini transcript fallback for YouTube links without captions runs only when a transcript is required
