@@ -232,6 +232,13 @@ describe("resolveSource: links through yt-dlp", () => {
     expect(runningChildren()).toBe(0);
   }, 20_000);
 
+  it("does not count the merger's temporary output against the cap", async () => {
+    // 3 MB downloaded; while merging, 6 MB are on disk. A 4 MB cap must let it through.
+    process.env.FAKE_YTDLP_MODE = "merge";
+    const record = await resolveSource(YT, { workspaceRoot: ws, env: env({ FRAMELENS_MAX_DOWNLOAD_MB: "4" }) });
+    expect(record.mediaPath).toBe(join(ws, "yt-jNQXAC9IVRw", "media", "source.mp4"));
+  }, 20_000);
+
   it("reports a download that produced no file", async () => {
     process.env.FAKE_YTDLP_MODE = "nofile";
     await expect(resolveSource(YT, { workspaceRoot: ws, env: env() })).rejects.toThrow(/no media file/);

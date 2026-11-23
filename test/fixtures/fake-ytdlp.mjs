@@ -1,5 +1,5 @@
 // A stand-in for yt-dlp used by the tests. FAKE_YTDLP_MODE picks the behaviour; FAKE_YTDLP_LOG collects the arguments.
-import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 const args = process.argv.slice(2);
@@ -56,6 +56,18 @@ if (mode === "stream") {
     appendFileSync(`${base}mp4.part`, chunk);
     await new Promise((done) => setTimeout(done, 50));
   }
+}
+// "merge": separate video and audio (2 + 1 MB), then the merger's temporary output (3 MB) next to them for a while,
+// then the inputs removed and the output renamed, as yt-dlp's FFmpegMergerPP does.
+if (mode === "merge") {
+  writeFileSync(`${base}f1.mp4`, Buffer.alloc(2 * 1024 * 1024));
+  writeFileSync(`${base}f2.m4a`, Buffer.alloc(1024 * 1024));
+  writeFileSync(`${base}temp.mp4`, Buffer.alloc(3 * 1024 * 1024));
+  await new Promise((done) => setTimeout(done, 1500));
+  rmSync(`${base}f1.mp4`);
+  rmSync(`${base}f2.m4a`);
+  renameSync(`${base}temp.mp4`, `${base}mp4`);
+  process.exit(0);
 }
 if (mode === "fail-download") fail("ERROR: unable to download video data: HTTP Error 500: Internal Server Error");
 if (mode !== "nofile") writeFileSync(`${base}mp4`, "fake-video");

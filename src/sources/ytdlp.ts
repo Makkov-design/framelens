@@ -27,12 +27,16 @@ export function maxDownloadMb(env: Env): number {
 /** How often a running download's size on disk is checked against the limit. */
 const SIZE_CHECK_MS = 500;
 
-/** Bytes yt-dlp has written so far: the result, its parts and fragments, and captions, all named source.* */
-function writtenBytes(dir: string): number {
+/**
+ * Bytes yt-dlp has downloaded so far: the result, its parts and fragments, and captions, all named source.*. The
+ * output a postprocessor writes next to its inputs (the merger's source.temp.mp4, then renamed over them) is a copy of
+ * what was downloaded, not more of it, so it is not counted: a video under the limit is not stopped while it merges.
+ */
+export function writtenBytes(dir: string): number {
   let total = 0;
   try {
     for (const name of readdirSync(dir)) {
-      if (!name.startsWith("source.")) continue;
+      if (!name.startsWith("source.") || name.includes(".temp.")) continue;
       try {
         total += statSync(join(dir, name)).size;
       } catch {
@@ -234,7 +238,7 @@ export async function fetchWithYtDlp(params: FetchParams): Promise<FetchResult> 
   } catch (error) {
     if (overLimit.signal.aborted && !(signal ?? callSignal())?.aborted) {
       for (const name of readdirSync(mediaDir)) if (name.startsWith("source.")) rmSync(join(mediaDir, name), { force: true });
-      throw new SourceError("too_large", `The download passed the ${maxMb} MB limit and was stopped (the site did not say its size up front). Raise FRAMELENS_MAX_DOWNLOAD_MB or use a shorter video.`);
+      throw new SourceError("too_large", `The download passed the ${maxMb} MB limit and was stopped (the site did not say its full size up front). Raise FRAMELENS_MAX_DOWNLOAD_MB or use a shorter video.`);
     }
     throw error;
   } finally {

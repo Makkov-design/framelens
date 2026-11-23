@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
+import { Readable as NodeReadable } from "node:stream";
+import { createBrotliDecompress, createGunzip, createInflate } from "node:zlib";
 import { checkHop, pinnedGet, systemLookup, type Lookup } from "../sources/cobalt.js";
 
 export interface FetchResponse {
@@ -82,13 +84,27 @@ export async function downloadFile(url: string, dir: string, fetchImpl?: FetchLi
     await res?.body?.cancel().catch(() => undefined);
     throw new Error(`Download failed: HTTP ${res?.status ?? "?"} for ${current.host}.`);
   }
-  const data = await readCapped(res, MAX_DOWNLOAD);
+  const data = await readCapped(decoded(res), MAX_DOWNLOAD);
   mkdirSync(dir, { recursive: true });
   const base = basename(parsed.pathname).replace(/[^A-Za-z0-9._-]/g, "_") || "animation";
   const ext = /\.(json|lottie|riv)$/i.test(base) ? "" : data[0] === 0x50 && data[1] === 0x4b ? ".lottie" : data.subarray(0, 4).toString("latin1") === "RIVE" ? ".riv" : ".json";
   const file = join(dir, `${createHash("sha1").update(parsed.href).digest("hex").slice(0, 8)}-${base}${ext}`);
   writeFileSync(file, data);
   return file;
+}
+
+/**
+ * The body as the file it stands for. A static host can send a precompressed asset with `Content-Encoding: gzip`
+ * even to a client that did not ask for it; `fetch` decoded that, the pinned request does not, so gzip, deflate and
+ * br are decoded here, and the size cap then applies to the decoded bytes.
+ */
+function decoded<T extends Readable>(res: T): T {
+  const encoding = res.headers?.get("content-encoding")?.trim().toLowerCase();
+  if (!res.body || !encoding || encoding === "identity") return res;
+  const decoder = encoding === "gzip" || encoding === "x-gzip" ? createGunzip() : encoding === "deflate" ? createInflate() : encoding === "br" ? createBrotliDecompress() : undefined;
+  if (!decoder) throw new Error(`The link sent the file with an encoding Frame Lens cannot read (${encoding.slice(0, 40)}).`);
+  const body = NodeReadable.toWeb(NodeReadable.fromWeb(res.body as never).pipe(decoder)) as unknown as ReadableStream<Uint8Array>;
+  return { ...res, headers: { get: (name: string) => (name.toLowerCase() === "content-length" ? null : res.headers!.get(name)) }, body };
 }
 
 export async function getJson(

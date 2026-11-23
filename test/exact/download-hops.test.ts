@@ -6,6 +6,7 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { gzipSync } from "node:zlib";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { downloadFile, type FetchLike } from "../../src/exact/http.js";
 
@@ -77,6 +78,10 @@ describe("exact link download over real sockets", () => {
     b = createServer((_req, res) => res.end(BODY));
     bUrl = await listen(b);
     a = createServer((req, res) => {
+      // A precompressed asset, sent gzip-encoded whatever the client asked for (as S3 and some CDNs do).
+      if (req.url === "/gz.json") return void res.writeHead(200, { "content-encoding": "gzip", "content-type": "application/json" }).end(gzipSync(BODY));
+      // 40 MB of zeros, a few KB on the wire: the cap must apply to what it unpacks to.
+      if (req.url === "/bomb.json") return void res.writeHead(200, { "content-encoding": "gzip" }).end(gzipSync(Buffer.alloc(40 * 1024 * 1024)));
       if (req.url === "/same") return void res.writeHead(302, { location: "/file.json" }).end();
       if (req.url === "/away") return void res.writeHead(302, { location: `${bUrl}/secret.json` }).end();
       res.end(BODY);
@@ -91,6 +96,12 @@ describe("exact link download over real sockets", () => {
   it("downloads from the local host the user named, also through a redirect on that host", async () => {
     const file = await downloadFile(`${aUrl}/same`, join(dir, "f"));
     expect(readFileSync(file, "utf8")).toBe(BODY);
+  });
+
+  it("saves a gzip-encoded answer decoded, and caps what it unpacks to", async () => {
+    const file = await downloadFile(`${aUrl}/gz.json`, join(dir, "h"));
+    expect(readFileSync(file, "utf8")).toBe(BODY);
+    await expect(downloadFile(`${aUrl}/bomb.json`, join(dir, "i"))).rejects.toThrow(/larger than 30 MB/);
   });
 
   it("refuses a redirect from that host to another local service", async () => {
