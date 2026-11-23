@@ -334,6 +334,29 @@ describe("automatic setup", () => {
     expect(ffmpegAsset("darwin", "arm64", FFMPEG_PIN)).toBeDefined();
   });
 
+  it("says what was installed on the next call when every call that waited for the install was cancelled", async () => {
+    const calls: string[] = [];
+    const slow = fakeInstall(calls);
+    const setup = new ToolSetup({
+      env: { FRAMELENS_HOME: home, PATH: "" },
+      platform,
+      arch: "x64",
+      intact,
+      prepareFfmpeg: async () => (await new Promise((r) => setTimeout(r, 200)), slow()),
+    });
+    const a = new AbortController();
+    const first = collectSetupNotes(() => setup.locate("ffmpeg", a.signal));
+    setTimeout(() => a.abort(), 30);
+    await expect(first).rejects.toBeInstanceOf(CancelledError);
+    await new Promise((r) => setTimeout(r, 400));
+    const next = await collectSetupNotes(() => setup.locate("ffmpeg"));
+    expect(next.notes).toHaveLength(1);
+    expect(next.notes[0]).toMatch(/downloaded FFmpeg/);
+    // Said once, not on every later call.
+    expect((await collectSetupNotes(() => setup.locate("ffprobe"))).notes).toEqual([]);
+    expect(calls).toEqual(["ffmpeg"]);
+  });
+
   it("finds the pinned build of the platform and arch it was asked for, not the machine's (an arm64 Mac running the linux-x64 tests)", async () => {
     const real = Object.getOwnPropertyDescriptor(process, "arch")!;
     Object.defineProperty(process, "arch", { ...real, value: process.arch === "arm64" ? "x64" : "arm64" });

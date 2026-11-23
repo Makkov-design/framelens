@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { MediaTools } from "./exec.js";
 import type { ExtractedFrame } from "./frames.js";
 import { uniqueName } from "./temp.js";
-import { CancelledError } from "../runtime/call.js";
+import { callSignal, outsideCall, untilAborted } from "../runtime/call.js";
 
 export interface SheetOptions {
   columns: number;
@@ -44,18 +44,15 @@ let drawtextSupport: Promise<boolean> | undefined;
 
 /** Whether this ffmpeg build has drawtext (needs libfreetype); sheets fall back to unlabelled cells. */
 export function hasDrawtext(tools: MediaTools): Promise<boolean> {
-  const check = (drawtextSupport ??= tools
-    .exec(tools.ffmpeg, ["-hide_banner", "-filters"], { timeoutMs: 30_000 })
-    .then(({ stdout }) => /\sdrawtext\s/.test(stdout))
-    .catch((error: unknown) => {
-      // A cancelled call learned nothing about this ffmpeg: forget it, so the next call asks again.
-      if (error instanceof CancelledError) {
-        drawtextSupport = undefined;
-        throw error;
-      }
-      return false;
-    }));
-  return check;
+  // One check per process, shared by every call: it runs outside any call (no call's cancel stops it), and each
+  // caller waits for it with its own signal.
+  drawtextSupport ??= outsideCall(() =>
+    tools
+      .exec(tools.ffmpeg, ["-hide_banner", "-filters"], { timeoutMs: 30_000 })
+      .then(({ stdout }) => /\sdrawtext\s/.test(stdout))
+      .catch(() => false),
+  );
+  return untilAborted(drawtextSupport, callSignal(), "The ffmpeg check");
 }
 
 /** Keeps a label to two short lines. */

@@ -12,6 +12,7 @@ import { AnalyzerError, type QuotaInfo } from "./errors.js";
 import type { Logger } from "./logger.js";
 import { SYSTEM_INSTRUCTION } from "./prompts.js";
 import type { Clip, VideoRef } from "./youtube.js";
+import { CancelledError, callSignal } from "./runtime/call.js";
 
 export type Detail = "default" | "low";
 
@@ -140,9 +141,28 @@ export class GeminiAnalyzer implements VideoAnalyzer {
       };
     }
 
-    // One deadline for the whole call, retries and fallback models included.
-    const deadline = AbortSignal.timeout(this.timeoutMs);
+    // One deadline for the whole call, retries and fallback models included; a cancelled tool call stops it too.
+    const call = callSignal();
+    if (call?.aborted) throw new CancelledError("The Gemini call");
+    const stop = new AbortController();
+    const timer = setTimeout(() => stop.abort(new DOMException("The Gemini call timed out", "TimeoutError")), this.timeoutMs);
+    timer.unref?.();
+    const onCancel = () => stop.abort(new CancelledError("The Gemini call"));
+    call?.addEventListener("abort", onCancel, { once: true });
+    const deadline = stop.signal;
     const deadlineAt = Date.now() + this.timeoutMs;
+    try {
+      return await this.analyzeWithin(request, videoPart, deadline, deadlineAt);
+    } catch (error) {
+      if (call?.aborted) throw new CancelledError("The Gemini call");
+      throw error;
+    } finally {
+      clearTimeout(timer);
+      call?.removeEventListener("abort", onCancel);
+    }
+  }
+
+  private async analyzeWithin(request: AnalyzeRequest, videoPart: Part, deadline: AbortSignal, deadlineAt: number): Promise<AnalyzeResult> {
     const config: GenerateContentConfig = {
       systemInstruction: SYSTEM_INSTRUCTION,
       abortSignal: deadline,

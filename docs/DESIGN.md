@@ -58,8 +58,8 @@ research and reasoning lives in the plan page; this file is what the code must f
 Every external process goes through `tools/` (one place for timeouts, Windows quoting, `windowsHide`, killing the
 tree on abort). stdout is reserved for MCP: logs go to stderr through `logger.ts`.
 
-**Cancellation, progress, shutdown.** Each local tool call (`probe` … `boundaries`, `web`, `exact`; not the Gemini
-tools, whose SDK call takes no signal) runs inside a call context (`runtime/call.ts`, an AsyncLocalStorage) that holds
+**Cancellation, progress, shutdown.** Each tool call (the local tools, `web`, `exact`, and the Gemini tools, whose
+request to Gemini is aborted with the call) runs inside a call context (`runtime/call.ts`, an AsyncLocalStorage) that holds
 the client's `extra.signal` and, when the client sent a progress token, a reporter. The code that starts programs
 (`tools/run.ts`, `media/exec.ts`, the ffmpeg pipes in `track/decode.ts` and `style/motion.ts`) reads the signal from
 there, so the engine's methods need no signal parameter. Those programs are spawned by `tools/children.ts`: no
@@ -68,13 +68,16 @@ Windows taskkill walks the tree), and registered until they end. The browser is 
 (`browser/cdp.ts`, its own group as well): it is killed when its call is cancelled, at the end of its lifetime and on
 exit. A cancelled call kills its children. The server kills all of them on exit, SIGINT, SIGTERM, SIGHUP and a broken
 stdout; when the client closes stdin, the requests it already sent are answered first (`runtime/stdio.ts` counts
-them), then the server exits. A SIGKILL of the server cannot be caught: its children, each in its own process group,
+them), then the server exits — unless the client process itself is gone (checked every second while draining), in
+which case nobody would read the answers and the server exits at once, killing the children. A SIGKILL of the server cannot be caught: its children, each in its own process group,
 then run until they end. `run` settles when the program exits even if a descendant that left the group keeps the
 pipes open, and never signals a pid after the child is reaped.
 
-Shared work never runs under one call's signal: the first-use install of ffmpeg or yt-dlp runs on its own limits and
-each caller waits with its own signal (`untilAborted`), and memoized answers (drawtext support, tool versions) are not
-kept from a cancelled call. Nothing is written to a workspace under a cancelled call (`Workspace.writeJson` and
+Shared work never runs under one call's signal or reports to one call's progress: the first-use install of ffmpeg or
+yt-dlp and the one drawtext check run outside any call (`outsideCall`) on their own limits, each caller waits with its
+own signal (`untilAborted`), and an install note that no waiting call could show goes to the next call that uses the
+tool. A cancelled call's reporter goes silent once the call has answered. Tool versions are not cached from a
+cancelled call. Nothing is written to a workspace under a cancelled call (`Workspace.writeJson` and
 `writeText` check), so a later call never trusts a result cut short. Progress notifications carry each finished
 step (the lines written to `PROGRESS.md`, setup and download log lines) and a heartbeat every 15 s, so a client that
 resets its timeout on progress waits for a long `style` or download. A program that hits its time limit is reported

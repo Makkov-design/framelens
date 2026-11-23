@@ -6,7 +6,7 @@ import { readEnv, type Env } from "./env.js";
 import { ToolError } from "./errors.js";
 import { ffmpegAsset, pinnedFfmpegIntact, prepareFfmpeg, type PrepareFfmpegOptions, type PrepareFfmpegResult } from "./ffmpeg.js";
 import type { ToolLocator } from "./spawn-path.js";
-import { callSignal, untilAborted } from "../runtime/call.js";
+import { callSignal, outsideCall, untilAborted } from "../runtime/call.js";
 import { findTool, missingToolMessage, type ToolLocation, type ToolName } from "./find.js";
 import { isMusl, pinnedYtDlpIntact, prepareYtDlp, ytDlpAsset, type PrepareOptions, type PrepareResult } from "./ytdlp.js";
 
@@ -56,6 +56,9 @@ export interface ToolSetupOptions {
 export class ToolSetup {
   private readonly installing = new Map<"ffmpeg" | "yt-dlp", Promise<string>>();
   private readonly located = new Map<ToolName, ToolLocation>();
+  /** Install notes some call has shown, and the ones no call could (every waiter was cancelled). */
+  private readonly noted = new Set<"ffmpeg" | "yt-dlp">();
+  private readonly undelivered = new Map<"ffmpeg" | "yt-dlp", string>();
 
   constructor(private readonly options: ToolSetupOptions = {}) {}
 
@@ -73,13 +76,19 @@ export class ToolSetup {
 
   /** The tool's location, downloading the pinned build first when it is missing (or changed) and setup is on. */
   async locate(name: ToolName, signal?: AbortSignal): Promise<ToolLocation> {
+    const group = name === "yt-dlp" ? "yt-dlp" : "ffmpeg";
+    const late = this.undelivered.get(group);
+    if (late && callNotes.getStore()) {
+      this.undelivered.delete(group);
+      this.noted.add(group);
+      callNotes.getStore()!.push(late);
+    }
     const cached = this.located.get(name);
     if (cached) return cached;
     const find = () => findTool(name, { env: this.env, ...(this.options.platform && { platform: this.options.platform }), ...(this.options.arch && { arch: this.options.arch }) });
     let found = find();
     if (found && !this.intact(found)) found = undefined;
     if (!found) {
-      const group = name === "yt-dlp" ? "yt-dlp" : "ffmpeg";
       const platform = this.options.platform ?? process.platform;
       const arch = this.options.arch ?? process.arch;
       const pinned = group === "yt-dlp" ? Boolean(ytDlpAsset(platform, arch)) : Boolean(ffmpegAsset(platform, arch));
@@ -95,14 +104,22 @@ export class ToolSetup {
       if (!pending) {
         // Shared by every call that needs the tool: it runs without any one call's signal (it has its own time and
         // stall limits), and each caller stops waiting when its own call is cancelled.
-        pending = this.install(group);
-        this.installing.set(group, pending);
-        pending.then(
-          () => undefined,
+        const started = outsideCall(() => this.install(group));
+        pending = started;
+        this.installing.set(group, started);
+        started.then(
+          (note) => {
+            // When every call that waited was cancelled, the next call that uses the tool says what was installed.
+            // After the waiters' own continuations (microtasks) have run.
+            setImmediate(() => {
+              if (!this.noted.has(group)) this.undelivered.set(group, note);
+            });
+          },
           () => this.installing.delete(group),
         );
       }
       const note = await untilAborted(pending, signal ?? callSignal(), `Waiting for the ${group} download`);
+      this.noted.add(group);
       callNotes.getStore()?.push(note);
       found = find();
       if (!found || !this.intact(found)) throw new ToolError("not_found", missingToolMessage(name));

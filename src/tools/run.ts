@@ -21,6 +21,11 @@ export interface RunResult {
   stderr: string;
   /** Output beyond maxOutputBytes was dropped. */
   truncated: boolean;
+  /**
+   * The program exited but something it started kept its pipes open, so they were closed from this side after a short
+   * grace: output written after that (by the descendant) is missing.
+   */
+  heldOpen?: boolean;
   durationMs: number;
 }
 
@@ -113,7 +118,10 @@ export function run(binary: string, args: string[], options: RunOptions = {}): P
       stopped = why;
       killTree(child);
       // A descendant outside the group can hold the pipes open after everything here is gone: stop waiting for them.
-      if (child.exitCode !== null || child.signalCode !== null) finish(exitCode);
+      if (child.exitCode !== null || child.signalCode !== null) {
+        held = true;
+        finish(exitCode);
+      }
     };
     const timer = timeoutMs !== undefined ? setTimeout(() => stop("timeout"), timeoutMs) : undefined;
     const onAbort = () => stop("aborted");
@@ -124,6 +132,7 @@ export function run(binary: string, args: string[], options: RunOptions = {}): P
       if (grace) clearTimeout(grace);
       signal?.removeEventListener("abort", onAbort);
     };
+    let held = false;
     const finish = (code: number | null) => {
       if (settled) return;
       cleanup();
@@ -135,7 +144,7 @@ export function run(binary: string, args: string[], options: RunOptions = {}): P
       } else if (stopped === "aborted") {
         reject(new ToolError("aborted", `${binary} was cancelled.`, output));
       } else {
-        resolve({ code, ...output, truncated: out.dropped || err.dropped, durationMs: Date.now() - started });
+        resolve({ code, ...output, truncated: out.dropped || err.dropped, ...(held && { heldOpen: true }), durationMs: Date.now() - started });
       }
     };
 
@@ -152,7 +161,10 @@ export function run(binary: string, args: string[], options: RunOptions = {}): P
     // program ended. Its exit settles the call after a short grace for the last output.
     child.on("exit", (code) => {
       exitCode = code;
-      grace = setTimeout(() => finish(code), EXIT_GRACE_MS);
+      grace = setTimeout(() => {
+        held = true;
+        finish(code);
+      }, EXIT_GRACE_MS);
     });
     child.on("close", (code) => finish(code ?? exitCode));
   });

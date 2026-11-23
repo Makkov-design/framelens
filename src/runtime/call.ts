@@ -16,6 +16,14 @@ export function withCall<T>(context: CallContext, body: () => Promise<T>): Promi
   return store.run(context, body);
 }
 
+/**
+ * Runs shared work (an install, a one-time check other calls wait for) outside the current call: no call's signal
+ * stops it and no call's progress reporter hears it. Each caller waits for it with its own signal (`untilAborted`).
+ */
+export function outsideCall<T>(body: () => T): T {
+  return store.exit(body);
+}
+
 /** The signal of the tool call this code runs in, if any. */
 export function callSignal(): AbortSignal | undefined {
   return store.getStore()?.signal;
@@ -114,6 +122,7 @@ export function mcpCallContext(tool: string, extra: ProgressExtra | undefined, h
   const started = Date.now();
   let count = 0;
   let last = `${tool}: started`;
+  let stopped = false;
   const send = (message: string) => {
     count += 1;
     extra.sendNotification({ method: "notifications/progress", params: { progressToken: token, progress: count, message } }).catch(() => undefined);
@@ -125,10 +134,15 @@ export function mcpCallContext(tool: string, extra: ProgressExtra | undefined, h
     context: {
       signal: extra.signal,
       progress: (message) => {
+        // Work started inside the call can outlive it: nothing is sent once its answer is out.
+        if (stopped) return;
         last = `${tool}: ${message}`;
         send(last);
       },
     },
-    stop: () => clearInterval(timer),
+    stop: () => {
+      stopped = true;
+      clearInterval(timer);
+    },
   };
 }

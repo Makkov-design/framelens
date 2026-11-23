@@ -3,6 +3,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createGeminiAnalyzer, GEMINI_API_VERSION } from "../src/analyzer.js";
 import { permanentFallbackFailure } from "../src/engine.js";
+import { CancelledError, withCall } from "../src/runtime/call.js";
 import { loadConfig } from "../src/config.js";
 import { AnalyzerError } from "../src/errors.js";
 import { silentLogger } from "../src/logger.js";
@@ -121,5 +122,26 @@ describe("the real @google/genai client", () => {
     expect(permanentFallbackFailure(error)).toBe(false);
     // A transcript answer that is not the expected JSON stays remembered (the same video gives the same answer).
     expect(permanentFallbackFailure(new AnalyzerError("bad_response", "not the expected JSON"))).toBe(true);
+  });
+
+  it("stops the Gemini request when the tool call is cancelled", async () => {
+    let aborted = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (_input: unknown, init?: { signal?: AbortSignal }) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => {
+              aborted = true;
+              reject(Object.assign(new Error("aborted"), { name: "AbortError" }));
+            });
+          }),
+      ),
+    );
+    const controller = new AbortController();
+    const pending = withCall({ signal: controller.signal }, () => analyzer().analyze(request));
+    setTimeout(() => controller.abort(), 50);
+    await expect(pending).rejects.toBeInstanceOf(CancelledError);
+    expect(aborted).toBe(true);
   });
 });

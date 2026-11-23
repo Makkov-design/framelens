@@ -64,6 +64,20 @@ export function killAllChildren(sync = false): void {
 }
 
 let installed = false;
+/** How often a server that is finishing its calls after stdin closed checks that its client still exists. */
+const ORPHAN_CHECK_MS = 1000;
+
+/** Whether the process that started the server is still there (on POSIX an orphan is also given a new parent). */
+function parentAlive(parent: number): boolean {
+  if (process.platform !== "win32" && process.ppid !== parent) return false;
+  try {
+    process.kill(parent, 0);
+    return true;
+  } catch (error) {
+    // EPERM: it exists, it is just not ours to signal.
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
 
 /** What the server tells the cleanup about the requests it is answering (see `trackRequests`). */
 export interface RequestState {
@@ -102,11 +116,24 @@ export function installChildCleanup(requests?: RequestState, input: NodeJS.Reada
     output.write("", () => process.exit(0));
   };
   let ending = false;
+  const parent = process.ppid;
   const drained = () => {
     if (ending) return;
     ending = true;
-    if (!requests) flushThenExit();
-    else requests.whenIdle(flushThenExit);
+    if (!requests || requests.pending() === 0) {
+      flushThenExit();
+      return;
+    }
+    // Answer what was already sent, unless the client itself is gone (it died with both pipes closed): then nobody
+    // reads the answers, and a 30-minute download must not run on for nobody.
+    const watch = setInterval(() => {
+      if (!parentAlive(parent)) now();
+    }, ORPHAN_CHECK_MS);
+    watch.unref();
+    requests.whenIdle(() => {
+      clearInterval(watch);
+      flushThenExit();
+    });
   };
   input.once("end", drained);
   input.once("close", drained);
