@@ -42,27 +42,30 @@ and install tools. Every change went through an independent audit, fixes and a r
 - `web` refuses a page, redirect, script navigation or frame on this computer, the local network or a cloud metadata
   address, unless it is the host you gave, and says when the page was read at another address than the one given.
 - A link fetched with yt-dlp (not YouTube) has its redirects walked first with the `exact` rule: a public link that
-  redirects to this computer or the local network is refused before yt-dlp starts. What this does not cover is in
-  SECURITY.md.
+  redirects to this computer or the local network is refused before yt-dlp starts, and so is a redirect to another
+  host over plain http (http-to-http included) or one that adds a user name and password. A user name and password in
+  the link you give still work, and are left out of results and messages. The check sends one extra request and can
+  add a few seconds. What it does not cover is in SECURITY.md.
 - The login-profile capture checks that every hop of its media download goes to a public address.
 - A caption track whose name is not a language tag is not downloaded, and a caption file named by the site reads as
   `und`; caption languages are printed on one line.
-- Third-party text on one line (`oneLine`) also drops C1 controls, zero-width characters, bidi overrides and isolates
-  and the byte-order mark. The Gemini transcript's text and speaker are kept on one line, and `exact` puts its
+- Third-party text on one line (`oneLine`) also drops C1 controls, soft hyphens, zero-width and other invisible format
+  characters, bidi marks, overrides and isolates, interlinear annotations, tag characters and the byte-order mark. The Gemini transcript's text and speaker are kept on one line, and `exact` puts its
   third-party notice first.
 - ffmpeg, ffprobe, yt-dlp and the browser no longer inherit the Gemini, Google, Figma and cobalt keys or the cookie
   settings (cookies still reach yt-dlp as its arguments).
 - A `.framelens/` folder that came with a project is no longer trusted blindly: a stored source is reused only for the
-  same link and only for files inside that workspace's own `media` folder. Workspaces from before this check are
-  downloaded once more.
-- `framelens logout` deletes only a profile folder that `framelens login` made (it now leaves a marker file), or the
-  default one: a FRAMELENS_BROWSER_PROFILE pointing at another folder by mistake is refused and nothing in it is
-  deleted.
+  same link and only for files inside that workspace's own `media` folder, with only the fields Frame Lens writes (its
+  text on one line). Workspaces from before this check are downloaded once more.
+- `framelens logout` deletes only a profile folder that `framelens login` made and recorded in your own Frame Lens
+  folder, or the default one: a FRAMELENS_BROWSER_PROFILE pointing at another folder by mistake is refused and nothing
+  in it is deleted. A custom profile folder set up with 2.1 is refused too; delete it by hand.
 - Exports (`hypit`'s ANALYSIS.md and the starter projects) name the source link without its query, fragment or user
   name, which can hold a signed link's access parameters; the workspace keeps the full link. In a git repository,
   `framelens init` adds `.framelens/` to `.gitignore` when nothing ignores it yet.
-- `framelens init` warns, instead of saying to commit `.mcp.json`, when another server's settings there hold what
-  looks like a literal secret (it names the setting, never the value); other servers' settings are kept as they were.
+- `framelens init` warns, instead of saying to commit `.mcp.json`, when another server's settings there (its
+  environment, headers, arguments or address) hold what looks like a literal secret; it names the setting, never the
+  value. Other servers' settings are kept as they were, and so is the file's indentation.
 - Workspace writes no longer follow a link out of the workspace folder, and a `.framelens` in the working folder that
   is a link elsewhere is not used (the home folder is, and the server says why).
 - Development: the MCP SDK's `hono` and `@hono/node-server` are at 4.13.19 and 2.1.10 (npm advisories for 4.13.13 and

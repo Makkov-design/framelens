@@ -14,13 +14,17 @@ described in the README's Security section.
   not add a user name or password. A response is at most 30 MB after decoding gzip, deflate or br, and 30 s.
 - The user's own cobalt instance: the same rule, with the instance as the trusted host.
 - Links fetched with yt-dlp (any link that is not YouTube): before yt-dlp runs, Frame Lens sends the link one plain
-  GET and walks the redirects its server answers with (at most 5), under the same rule as `exact`; a refused hop means
-  yt-dlp is never started. Not covered: a server that answers yt-dlp differently from that GET, the requests a site
+  GET and walks the redirects its server answers with (at most 5, 15 s in all), under the same rule as `exact`; a
+  refused hop means yt-dlp is never started. Exempt: the link's own origin (same scheme, host and port), which may be
+  local, and a user name and password in the link the user gave. Refused: a redirect to another origin that is not
+  https (an http-to-http redirect to another host included), or that resolves to this computer, the local network or
+  a cloud metadata address, and any redirect that adds a user name or password. Not covered: a server that answers yt-dlp differently from that GET, the requests a site
   extractor makes on its own (API and media addresses it builds), and a link this computer cannot reach directly (for
   example only through a proxy), where the walk is skipped and yt-dlp's own result stands.
 - `web`: every document the page loads (its redirects, the navigations its scripts start, its frames) is held until
-  its host is checked; one that resolves to this computer, the local network or a cloud metadata address is refused,
-  unless it is the host the user gave. The result names an address it was read at other than the one given. Images,
+  its host is checked; one that resolves to this computer, the local network or a cloud metadata address is refused.
+  Exempt: the host name the user gave, on any port and over http or https (a dev server's other ports). Not exempt:
+  another name for the same machine (the user gave `localhost`, the page goes to `127.0.0.1`). The result names an address it was read at other than the one given. Images,
   scripts and other subresources are not checked, and the browser resolves names itself (no pinned address).
 - The login-profile capture downloads the page's media over https only, and every hop must resolve to a public address,
   connected to as checked.
@@ -29,8 +33,12 @@ described in the README's Security section.
   `FRAMELENS_COBALT_KEY` or `FRAMELENS_COOKIES_*` in their environment.
 - A workspace record (`.framelens/<id>/source.json`) is reused only for the same link, and only for files whose real
   path is inside that workspace's own `media` folder. No workspace write follows a link out of the workspace folder.
-- `framelens logout` deletes only a folder with the marker `framelens login` writes, or the default profile folder.
-- Exports name the source link without its query, fragment or user name.
+- `framelens logout` deletes only a folder that `framelens login` made, recorded in this user's own
+  `~/.framelens/browser-profiles.json` by its real path, and that still has its marker file; or the default
+  `~/.framelens/browser-profile` when neither it nor `~/.framelens` is a link. A marker alone (one that came with a
+  repository) is not enough, and a custom profile from 2.1 is refused: delete it by hand.
+- Exports name the source link without its query, fragment or user name. A user name and password in a link the user
+  gave are left out of tool results, error messages and progress lines.
 - Error results that quote ffmpeg's or yt-dlp's output keep it to one line of at most 200 characters and carry the
   third-party notice.
 - No answer from a download source may crash the server (`test/runtime/download-guard.test.ts`).

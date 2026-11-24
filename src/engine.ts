@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { AnalyzerError, InvalidInputError } from "./errors.js";
-import { oneLine } from "./text.js";
+import { hideCredentials, oneLine } from "./text.js";
 import type { Logger } from "./logger.js";
 import { findBoundaries, mergeBoundaries, type Boundaries } from "./media/boundaries.js";
 import { DEFAULT_EXEC_TIMEOUT_MS, type MediaTools } from "./media/exec.js";
@@ -474,7 +474,7 @@ export class Engine {
       timeline: writeWithMeasuredBlock(ws, "TIMELINE.md", timelineMarkdown(spec, transcript).measured, timelineMarkdown(spec, transcript).skeleton),
     };
     const analysis = ws.path("ANALYSIS.md");
-    files.analysis = existsSync(analysis) ? analysis : ws.writeText("ANALYSIS.md", ANALYSIS_SKELETON(record.title ?? record.input));
+    files.analysis = existsSync(analysis) ? analysis : ws.writeText("ANALYSIS.md", ANALYSIS_SKELETON(record.title ?? hideCredentials(record.input)));
     this.progress(ws, `style: ${shots.length} shots, ${transitions.length} gradual transitions, ${spec.events.length} moves, ${overall.length} palette colours (${start.toFixed(2)}–${end.toFixed(2)} s)${notes.length ? `; ${notes.join(" ")}` : ""}`);
     return { source, spec, files, notes };
   }

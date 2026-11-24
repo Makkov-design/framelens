@@ -6,7 +6,7 @@ import { callSignal } from "../runtime/call.js";
 import { cookieArgs, redactArgs } from "./cookies.js";
 import { mayBeAccessControl } from "./access.js";
 import { SourceError } from "./errors.js";
-import { oneLine } from "../text.js";
+import { hideCredentials, oneLine } from "../text.js";
 import type { CaptionTrack } from "./types.js";
 
 /** Best video up to 1080p plus best audio; falls back to a single file, then to anything. */
@@ -124,7 +124,7 @@ export function mapYtDlpFailure(stderr: string, url: string): SourceError {
   const platform = platformName(url);
   const errorLine = [...text.split("\n")].reverse().find((l) => /^ERROR:/i.test(l.trim()))?.trim() ?? text.trim().split("\n").pop() ?? "";
   // The site's words (a page's track names, its error text) are third-party: one line, capped, and marked.
-  const brief = oneLine(errorLine.replace(/^ERROR:\s*(\[[^\]]+\]\s*[\w-]*:?\s*)?/i, ""), 200);
+  const brief = oneLine(hideCredentials(errorLine).replace(/^ERROR:\s*(\[[^\]]+\]\s*[\w-]*:?\s*)?/i, ""), 200);
   // yt-dlp's own words travel with the error: the message below is help text, but the cobalt policy and the login
   // profile decide on what the site actually said (src/sources/access.ts).
   const detail = text.trim().slice(-4000);
@@ -224,7 +224,7 @@ export async function fetchWithYtDlp(params: FetchParams): Promise<FetchResult> 
   ];
   const runEnv = { PYTHONIOENCODING: "utf-8", NO_COLOR: "1" };
   const exec = async (args: string[], limit: number, stop?: AbortSignal) => {
-    log(`yt-dlp ${redactArgs(args).slice(0, 40).join(" ")}`);
+    log(hideCredentials(`yt-dlp ${redactArgs(args).slice(0, 40).join(" ")}`));
     try {
       return await run(ytdlp.path, args, { timeoutMs: limit, signal: stop ? anySignal(signal ?? callSignal(), stop) : signal, env: runEnv, maxOutputBytes: 32 * 1024 * 1024 });
     } catch (error) {

@@ -2,12 +2,12 @@
  * Third-party text (a source's title, a caption, a page's element ids, a Lottie layer name) on one line, for
  * comments, Markdown and summaries. TikTok and Instagram titles are the post's caption and can hold line breaks: in a
  * `//` comment the next line would run as code in the user's project, and in Markdown it would start a heading.
- * C1 controls, zero-width characters, bidi overrides and isolates, and the byte-order mark go too: they hide or
- * reorder what a reader sees.
+ * C1 controls, soft hyphens, zero-width and other invisible format characters, bidi marks, overrides and isolates,
+ * interlinear annotations, tag characters and the byte-order mark go too: they hide or reorder what a reader sees.
  */
 export function oneLine(text: unknown, max = 200): string {
   return String(text ?? "")
-    .replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff`]+/g, " ")
+    .replace(/[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u180e\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff\ufff9-\ufffb`]+|[\u{e0000}-\u{e007f}]+/gu, " ")
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, max);
@@ -49,4 +49,9 @@ export function shareableLink(text: string): string {
   if (url.protocol !== "http:" && url.protocol !== "https:") return text;
   const v = /(^|\.)youtube\.com$/i.test(url.hostname) ? url.searchParams.get("v") : null;
   return `${url.origin}${url.pathname}${v ? `?v=${encodeURIComponent(v)}` : ""}`;
+}
+
+/** Text with any `user:password@` taken out of the links in it: a link the user gave may carry their credentials. */
+export function hideCredentials(text: string): string {
+  return String(text ?? "").replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/?#@]*@/gi, "$1");
 }

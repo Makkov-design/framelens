@@ -1,8 +1,8 @@
-import { createWriteStream, existsSync, mkdirSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createWriteStream, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { get as httpGet } from "node:http";
 import { get as httpsGet } from "node:https";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { InvalidInputError } from "../errors.js";
 import type { MediaTools } from "../media/exec.js";
 import { isBotCheckOrLimit } from "../sources/access.js";
@@ -155,27 +155,66 @@ export async function login(site: string, write: (line: string) => void): Promis
 /** The file that marks a browser profile folder as one Frame Lens made (`login` writes it into a new folder). */
 const PROFILE_MARKER = ".framelens-profile";
 
-/** Marks the profile folder as Frame Lens's own when it is new or empty; a folder that already holds files is not claimed. */
-export function claimProfile(profile: string): void {
-  if (existsSync(profile) && readdirSync(profile).length) return;
-  mkdirSync(profile, { recursive: true });
-  writeFileSync(join(profile, PROFILE_MARKER), "A browser profile made by Frame Lens (framelens login). `framelens logout` deletes this folder.\n");
+/**
+ * The profile folders `login` made, by real path, kept in this user's own Frame Lens folder: a marker file alone
+ * could have come with a repository, this list cannot.
+ */
+const madeProfilesFile = (home: string) => join(home, ".framelens", "browser-profiles.json");
+
+function madeProfiles(home: string): string[] {
+  try {
+    const list = JSON.parse(readFileSync(madeProfilesFile(home), "utf8")) as unknown;
+    return Array.isArray(list) ? list.filter((p): p is string => typeof p === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveMadeProfiles(home: string, list: string[]): void {
+  mkdirSync(join(home, ".framelens"), { recursive: true });
+  writeFileSync(madeProfilesFile(home), `${JSON.stringify([...new Set(list)], null, 2)}\n`);
 }
 
 /**
- * Deletes the Frame Lens browser profile, and only a folder Frame Lens made: one with its marker, or the default
- * folder with a browser profile in it (made before the marker existed). FRAMELENS_BROWSER_PROFILE pointing at any
- * other folder (a typo, the project, the home folder) is refused, and nothing in it is deleted.
+ * Marks the profile folder as Frame Lens's own when it is new or empty, and records it in this user's list; a folder
+ * that already holds files is not claimed.
+ */
+export function claimProfile(profile: string, home = homedir()): void {
+  if (existsSync(profile) && readdirSync(profile).length) return;
+  mkdirSync(profile, { recursive: true });
+  writeFileSync(join(profile, PROFILE_MARKER), "A browser profile made by Frame Lens (framelens login). `framelens logout` deletes this folder.\n");
+  saveMadeProfiles(home, [...madeProfiles(home), realpathSync(profile)]);
+}
+
+const isLink = (path: string) => {
+  try {
+    return lstatSync(path).isSymbolicLink();
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Deletes the Frame Lens browser profile, and only a folder Frame Lens made: one `login` recorded in this user's own
+ * list that still has its marker, or the default folder (in this user's own Frame Lens folder, not a link) with a
+ * browser profile in it, as 2.1 made it. Any other folder FRAMELENS_BROWSER_PROFILE points at (a typo, the project,
+ * the home folder, a 2.1 custom profile) is refused, and nothing in it is deleted.
  */
 export function logout(env: Record<string, string | undefined> = process.env, home = homedir()): boolean {
   const profile = profileDir(env, home);
   if (!existsSync(profile)) return false;
   const real = realpathSync(profile);
-  const own = existsSync(join(real, PROFILE_MARKER)) || (existsSync(defaultProfileDir(home)) && real === realpathSync(defaultProfileDir(home)) && existsSync(join(real, "Local State")));
-  if (!own || !statSync(real).isDirectory()) {
-    throw new InvalidInputError(`${profile} was not made by \`framelens login\` (it has no ${PROFILE_MARKER} file), so it was not deleted. Delete the folder yourself if it is the profile, or unset FRAMELENS_BROWSER_PROFILE.`);
+  const fallback = defaultProfileDir(home);
+  const recorded = madeProfiles(home).includes(real) && existsSync(join(real, PROFILE_MARKER));
+  const defaultOne =
+    resolve(profile) === resolve(fallback) && !isLink(fallback) && !isLink(join(home, ".framelens")) && existsSync(join(real, "Local State"));
+  if (!(recorded || defaultOne) || !statSync(real).isDirectory()) {
+    throw new InvalidInputError(
+      `${profile} is not a profile folder \`framelens login\` made and recorded, so it was not deleted. If it is the profile (one set up with an earlier version), delete the folder yourself; otherwise unset FRAMELENS_BROWSER_PROFILE.`,
+    );
   }
   rmSync(real, { recursive: true, force: true });
+  if (recorded) saveMadeProfiles(home, madeProfiles(home).filter((p) => p !== real));
   return true;
 }
 

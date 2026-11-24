@@ -12,7 +12,8 @@ import { checkHop, cobaltMayRetry, fetchWithCobalt, pinnedGet, systemLookup, typ
 import { SourceError } from "./errors.js";
 import { inboxNote, newestInboxFile } from "./inbox.js";
 import type { ResolveOptions, SourceKind, SourceRecord } from "./types.js";
-import { fetchWithYtDlp, maxDownloadMb, type FetchResult } from "./ytdlp.js";
+import { captionLanguage, fetchWithYtDlp, maxDownloadMb, type FetchResult } from "./ytdlp.js";
+import { hideCredentials, oneLine } from "../text.js";
 
 export type Classified =
   | { kind: "youtube"; id: string; url: string }
@@ -52,7 +53,7 @@ export function classifyInput(rawInput: string, env: Env = process.env): Classif
     try {
       new URL(input);
     } catch {
-      throw new SourceError("bad_input", `"${input.slice(0, 200)}" is not a valid link.`);
+      throw new SourceError("bad_input", `"${hideCredentials(input).slice(0, 200)}" is not a valid link.`);
     }
     return { kind: "url", id: `url-${sha10(input)}`, url: input };
   }
@@ -154,7 +155,8 @@ export async function checkLinkRedirects(link: string, signal?: AbortSignal, loo
   const stop = anySignal(signal, AbortSignal.timeout(15_000));
   let current = first;
   for (let hop = 0; ; hop++) {
-    const address = await checkHop(current, first, lookup, LINK_WORDING);
+    // The user's own link may carry a user name and password (theirs to give); a redirect may not add one.
+    const address = hop === 0 ? undefined : await checkHop(current, first, lookup, LINK_WORDING);
     let res;
     try {
       res = await pinnedGet(current, address, stop);
@@ -229,7 +231,22 @@ async function fetchLink(
   if (previous && previous.id === target.id && previous.kind === target.kind && previous.sourceUrl === target.url && insideFolder(previous.mediaPath, media, options.workspaceRoot)) {
     log(`Reusing ${previous.mediaPath}`);
     const captions = previous.captions?.filter((c) => c && typeof c.path === "string" && insideFolder(c.path, media, options.workspaceRoot));
-    return { ...previous, input, captions: captions?.length ? captions : undefined, reused: true };
+    // Only the fields Frame Lens writes are carried over, its text on one line: a planted record's free text (an
+    // inbox note, a warning) is not shown as Frame Lens's own words.
+    const record: SourceRecord = {
+      id: previous.id,
+      kind: previous.kind,
+      input,
+      ...(typeof previous.url === "string" && { url: previous.url }),
+      sourceUrl: target.url,
+      ...(typeof previous.title === "string" && { title: oneLine(previous.title, 500) }),
+      mediaPath: previous.mediaPath,
+      ...(captions?.length && { captions: captions.map((c) => ({ path: c.path, language: captionLanguage(String(c.language)), auto: c.auto === true })) }),
+      fetchedAt: oneLine(previous.fetchedAt, 40),
+      tools: Object.fromEntries(Object.entries(previous.tools ?? {}).filter(([k]) => ["ytDlp", "ffmpeg", "cobalt"].includes(k)).map(([k, v]) => [k, oneLine(v, 200)])),
+      reused: true,
+    };
+    return record;
   }
 
   // yt-dlp follows redirects without a hop check: the link's own redirects are walked first.
