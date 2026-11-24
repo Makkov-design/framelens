@@ -37,12 +37,20 @@ export function killTree(child: ChildProcess, sync = false): void {
   }
 }
 
+/** Secrets Frame Lens reads itself; no program it starts needs them (cookies reach yt-dlp as arguments). */
+const SECRET_ENV = /^(GEMINI_API_KEY|GOOGLE_API_KEY|FIGMA_TOKEN|FRAMELENS_COBALT_KEY|FRAMELENS_COOKIES_.*)$/i;
+
+/** The environment for a child program: this one's, without the API keys and cookie settings. */
+export function childEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  return Object.fromEntries(Object.entries(env).filter(([name]) => !SECRET_ENV.test(name)));
+}
+
 /**
  * Spawns a program the way every Frame Lens child runs: no shell, hidden window, its own process group on POSIX (so
  * killTree reaches what it starts), and registered until it ends so shutdown can kill it.
  */
 export function spawnTracked(file: string, args: string[], options: SpawnOptionsWithoutStdio = {}): ChildProcessWithoutNullStreams {
-  const child = spawn(file, args, { windowsHide: true, ...options, stdio: ["ignore", "pipe", "pipe"], detached: process.platform !== "win32" }) as unknown as ChildProcessWithoutNullStreams;
+  const child = spawn(file, args, { windowsHide: true, ...options, env: childEnv(options.env), stdio: ["ignore", "pipe", "pipe"], detached: process.platform !== "win32" }) as unknown as ChildProcessWithoutNullStreams;
   if (child.pid !== undefined) {
     running.add(child);
     // Kept until its pipes close too: a descendant in its group may still be running after the program exits.

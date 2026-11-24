@@ -1,11 +1,13 @@
-import { createWriteStream, existsSync, mkdirSync, rmSync, statSync } from "node:fs";
+import { createWriteStream, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { get as httpGet } from "node:http";
 import { get as httpsGet } from "node:https";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { InvalidInputError } from "../errors.js";
 import type { MediaTools } from "../media/exec.js";
 import { isBotCheckOrLimit } from "../sources/access.js";
-import { evaluate, findBrowser, launchBrowser, navigate, profileDir } from "./cdp.js";
+import { checkHop, pinnedLookup, systemLookup, type Lookup } from "../sources/cobalt.js";
+import { defaultProfileDir, evaluate, findBrowser, launchBrowser, navigate, profileDir } from "./cdp.js";
 
 /** Login pages for `framelens login <site>`. */
 export const LOGIN_PAGES: Record<string, string> = {
@@ -37,21 +39,23 @@ export function chooseMedia(candidates: MediaCandidate[]): { video?: MediaCandid
   return { ...(video && { video }), ...(audio && { audio }) };
 }
 
+const NO_ORIGIN = new URL("about:blank");
+const CAPTURE_WORDING = { who: "The page's media link", what: "an address" };
 const isLocal = (url: string) => /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?\//.test(url);
 
 /**
  * Downloads a URL to a file (following redirects), stopping at `maxBytes`. Always settles: over the cap, on a stalled
  * or failed transfer, the partial file is removed and the promise rejects.
  */
-export function download(url: string, file: string, maxBytes: number, redirects = 5, origin = url): Promise<void> {
+export async function download(url: string, file: string, maxBytes: number, redirects = 5, origin = url, lookup: Lookup = systemLookup): Promise<void> {
+  // Plain http only for a page on this computer (tests, local previews); everything remote goes over https, and a
+  // remote server cannot redirect us to this computer.
+  const local = isLocal(url);
+  if (!(local ? isLocal(origin) : url.startsWith("https://"))) throw new Error("Only https media links are downloaded.");
+  // Every remote hop must go to a public address (the check cobalt and `exact` use), and is connected to as checked.
+  // The media link comes from the page, so no host is trusted: `about:blank` has no origin any link can match.
+  const address = local ? undefined : await checkHop(new URL(url), NO_ORIGIN, lookup, CAPTURE_WORDING);
   return new Promise((resolve, reject) => {
-    // Plain http only for a page on this computer (tests, local previews); everything remote goes over https, and a
-    // remote server cannot redirect us to this computer.
-    const local = isLocal(url);
-    if (!(local ? isLocal(origin) : url.startsWith("https://"))) {
-      reject(new Error("Only https media links are downloaded."));
-      return;
-    }
     let settled = false;
     const fail = (error: Error) => {
       if (settled) return;
@@ -74,11 +78,11 @@ export function download(url: string, file: string, maxBytes: number, redirects 
     };
     let out: ReturnType<typeof createWriteStream> | undefined;
     const get = local ? httpGet : httpsGet;
-    const req = get(url, { headers: { "user-agent": "Mozilla/5.0 (framelens)" } }, (res) => {
+    const req = get(url, { headers: { "user-agent": "Mozilla/5.0 (framelens)" }, ...(address && { lookup: pinnedLookup(address) }) }, (res) => {
       if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location && redirects > 0) {
         res.resume();
         settled = true;
-        download(new URL(res.headers.location, url).toString(), file, maxBytes, redirects - 1, origin).then(resolve, reject);
+        download(new URL(res.headers.location, url).toString(), file, maxBytes, redirects - 1, origin, lookup).then(resolve, reject);
         return;
       }
       if (res.statusCode !== 200) {
@@ -123,6 +127,7 @@ export async function login(site: string, write: (line: string) => void): Promis
   const executable = findBrowser();
   if (!executable) throw new InvalidInputError("framelens login needs Chrome or Edge on this computer.");
   const profile = profileDir();
+  claimProfile(profile);
   write(
     `A browser window opens with a separate Frame Lens profile (${profile}).\n` +
       "Log in there yourself, ideally with a second account, then close the window. Your login stays only on this computer;\n" +
@@ -147,10 +152,69 @@ export async function login(site: string, write: (line: string) => void): Promis
   write("Saved. Links that need this login now open through the Frame Lens profile.\n");
 }
 
-export function logout(): boolean {
-  const profile = profileDir();
+/** The file that marks a browser profile folder as one Frame Lens made (`login` writes it into a new folder). */
+const PROFILE_MARKER = ".framelens-profile";
+
+/**
+ * The profile folders `login` made, by real path, kept in this user's own Frame Lens folder: a marker file alone
+ * could have come with a repository, this list cannot.
+ */
+const madeProfilesFile = (home: string) => join(home, ".framelens", "browser-profiles.json");
+
+function madeProfiles(home: string): string[] {
+  try {
+    const list = JSON.parse(readFileSync(madeProfilesFile(home), "utf8")) as unknown;
+    return Array.isArray(list) ? list.filter((p): p is string => typeof p === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveMadeProfiles(home: string, list: string[]): void {
+  mkdirSync(join(home, ".framelens"), { recursive: true });
+  writeFileSync(madeProfilesFile(home), `${JSON.stringify([...new Set(list)], null, 2)}\n`);
+}
+
+/**
+ * Marks the profile folder as Frame Lens's own when it is new or empty, and records it in this user's list; a folder
+ * that already holds files is not claimed.
+ */
+export function claimProfile(profile: string, home = homedir()): void {
+  if (existsSync(profile) && readdirSync(profile).length) return;
+  mkdirSync(profile, { recursive: true });
+  writeFileSync(join(profile, PROFILE_MARKER), "A browser profile made by Frame Lens (framelens login). `framelens logout` deletes this folder.\n");
+  saveMadeProfiles(home, [...madeProfiles(home), realpathSync(profile)]);
+}
+
+const isLink = (path: string) => {
+  try {
+    return lstatSync(path).isSymbolicLink();
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Deletes the Frame Lens browser profile, and only a folder Frame Lens made: one `login` recorded in this user's own
+ * list that still has its marker, or the default folder (in this user's own Frame Lens folder, not a link) with a
+ * browser profile in it, as 2.1 made it. Any other folder FRAMELENS_BROWSER_PROFILE points at (a typo, the project,
+ * the home folder, a 2.1 custom profile) is refused, and nothing in it is deleted.
+ */
+export function logout(env: Record<string, string | undefined> = process.env, home = homedir()): boolean {
+  const profile = profileDir(env, home);
   if (!existsSync(profile)) return false;
-  rmSync(profile, { recursive: true, force: true });
+  const real = realpathSync(profile);
+  const fallback = defaultProfileDir(home);
+  const recorded = madeProfiles(home).includes(real) && existsSync(join(real, PROFILE_MARKER));
+  const defaultOne =
+    resolve(profile) === resolve(fallback) && !isLink(fallback) && !isLink(join(home, ".framelens")) && existsSync(join(real, "Local State"));
+  if (!(recorded || defaultOne) || !statSync(real).isDirectory()) {
+    throw new InvalidInputError(
+      `${profile} is not a profile folder \`framelens login\` made and recorded, so it was not deleted. If it is the profile (one set up with an earlier version), delete the folder yourself; otherwise unset FRAMELENS_BROWSER_PROFILE.`,
+    );
+  }
+  rmSync(real, { recursive: true, force: true });
+  if (recorded) saveMadeProfiles(home, madeProfiles(home).filter((p) => p !== real));
   return true;
 }
 

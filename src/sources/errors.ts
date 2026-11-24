@@ -23,14 +23,17 @@ export class SourceError extends InvalidInputError {
   readonly accessControl: boolean;
   /** What the site or yt-dlp actually said, when the message is help text (classified in sources/access.ts). */
   readonly detail: string | undefined;
+  /** The message quotes the site's or yt-dlp's own words: the tool result carries the third-party notice. */
+  readonly thirdParty: boolean;
 
   constructor(
     readonly code: SourceErrorCode,
     message: string,
-    options: { accessControl?: boolean; detail?: string } = {},
+    options: { accessControl?: boolean; detail?: string; thirdParty?: boolean } = {},
   ) {
     super(message);
     this.accessControl = options.accessControl === true;
     this.detail = options.detail;
+    this.thirdParty = options.thirdParty === true;
   }
 }

@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { uniqueEvents, type EasingFamily } from "../style/motion.js";
 import type { MotionSpec } from "../style/spec.js";
-import { oneLine, safeHex } from "../text.js";
+import { oneLine, safeHex, shareableLink } from "../text.js";
 import { cssEasing, curveAt, curveFamily, curveLabel, safeCurve, springPoints, type Curve } from "../track/curve.js";
 import { preferredTracks } from "../track/link.js";
 import { exportable, primaryCurve } from "../track/run.js";
@@ -764,6 +764,8 @@ export function safeSpec(spec: MotionSpec): MotionSpec {
   const range = { start: finite(spec.range.start), end: finite(spec.range.end) };
   return {
     ...spec,
+    // Exports are shared: the full link (a signed link's access parameters) stays in the workspace's own files.
+    source: { ...spec.source, input: shareableLink(String(spec.source.input ?? "")), ...(spec.source.url && { url: shareableLink(String(spec.source.url)) }) },
     timebase: { ...timebase, ...(w && { width: Math.round(w) }), ...(h && { height: Math.round(h) }), ...(f && { fps: f }) } as MotionSpec["timebase"],
     range,
     shots: spec.shots.map((s) => ({ ...s, start: finite(s.start), end: finite(s.end), frames: finite(s.frames) })),

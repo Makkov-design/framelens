@@ -5,7 +5,7 @@ import type { ProbeInfo } from "../media/probe.js";
 import type { Transcript } from "../speech/transcript.js";
 import type { SourceRecord, Workspace } from "../workspace/workspace.js";
 import { formatTimestamp } from "../youtube.js";
-import { oneLine } from "../text.js";
+import { hideCredentials, oneLine, shareableLink } from "../text.js";
 import { mergePalettes, palette, type Swatch } from "./palette.js";
 import { uniqueEvents, type ClassifiedChange, type MotionEvent } from "./motion.js";
 import type { Transition } from "./transitions.js";
@@ -264,8 +264,9 @@ export function buildSpec(input: {
     generatedBy: `framelens ${input.version}`,
     source: {
       kind: input.record.kind,
-      input: input.record.input,
-      ...(input.record.url && { url: input.record.url }),
+      // motion-spec.json is shared and exported; the full link (with a user name and password) stays in source.json.
+      input: hideCredentials(input.record.input),
+      ...(input.record.url && { url: hideCredentials(input.record.url) }),
       ...(input.record.title && { title: input.record.title }),
     },
     range,
@@ -374,7 +375,7 @@ export function styleMarkdown(spec: MotionSpec): { measured: string; skeleton: s
     "",
     ...(moveLines.length ? ["| Move | Starts | Frames | Family | Curve | Peak at |", "|---|---|---|---|---|---|", ...moveLines] : []),
   ].join("\n");
-  const skeleton = `# Style: ${oneLine(spec.source.title ?? spec.source.input)}
+  const skeleton = `# Style: ${oneLine(spec.source.title ?? shareableLink(spec.source.input))}
 
 One sentence on the look and feel (to write after looking at the sheets).
 
@@ -420,7 +421,7 @@ export function timelineMarkdown(spec: MotionSpec, transcript?: Transcript): { m
     return `### ${fmt(s.start)}–${fmt(s.end)} · ${s.id} (${s.frames} frames)\n\nColours ${s.palette.map((p) => `\`${p}\``).join(" ")}.${joins.length ? ` ${joins.join(" ")}` : ""}${said ? ` Said: “${oneLine(said, 300)}”` : ""}\n\n_What happens and why:_`;
   });
   const measured = ["## Shots", "", ...sections].join("\n\n");
-  const skeleton = `# Timeline: ${oneLine(spec.source.title ?? spec.source.input)}
+  const skeleton = `# Timeline: ${oneLine(spec.source.title ?? shareableLink(spec.source.input))}
 
 Sections by source time. Under each shot, connect what moves to the words, beats or actions it serves, and say what it does for the viewer.
 

@@ -4,7 +4,9 @@ import { join } from "node:path";
 import { InvalidInputError } from "../errors.js";
 import type { MediaTools } from "../media/exec.js";
 import { buildSheets, type Sheet } from "../media/sheets.js";
-import { evaluate, findBrowser, launchBrowser, navigate, screenshot } from "./cdp.js";
+import { hostAddresses, hostOf, isPrivateAddress, systemLookup, type Lookup } from "../sources/cobalt.js";
+import { oneLine } from "../text.js";
+import { evaluate, findBrowser, launchBrowser, navigate, screenshot, type BrowserSession } from "./cdp.js";
 import { cleanReading, mergeReadings, PAGE_SCRIPT, RECORDER_SCRIPT, type PageReading } from "./web.js";
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -14,6 +16,8 @@ const ALL_ANIMATIONS = `(() => { const list = new Set(); try { for (const a of d
 
 export interface PageResult {
   reading: PageReading;
+  /** Pages and frames the page tried to open on this computer or the local network, which were refused. */
+  refused?: string[];
   /** Screenshots down the page. */
   views: string[];
   /** The opening animations frame by frame (all page animations paused and stepped together). */
@@ -24,7 +28,7 @@ export interface PageResult {
  * Opens a page in a throwaway headless profile, reads its animations at the top and while scrolling, takes views
  * down the page, then pauses every animation and steps it in time to film the opening motion frame by frame.
  */
-export async function readPage(url: string, outDir: string, tools: MediaTools, options: { maxScroll?: number; stepSeconds?: number } = {}): Promise<PageResult> {
+export async function readPage(url: string, outDir: string, tools: MediaTools, options: { maxScroll?: number; stepSeconds?: number; lookup?: Lookup } = {}): Promise<PageResult> {
   if (!/^https?:\/\//i.test(url)) throw new InvalidInputError(`"${url}" is not a web page address (http or https).`);
   const executable = findBrowser();
   if (!executable) throw new InvalidInputError("Reading web pages needs Chrome or Edge on this computer (or FRAMELENS_BROWSER pointing to one).");
@@ -35,10 +39,18 @@ export async function readPage(url: string, outDir: string, tools: MediaTools, o
     // The recorder runs before the page's own scripts, so motion that ends before the page is read still counts.
     await session.cdp.send("Page.enable", {}, session.sessionId);
     await session.cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: RECORDER_SCRIPT }, session.sessionId);
-    await navigate(session, url);
+    const refused = await guardNavigations(session, new URL(url), options.lookup);
+    await navigate(session, url).catch((error: unknown) => {
+      if (refused.length) throw new InvalidInputError(`${oneLine(url, 300)} redirected to ${refused[0]}, on this computer or the local network; it was not opened.`);
+      throw error;
+    });
     await wait(1200);
     const readings: PageReading[] = [cleanReading(await evaluate(session, PAGE_SCRIPT))];
     const first = readings[0]!;
+    // The page navigated to a refused address and the tab shows the browser's error page: nothing to read.
+    if (refused.length && /^chrome-error:/i.test(first.url)) {
+      throw new InvalidInputError(`${oneLine(url, 300)} sent the browser to ${refused[0]}, on this computer or the local network; it was not opened.`);
+    }
     const maxScroll = Math.min(first.scrollHeight - first.viewport.height, options.maxScroll ?? 12_000);
     const views: string[] = [];
     const take = async (name: string) => {
@@ -80,11 +92,43 @@ export async function readPage(url: string, outDir: string, tools: MediaTools, o
     const sheet = frames.length
       ? (await buildSheets(frames, outDir, "opening", { columns: 4, rows: Math.min(6, Math.ceil(frames.length / 4)), width: 480, label: (f) => `${f.t.toFixed(2)} s` }, tools))[0]
       : undefined;
-    return { reading: mergeReadings(readings), views, ...(sheet && { sheet }) };
+    return { reading: mergeReadings(readings), views, ...(sheet && { sheet }), ...(refused.length && { refused: [...new Set(refused)] }) };
   } finally {
     await session.close();
     removeProfile(profile);
   }
+}
+
+/**
+ * Holds every document request of the tab (the page, its redirects, the navigations its scripts start, its frames)
+ * until its host is checked: one on this computer or the local network is refused, unless it is the host the user
+ * gave. A page cannot send the reading, its text and screenshots, to an admin page or a cloud metadata address.
+ * Returns the list the refused addresses are added to.
+ */
+async function guardNavigations(session: BrowserSession, input: URL, lookup: Lookup = systemLookup): Promise<string[]> {
+  const refused: string[] = [];
+  const own = hostOf(input);
+  session.cdp.on("Fetch.requestPaused", (params, sid) => {
+    if (sid !== session.sessionId) return;
+    const requestId = params.requestId as string;
+    const target = String((params.request as { url?: unknown } | undefined)?.url ?? "");
+    void (async () => {
+      let refuse = false;
+      try {
+        const next = new URL(target);
+        const host = hostOf(next);
+        if ((next.protocol === "http:" || next.protocol === "https:") && host !== own) refuse = (await hostAddresses(host, lookup)).some(isPrivateAddress);
+      } catch {
+        // A name that does not resolve here does not open in the browser either.
+      }
+      if (refuse) {
+        refused.push(oneLine(target, 120));
+        await session.cdp.send("Fetch.failRequest", { requestId, errorReason: "BlockedByClient" }, session.sessionId);
+      } else await session.cdp.send("Fetch.continueRequest", { requestId }, session.sessionId);
+    })().catch(() => undefined);
+  });
+  await session.cdp.send("Fetch.enable", { patterns: [{ urlPattern: "*", resourceType: "Document", requestStage: "Request" }] }, session.sessionId);
+  return refused;
 }
 
 /**

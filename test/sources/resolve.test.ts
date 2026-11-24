@@ -7,6 +7,9 @@ import { run } from "../../src/tools/run.js";
 import { findTool } from "../../src/tools/find.js";
 import { runningChildren } from "../../src/tools/children.js";
 
+/** These tests use no network: the redirect walk before yt-dlp is tested on its own (regressions-2-2-security). */
+const offline = async () => {};
+
 const fake = resolve("test/fixtures/fake-ytdlp.mjs");
 const root = mkdtempSync(join(tmpdir(), "framelens-src-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
@@ -178,7 +181,7 @@ describe("resolveSource: links through yt-dlp", () => {
   });
 
   it("fetches other links with the generic id and the page's canonical url", async () => {
-    const record = await resolveSource("https://cdn.example.com/clip.mp4", { workspaceRoot: ws, env: env() });
+    const record = await resolveSource("https://cdn.example.com/clip.mp4", { workspaceRoot: ws, checkRedirects: offline, env: env() });
     expect(record.kind).toBe("url");
     expect(record.id).toMatch(/^url-/);
     expect(record.url).toBe("https://example.com/watch/1");
@@ -191,7 +194,7 @@ describe("resolveSource: links through yt-dlp", () => {
     await resolveSource(YT, { workspaceRoot: ws, env: env({ FRAMELENS_COOKIES_FILE: jar }), log: (l) => logs.push(l) });
     expect(calls().some((c) => c.includes("--cookies") && c.includes(jar))).toBe(true);
     expect(logs.join("\n")).not.toContain("secret-cookies");
-    await resolveSource("https://example.org/other", { workspaceRoot: ws, env: env({ FRAMELENS_COOKIES_FROM_BROWSER: "firefox" }) });
+    await resolveSource("https://example.org/other", { workspaceRoot: ws, checkRedirects: offline, env: env({ FRAMELENS_COOKIES_FROM_BROWSER: "firefox" }) });
     expect(calls().some((c) => c.includes("--cookies-from-browser") && c.includes("firefox"))).toBe(true);
   });
 
@@ -288,14 +291,14 @@ describe("resolveSource: links through yt-dlp", () => {
   ])("maps the %s failure to %s", async (mode, code, message) => {
     process.env.FAKE_YTDLP_MODE = mode;
     const url = mode === "login" ? "https://www.instagram.com/reel/Cx1/" : YT;
-    const error = await resolveSource(url, { workspaceRoot: ws, env: env() }).catch((e) => e);
+    const error = await resolveSource(url, { workspaceRoot: ws, checkRedirects: offline, env: env() }).catch((e) => e);
     expect(error.code).toBe(code);
     expect(error.message).toMatch(message);
   });
 
   it("names the platform and lists the tiers for a login wall", async () => {
     process.env.FAKE_YTDLP_MODE = "login";
-    const error = await resolveSource("https://www.instagram.com/reel/Cx1/", { workspaceRoot: ws, env: env() }).catch((e) => e);
+    const error = await resolveSource("https://www.instagram.com/reel/Cx1/", { workspaceRoot: ws, checkRedirects: offline, env: env() }).catch((e) => e);
     expect(error.message).toContain("Instagram");
     expect(error.message).toContain("FRAMELENS_INBOX");
     expect(error.message).toContain("FRAMELENS_COOKIES_FROM_BROWSER");

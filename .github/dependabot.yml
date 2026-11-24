@@ -4,6 +4,13 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # A release is only proposed once it has been out for a while (3 days for minor and patch, 14 for major), so a
+    # broken or compromised release has time to be found and pulled. Security updates are not delayed.
+    cooldown:
+      default-days: 3
+      semver-major-days: 14
+      semver-minor-days: 3
+      semver-patch-days: 3
     # Minor and patch bumps come together; every major bump gets a PR of its own, so a breaking change is reviewed
     # and merged (or declined) on its own. The bundle is rebuilt on these PRs by dependabot-bundle.yml.
     groups:

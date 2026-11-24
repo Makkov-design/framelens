@@ -1,4 +1,4 @@
-import { InvalidInputError } from "../errors.js";
+import { InvalidInputError, ToolOutputError } from "../errors.js";
 import { CancelledError } from "../runtime/call.js";
 import { ToolError } from "../tools/errors.js";
 import { run } from "../tools/run.js";
@@ -49,7 +49,7 @@ export const execTool: Exec = async (file, args, options = {}) => {
   }
   if (result.code !== 0) {
     const tail = result.stderr.trim().split("\n").slice(-6).join("\n");
-    throw new Error(`${name} failed: ${tail || (result.code === null ? "it was ended by a signal" : `exit code ${result.code}`)}`);
+    throw new ToolOutputError(`${name} failed`, tail, result.code === null ? "it was ended by a signal" : `exit code ${result.code}`);
   }
   // A cut-off output would be read as the whole (a probe's packet list, a filter's per-frame log): fail instead.
   if (result.truncated) throw new Error(`${name} wrote more than ${MAX_BUFFER / 1024 / 1024} MiB of output, more than Frame Lens reads; analyze a shorter range (start/end).`);
