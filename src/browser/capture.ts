@@ -1,4 +1,5 @@
-import { createWriteStream, existsSync, mkdirSync, rmSync, statSync } from "node:fs";
+import { createWriteStream, existsSync, mkdirSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { get as httpGet } from "node:http";
 import { get as httpsGet } from "node:https";
 import { join } from "node:path";
@@ -6,7 +7,7 @@ import { InvalidInputError } from "../errors.js";
 import type { MediaTools } from "../media/exec.js";
 import { isBotCheckOrLimit } from "../sources/access.js";
 import { checkHop, pinnedLookup, systemLookup, type Lookup } from "../sources/cobalt.js";
-import { evaluate, findBrowser, launchBrowser, navigate, profileDir } from "./cdp.js";
+import { defaultProfileDir, evaluate, findBrowser, launchBrowser, navigate, profileDir } from "./cdp.js";
 
 /** Login pages for `framelens login <site>`. */
 export const LOGIN_PAGES: Record<string, string> = {
@@ -126,6 +127,7 @@ export async function login(site: string, write: (line: string) => void): Promis
   const executable = findBrowser();
   if (!executable) throw new InvalidInputError("framelens login needs Chrome or Edge on this computer.");
   const profile = profileDir();
+  claimProfile(profile);
   write(
     `A browser window opens with a separate Frame Lens profile (${profile}).\n` +
       "Log in there yourself, ideally with a second account, then close the window. Your login stays only on this computer;\n" +
@@ -150,10 +152,30 @@ export async function login(site: string, write: (line: string) => void): Promis
   write("Saved. Links that need this login now open through the Frame Lens profile.\n");
 }
 
-export function logout(): boolean {
-  const profile = profileDir();
+/** The file that marks a browser profile folder as one Frame Lens made (`login` writes it into a new folder). */
+const PROFILE_MARKER = ".framelens-profile";
+
+/** Marks the profile folder as Frame Lens's own when it is new or empty; a folder that already holds files is not claimed. */
+export function claimProfile(profile: string): void {
+  if (existsSync(profile) && readdirSync(profile).length) return;
+  mkdirSync(profile, { recursive: true });
+  writeFileSync(join(profile, PROFILE_MARKER), "A browser profile made by Frame Lens (framelens login). `framelens logout` deletes this folder.\n");
+}
+
+/**
+ * Deletes the Frame Lens browser profile, and only a folder Frame Lens made: one with its marker, or the default
+ * folder with a browser profile in it (made before the marker existed). FRAMELENS_BROWSER_PROFILE pointing at any
+ * other folder (a typo, the project, the home folder) is refused, and nothing in it is deleted.
+ */
+export function logout(env: Record<string, string | undefined> = process.env, home = homedir()): boolean {
+  const profile = profileDir(env, home);
   if (!existsSync(profile)) return false;
-  rmSync(profile, { recursive: true, force: true });
+  const real = realpathSync(profile);
+  const own = existsSync(join(real, PROFILE_MARKER)) || (existsSync(defaultProfileDir(home)) && real === realpathSync(defaultProfileDir(home)) && existsSync(join(real, "Local State")));
+  if (!own || !statSync(real).isDirectory()) {
+    throw new InvalidInputError(`${profile} was not made by \`framelens login\` (it has no ${PROFILE_MARKER} file), so it was not deleted. Delete the folder yourself if it is the profile, or unset FRAMELENS_BROWSER_PROFILE.`);
+  }
+  rmSync(real, { recursive: true, force: true });
   return true;
 }
 

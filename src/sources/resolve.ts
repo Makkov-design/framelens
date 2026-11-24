@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { basename, extname, isAbsolute, join, resolve, sep } from "node:path";
+import { basename, extname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { InvalidInputError, quotesThirdParty } from "../errors.js";
 import { CancelledError, callSignal, singleFlight, throwIfCancelled } from "../runtime/call.js";
 import { parseVideoRef } from "../youtube.js";
+import { realInside } from "../workspace/workspace.js";
 import { readToolVersion, requireTool, type Env, type ToolLocation } from "../tools/index.js";
 import { anySignal } from "../tools/download.js";
 import { checkHop, cobaltMayRetry, fetchWithCobalt, pinnedGet, systemLookup, type Lookup } from "./cobalt.js";
@@ -99,12 +100,10 @@ function readRecord(dir: string): SourceRecord | undefined {
   }
 }
 
-/** `path` is a file whose real location is inside `folder` (no `..`, no link out of it). */
-function insideFolder(path: string, folder: string): boolean {
+/** `path` is a file whose real location is inside `folder`, itself really inside `root` (no `..`, no link out). */
+function insideFolder(path: string, folder: string, root: string): boolean {
   try {
-    const file = realpathSync(path);
-    const root = realpathSync(folder);
-    return statSync(file).isFile() && file.startsWith(root + sep);
+    return realInside(folder, root) && realInside(path, folder) && realpathSync(path) !== realpathSync(folder) && statSync(path).isFile();
   } catch {
     return false;
   }
@@ -182,6 +181,12 @@ const inFlight = new Map<string, { promise: Promise<SourceRecord>; signal?: Abor
 async function fetchIntoWorkspace(dir: string, target: Exclude<Classified, { kind: "file" }>, input: string, env: Env, options: ResolveOptions): Promise<SourceRecord> {
   const existed = existsSync(dir);
   mkdirSync(dir, { recursive: true });
+  // yt-dlp writes into media/ and stale source.* files there are removed first: never through a link out of the
+  // workspace folder (one that came with a project's .framelens).
+  const media = join(dir, "media");
+  if (!realInside(dir, options.workspaceRoot) || (existsSync(media) && !realInside(media, options.workspaceRoot))) {
+    throw new SourceError("bad_input", `${dir} leads out of the workspace folder through a link, so nothing is downloaded into it. Remove it and try again.`);
+  }
   const fetchedAt = new Date().toISOString();
   try {
     return await fetchLink(dir, target, input, fetchedAt, env, options);
@@ -221,9 +226,9 @@ async function fetchLink(
   // A `.framelens/` folder can come with a project someone else made: a record is only reused for the same link, and
   // only files inside its own media folder are read.
   const media = join(dir, "media");
-  if (previous && previous.id === target.id && previous.kind === target.kind && previous.sourceUrl === target.url && insideFolder(previous.mediaPath, media)) {
+  if (previous && previous.id === target.id && previous.kind === target.kind && previous.sourceUrl === target.url && insideFolder(previous.mediaPath, media, options.workspaceRoot)) {
     log(`Reusing ${previous.mediaPath}`);
-    const captions = previous.captions?.filter((c) => c && typeof c.path === "string" && insideFolder(c.path, media));
+    const captions = previous.captions?.filter((c) => c && typeof c.path === "string" && insideFolder(c.path, media, options.workspaceRoot));
     return { ...previous, input, captions: captions?.length ? captions : undefined, reused: true };
   }
 

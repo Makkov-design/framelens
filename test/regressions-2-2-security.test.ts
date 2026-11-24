@@ -1,7 +1,7 @@
 // Regressions from the independent security review of main 2ff33ef (F1–F8, N1). Each failed before its fix; F2 (`web`
 // following a page to this computer) is in test/browser/browser.test.ts, which needs a browser.
 import { createServer, type Server } from "node:http";
-import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { join, resolve, sep } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -9,7 +9,11 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { VideoAnalyzer } from "../src/analyzer.js";
-import { download } from "../src/browser/capture.js";
+import { claimProfile, download, logout } from "../src/browser/capture.js";
+import { exportSpec } from "../src/export/exporters.js";
+import { initNextSteps, initProject } from "../src/init.js";
+import type { MotionSpec } from "../src/style/spec.js";
+import { chooseWorkspaceRoot, Workspace } from "../src/workspace/workspace.js";
 import { Engine, localFileResolver } from "../src/engine.js";
 import { runExact } from "../src/exact/run.js";
 import { exactSummary } from "../src/local-tools-exact.js";
@@ -181,6 +185,15 @@ describe("F7: a .framelens folder that came with the project", () => {
     plant({ mediaPath: media, sourceUrl: "https://www.youtube.com/watch?v=other" });
     record = await resolveSource(YT, { workspaceRoot: ws, env: env() });
     expect(record.reused).toBeUndefined();
+    // A media folder that is itself a link out of the workspace: refused, and nothing is written through it.
+    const away = join(root, "f7-away");
+    mkdirSync(away, { recursive: true });
+    writeFileSync(join(away, "source.mp4"), "theirs");
+    rmSync(join(dir, "media"), { recursive: true, force: true });
+    symlinkSync(away, join(dir, "media"));
+    plant({ mediaPath: join(dir, "media", "source.mp4") });
+    await expect(resolveSource(YT, { workspaceRoot: ws, env: env() })).rejects.toThrow(/leads out of the workspace folder through a link/);
+    expect(readFileSync(join(away, "source.mp4"), "utf8")).toBe("theirs");
   });
 });
 
@@ -211,5 +224,112 @@ describe("N1: Gemini's transcript and the exact notice", () => {
   it("puts the third-party notice first in `exact`", async () => {
     const r = await runExact({ source: join(__dirname, "fixtures", "rive", "cubic_value_test.riv"), root: join(root, "exact"), version: "test" });
     expect(exactSummary(r).split("\n")[0]).toMatch(/^> Content comes from a third-party file/);
+  });
+});
+
+// A second, external review of the same commit (X1–X4).
+describe("X1: logout deletes only a profile Frame Lens made", () => {
+  it("deletes a new or an older default profile, and refuses a mistaken folder without touching its files", () => {
+    const home = join(root, "x1-home");
+    const fresh = join(root, "x1-new");
+    claimProfile(fresh);
+    writeFileSync(join(fresh, "Local State"), "{}");
+    expect(logout({ FRAMELENS_BROWSER_PROFILE: fresh }, home)).toBe(true);
+    expect(existsSync(fresh)).toBe(false);
+
+    // A profile from before the marker, in the default folder.
+    const older = join(home, ".framelens", "browser-profile");
+    mkdirSync(join(older, "Default"), { recursive: true });
+    writeFileSync(join(older, "Local State"), "{}");
+    expect(logout({}, home)).toBe(true);
+    expect(existsSync(older)).toBe(false);
+
+    // FRAMELENS_BROWSER_PROFILE set to the wrong folder by mistake: every file survives.
+    const project = join(root, "x1-project");
+    mkdirSync(join(project, "src"), { recursive: true });
+    writeFileSync(join(project, "src", "main.ts"), "work");
+    writeFileSync(join(project, "Local State"), "{}");
+    expect(() => logout({ FRAMELENS_BROWSER_PROFILE: project }, home)).toThrow(/was not made by `framelens login`/);
+    expect(readFileSync(join(project, "src", "main.ts"), "utf8")).toBe("work");
+    // A folder with files is never claimed by login either.
+    claimProfile(project);
+    expect(() => logout({ FRAMELENS_BROWSER_PROFILE: project }, home)).toThrow(/not deleted/);
+    expect(readdirSync(project).sort()).toEqual(["Local State", "src"]);
+  });
+});
+
+describe("X2 and X3: what init and exports leave in shareable files", () => {
+  it("exports carry the link without its query, and the workspace keeps the full link", () => {
+    const spec = {
+      spec: "framelens.motion/1", generatedBy: "test", range: { start: 0, end: 1 }, timebase: { duration: 1, width: 100, height: 100, fps: 25, evidence: "measured" },
+      source: { kind: "url", input: "https://cdn.example.test/v.mp4?X-Amz-Signature=SECRET&token=SECRET", url: "https://user:pw@cdn.example.test/v.mp4?sig=SECRET#t" },
+      anchors: { words: [], beats: [], cuts: [] }, changes: [], palette: [], typography: [], shots: [], systems: [], events: [],
+      rhythm: { cuts: 0, cutsPerMinute: 0, meanShotSeconds: 1, medianShotSeconds: 1, movesPerMinute: 0, evidence: "derived" }, audio: { sfx: [] },
+    } as unknown as MotionSpec;
+    const out = join(root, "x2-export");
+    for (const target of ["hypit", "css", "remotion"] as const) {
+      for (const file of exportSpec(spec, target, out)) {
+        if (existsSync(file) && !/\.(png|jpe?g)$/.test(file)) expect(readFileSync(file, "utf8"), file).not.toContain("SECRET");
+      }
+    }
+    expect(readFileSync(exportSpec(spec, "hypit", out).find((f) => f.endsWith("ANALYSIS.md"))!, "utf8")).toContain("Source: https://cdn.example.test/v.mp4,");
+  });
+
+  it("init ignores .framelens/ in a git repository, once", () => {
+    const project = join(root, "x2-git");
+    mkdirSync(join(project, ".git"), { recursive: true });
+    writeFileSync(join(project, ".gitignore"), "node_modules/");
+    expect(initProject(project).files).toContain(".gitignore");
+    expect(readFileSync(join(project, ".gitignore"), "utf8")).toMatch(/^node_modules\/\n# Frame Lens[^\n]*\n\.framelens\/\n$/);
+    expect(initProject(project).files).not.toContain(".gitignore");
+    const plain = join(root, "x2-plain");
+    mkdirSync(plain, { recursive: true });
+    initProject(plain);
+    expect(existsSync(join(plain, ".gitignore"))).toBe(false);
+  });
+
+  it("init warns instead of saying to commit .mcp.json when it holds a literal secret, and keeps other servers as they were", () => {
+    const project = join(root, "x3");
+    mkdirSync(project, { recursive: true });
+    const other = { command: "gh-mcp", env: { GITHUB_TOKEN: "ghp_abcdefghijklmnopqrstuvwxyz0123", HOST: "github.com" }, headers: { Authorization: "${AUTH}" } };
+    writeFileSync(join(project, ".mcp.json"), JSON.stringify({ mcpServers: { github: other } }));
+    const result = initProject(project);
+    expect(result.secrets).toEqual(["github.env.GITHUB_TOKEN"]);
+    const steps = initNextSteps(result);
+    expect(steps).toMatch(/Do not commit \.mcp\.json yet: github\.env\.GITHUB_TOKEN look like secrets/);
+    expect(steps).not.toContain("ghp_");
+    expect(steps).not.toMatch(/1\. Commit/);
+    expect(JSON.parse(readFileSync(join(project, ".mcp.json"), "utf8")).mcpServers.github).toEqual(other);
+    // References only: the usual advice.
+    rmSync(join(project, ".mcp.json"));
+    expect(initNextSteps(initProject(project))).toMatch(/1\. Commit \.mcp\.json/);
+  });
+});
+
+describe("X4: links inside the workspace folder", () => {
+  it("a write never follows a link out of the workspace, and a .framelens that links out is not used", () => {
+    const outside = join(root, "x4-outside");
+    mkdirSync(outside, { recursive: true });
+    const wsRoot = join(root, "x4", ".framelens");
+    mkdirSync(join(wsRoot, "yt-abc"), { recursive: true });
+    symlinkSync(outside, join(wsRoot, "yt-abc", "frames"));
+    const ws = new Workspace(wsRoot, "yt-abc");
+    expect(() => ws.writeText("frames/x.txt", "x")).toThrow(/leads out of the workspace/);
+    symlinkSync(join(outside, "planted.json"), join(wsRoot, "yt-abc", "probe.json"));
+    expect(() => ws.writeJson("probe.json", {})).toThrow(/leads out of the workspace/);
+    expect(readdirSync(outside)).toEqual([]);
+    expect(ws.writeText("ok.txt", "fine")).toBe(join(wsRoot, "yt-abc", "ok.txt"));
+
+    // A whole workspace that is a link: nothing is downloaded into it.
+    symlinkSync(outside, join(wsRoot, "yt-jNQXAC9IVRw"));
+    return expect(resolveSource(YT, { workspaceRoot: wsRoot, env: env() })).rejects.toThrow(/leads out of the workspace folder through a link/).then(() => {
+      expect(readdirSync(outside)).toEqual([]);
+      const project = join(root, "x4-project");
+      mkdirSync(project, { recursive: true });
+      symlinkSync(outside, join(project, ".framelens"));
+      const choice = chooseWorkspaceRoot({}, project, { home: join(root, "x4-home"), canWrite: () => true });
+      expect(choice.from).toBe("home");
+      expect(choice.reason).toMatch(/is a link to a folder outside/);
+    });
   });
 });

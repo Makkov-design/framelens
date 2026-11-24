@@ -28,7 +28,9 @@ described in the README's Security section.
 - ffmpeg, ffprobe, yt-dlp and the browser get no `GEMINI_API_KEY`, `GOOGLE_API_KEY`, `FIGMA_TOKEN`,
   `FRAMELENS_COBALT_KEY` or `FRAMELENS_COOKIES_*` in their environment.
 - A workspace record (`.framelens/<id>/source.json`) is reused only for the same link, and only for files whose real
-  path is inside that workspace's own `media` folder.
+  path is inside that workspace's own `media` folder. No workspace write follows a link out of the workspace folder.
+- `framelens logout` deletes only a folder with the marker `framelens login` writes, or the default profile folder.
+- Exports name the source link without its query, fragment or user name.
 - Error results that quote ffmpeg's or yt-dlp's output keep it to one line of at most 200 characters and carry the
   third-party notice.
 - No answer from a download source may crash the server (`test/runtime/download-guard.test.ts`).

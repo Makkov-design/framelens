@@ -14,6 +14,8 @@ const SKILL_SOURCE = new URL("../skills/framelens/SKILL.md", import.meta.url);
 export interface InitResult {
   /** Paths written, relative to the project. */
   files: string[];
+  /** Settings in .mcp.json that look like a literal secret (`server.env.NAME`), never their values. */
+  secrets: string[];
 }
 
 /**
@@ -67,7 +69,57 @@ export function initProject(projectDir: string): InitResult {
   mkdirSync(skillDir, { recursive: true });
   writeFileSync(join(skillDir, "SKILL.md"), readFileSync(SKILL_SOURCE, "utf8"));
 
-  return { files: [".mcp.json", ".claude/skills/framelens/SKILL.md"] };
+  const files = [".mcp.json", ".claude/skills/framelens/SKILL.md"];
+  if (ignoreWorkspace(projectDir)) files.push(".gitignore");
+  return { files, secrets: literalSecrets(config.mcpServers) };
+}
+
+/**
+ * In a git repository, `.framelens/` (downloads, transcripts, the full source links) is added to `.gitignore` unless
+ * an entry already ignores it. Returns whether the file was changed.
+ */
+function ignoreWorkspace(projectDir: string): boolean {
+  if (!existsSync(join(projectDir, ".git"))) return false;
+  const file = join(projectDir, ".gitignore");
+  const text = existsSync(file) ? readFileSync(file, "utf8") : "";
+  if (text.split(/\r?\n/).some((line) => /^\/?\.framelens\/?(\*\*?)?\s*$/.test(line.trim()))) return false;
+  writeFileSync(file, `${text}${text && !text.endsWith("\n") ? "\n" : ""}# Frame Lens workspaces (downloads, transcripts, source links)\n.framelens/\n`);
+  return true;
+}
+
+const SECRET_NAME = /key|token|secret|password|passwd|auth|credential|cookie/i;
+const SECRET_VALUE = /^(sk-|ghp_|gho_|github_pat_|xox[abpr]-|AIza|glpat-|eyJ)[\w.-]{10,}/;
+
+/**
+ * Settings in the servers' `env` and `headers` (and their arguments) that hold a value rather than a `${VAR}`
+ * reference and look like a secret, by their name or their form. Only where they are is returned, never the value.
+ */
+export function literalSecrets(servers: Record<string, unknown> | undefined): string[] {
+  const found: string[] = [];
+  for (const [name, entry] of Object.entries(servers ?? {})) {
+    const server = asObject(entry);
+    if (!server) continue;
+    for (const field of ["env", "headers"]) {
+      for (const [key, value] of Object.entries(asObject(server[field]) ?? {})) {
+        if (typeof value !== "string" || !value.trim() || /^\$\{[^}]+\}$/.test(value.trim())) continue;
+        if (SECRET_NAME.test(key) || SECRET_VALUE.test(value.trim())) found.push(`${name}.${field}.${key}`);
+      }
+    }
+    const args = Array.isArray(server.args) ? server.args : [];
+    if (args.some((a) => typeof a === "string" && SECRET_VALUE.test(a.replace(/^--?[\w-]+=/, "")))) found.push(`${name}.args`);
+  }
+  return found;
+}
+
+/** What to do after `init`. With a literal secret in .mcp.json, step 1 warns instead of saying to commit it. */
+export function initNextSteps(result: InitResult): string {
+  if (!result.secrets.length) return INIT_NEXT_STEPS;
+  return INIT_NEXT_STEPS.replace(
+    /  1\. Commit[^\n]*\n/,
+    `  1. Do not commit .mcp.json yet: ${result.secrets.join(", ")} look like secrets written into it. Replace each value with a\n` +
+      '     reference such as "GITHUB_TOKEN": "${GITHUB_TOKEN}" and set the variable where Claude Code runs, then commit\n' +
+      "     .mcp.json and .claude/skills/framelens/.\n",
+  );
 }
 
 function asObject(value: unknown): Record<string, unknown> | undefined {

@@ -33,3 +33,20 @@ export function safeHex(value: unknown, fallback = "#111111"): string {
   if (/^#[0-9a-f]{3}$/i.test(v)) return `#${v.slice(1).replace(/./g, (c) => c + c)}`.toUpperCase();
   return fallback;
 }
+
+/**
+ * A source link for files people share (exports): without a user name, password, query or fragment, which can carry
+ * access tokens (a signed link's parameters). A YouTube watch link keeps its video id. Anything that is not an
+ * http(s) link (a file path) is returned as is.
+ */
+export function shareableLink(text: string): string {
+  let url: URL;
+  try {
+    url = new URL(text.trim());
+  } catch {
+    return text;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return text;
+  const v = /(^|\.)youtube\.com$/i.test(url.hostname) ? url.searchParams.get("v") : null;
+  return `${url.origin}${url.pathname}${v ? `?v=${encodeURIComponent(v)}` : ""}`;
+}

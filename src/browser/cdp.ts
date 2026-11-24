@@ -40,13 +40,16 @@ export function isEverydayProfile(path: string): boolean {
  * Where `framelens login` keeps its own browser profile: never the user's everyday one. `logout` deletes this folder
  * and capture drives it, so a FRAMELENS_BROWSER_PROFILE pointing at the browser's own profile is refused.
  */
-export function profileDir(env: Record<string, string | undefined> = process.env): string {
+export function profileDir(env: Record<string, string | undefined> = process.env, home = homedir()): string {
   const configured = env.FRAMELENS_BROWSER_PROFILE?.trim();
   if (configured && isEverydayProfile(configured)) {
     throw new InvalidInputError("FRAMELENS_BROWSER_PROFILE points at your everyday browser profile. Frame Lens uses a separate folder only; unset it or choose a new empty folder.");
   }
-  return configured || join(homedir(), ".framelens", "browser-profile");
+  return configured || defaultProfileDir(home);
 }
+
+/** The profile folder when FRAMELENS_BROWSER_PROFILE is not set. */
+export const defaultProfileDir = (home = homedir()): string => join(home, ".framelens", "browser-profile");
 
 type Handler = (params: Record<string, unknown>, sessionId?: string) => void;
 

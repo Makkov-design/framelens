@@ -55,6 +55,18 @@ and install tools. Every change went through an independent audit, fixes and a r
 - A `.framelens/` folder that came with a project is no longer trusted blindly: a stored source is reused only for the
   same link and only for files inside that workspace's own `media` folder. Workspaces from before this check are
   downloaded once more.
+- `framelens logout` deletes only a profile folder that `framelens login` made (it now leaves a marker file), or the
+  default one: a FRAMELENS_BROWSER_PROFILE pointing at another folder by mistake is refused and nothing in it is
+  deleted.
+- Exports (`hypit`'s ANALYSIS.md and the starter projects) name the source link without its query, fragment or user
+  name, which can hold a signed link's access parameters; the workspace keeps the full link. In a git repository,
+  `framelens init` adds `.framelens/` to `.gitignore` when nothing ignores it yet.
+- `framelens init` warns, instead of saying to commit `.mcp.json`, when another server's settings there hold what
+  looks like a literal secret (it names the setting, never the value); other servers' settings are kept as they were.
+- Workspace writes no longer follow a link out of the workspace folder, and a `.framelens` in the working folder that
+  is a link elsewhere is not used (the home folder is, and the server says why).
+- Development: the MCP SDK's `hono` and `@hono/node-server` are at 4.13.19 and 2.1.10 (npm advisories for 4.13.13 and
+  2.1.5). They are not in the bundle: the stdio server never loaded them.
 - Cancelling a tool call stops the yt-dlp, ffmpeg or browser it started, with their own children; the server stops
   all of them when it exits (they used to run on for up to 30 minutes). When the client closes stdin, the calls it
   already sent are answered first. A cancelled call leaves no result in the workspace and sends no progress after
