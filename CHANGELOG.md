@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Added
+
+- A "Publish to npm" workflow that releases through npm trusted publishing, so the package carries a signed
+  provenance statement tying it to this repository and commit.
+
 ## 2.2.0 — 2026-11-23
 
 Frame Lens now follows the client: a cancelled call stops the yt-dlp, ffmpeg or browser it started, long calls send

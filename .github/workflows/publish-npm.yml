@@ -1,0 +1,56 @@
+name: Publish to npm
+
+# Run by hand (Actions tab > "Publish to npm" > Run workflow) on the release commit, before "Publish to MCP Registry".
+# Publishes through npm trusted publishing (GitHub OIDC): no npm token or secret is needed, and npm attaches a signed
+# provenance statement that ties the package to this repository, workflow and commit.
+# One-time setup on npmjs.com: package framelens > Settings > Trusted publisher > GitHub Actions,
+# repository Makkov-design/framelens, workflow publish-npm.yml.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # GitHub OIDC for npm trusted publishing and provenance
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          cache: npm
+
+      - name: This version is not on npm yet
+        run: |
+          set -euo pipefail
+          version=$(node -p 'require("./package.json").version')
+          test "$version" = "$(node -p 'require("./server.json").version')"
+          if npm view "framelens@$version" version >/dev/null 2>&1; then
+            echo "framelens@$version is already published."
+            exit 1
+          fi
+          echo "Publishing framelens@$version"
+
+      - name: npm supports trusted publishing
+        run: |
+          set -euo pipefail
+          # Trusted publishing needs npm 11.5.1 or newer.
+          node -e 'const [a,b,c]=process.argv[1].split(".").map(Number); if (a<11||(a===11&&(b<5||(b===5&&c<1)))) { console.error("npm "+process.argv[1]+" is too old for trusted publishing"); process.exit(1) }' "$(npm --version)"
+
+      - name: Install ffmpeg for the media tests
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg fonts-dejavu-core
+      - run: npm ci --ignore-scripts
+
+      # prepublishOnly runs typecheck, the tests and the bundle first.
+      - name: Publish
+        run: npm publish --provenance --access public
+
+      - name: Published bundle is the committed one
+        run: git diff --exit-code --stat -- dist/framelens.mjs
