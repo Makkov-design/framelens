@@ -187,7 +187,7 @@ export function countPhrase(transcript: Transcript, phrase: string): number {
 
 /** A readable transcript with [m:ss] marks. */
 export function toMarkdown(transcript: Transcript, title?: string): string {
-  const lines = [`# Transcript${title ? `: ${oneLine(title)}` : ""}`, "", `Source: ${transcript.source}${transcript.language ? `, language ${transcript.language}` : ""}.`, ""];
+  const lines = [`# Transcript${title ? `: ${oneLine(title)}` : ""}`, "", `Source: ${transcript.source}${transcript.language ? `, language ${oneLine(transcript.language, 40)}` : ""}.`, ""];
   for (const s of transcript.segments) lines.push(`[${formatTimestamp(s.start)}]${s.speaker ? ` **${s.speaker}:**` : ""} ${s.text}`);
   return `${lines.join("\n")}\n`;
 }

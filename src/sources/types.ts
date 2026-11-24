@@ -19,6 +19,8 @@ export interface SourceRecord {
   input: string;
   /** Canonical link for youtube/url sources. */
   url?: string;
+  /** The link that was fetched (as classified), so a reused record is for this same link. */
+  sourceUrl?: string;
   title?: string;
   /** The media to analyse. For local files this is the original file (referenced, not copied). */
   mediaPath: string;
@@ -50,4 +52,6 @@ export interface ResolveOptions {
   locate?: (name: ToolName, signal?: AbortSignal) => Promise<ToolLocation>;
   /** HTTP client for the opt-in cobalt instance (tests). */
   fetchFn?: typeof fetch;
+  /** Checks a link's redirects before yt-dlp follows them (default: checkLinkRedirects). Injected in tests. */
+  checkRedirects?: (url: string, signal?: AbortSignal) => Promise<void>;
 }

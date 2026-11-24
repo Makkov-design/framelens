@@ -208,6 +208,10 @@ Redirects are followed by hand wherever a download takes an address from third-p
 user's cobalt instance, or the host of the link given to `exact`) may be local; no hop may add a user name or
 password; every hop to another host must be https and resolve only to public addresses, and is connected to at the
 address that was checked.
+The same check walks a link's redirects before yt-dlp follows them (`checkLinkRedirects` in `sources/resolve.ts`; one
+plain GET to the link's own host, no new service) and covers every hop of the login-profile capture's media download
+(`browser/capture.ts`). `web` holds each document request over CDP (`Fetch.requestPaused`, `browser/read.ts`) and
+refuses one whose host resolves to a private address, other than the host the user gave.
 `exact` decodes gzip, deflate and br through `stream.pipeline` (never `pipe`, which left the socket open and let the
 time limit's abort surface as an unhandled error) and refuses other encodings. yt-dlp's `--max-filesize` covers only a
 size known up front, so `sources/ytdlp.ts` also measures the `source.*` files every 250 ms (not the postprocessor's

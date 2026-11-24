@@ -11,6 +11,9 @@ import { SourceError } from "../../src/sources/errors.js";
 import { resolveSource } from "../../src/sources/resolve.js";
 import { mapYtDlpFailure } from "../../src/sources/ytdlp.js";
 
+/** These tests use no network: the redirect walk before yt-dlp is tested on its own (regressions-2-2-security). */
+const offline = async () => {};
+
 const fake = resolve("test/fixtures/fake-ytdlp.mjs");
 const root = mkdtempSync(join(tmpdir(), "framelens-cobalt-"));
 const VIDEO = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from("ftypmp42"), Buffer.from("fake mp4 bytes ".repeat(100))]);
@@ -165,7 +168,7 @@ describe("which failures may go to cobalt", () => {
 describe("cobalt, the user's own instance", () => {
   it("fetches a link yt-dlp has no extractor for, through the configured instance with its API key", async () => {
     process.env.FAKE_YTDLP_MODE = "unsupported";
-    const record = await resolveSource("https://example.com/page", { workspaceRoot: ws, env: env({ FRAMELENS_COBALT_KEY: "secret-key" }) });
+    const record = await resolveSource("https://example.com/page", { workspaceRoot: ws, checkRedirects: offline, env: env({ FRAMELENS_COBALT_KEY: "secret-key" }) });
     expect(record).toMatchObject({ kind: "url", title: "reel_by_someone", tools: { cobalt: base } });
     expect(readFileSync(record.mediaPath)).toEqual(VIDEO);
     const post = seen.find((s) => s.method === "POST")!;
@@ -179,7 +182,7 @@ describe("cobalt, the user's own instance", () => {
   it("changes nothing when FRAMELENS_COBALT_URL is not set", async () => {
     process.env.FAKE_YTDLP_MODE = "unsupported";
     const { FRAMELENS_COBALT_URL: _, ...plain } = env();
-    await expect(resolveSource("https://example.com/page", { workspaceRoot: ws, env: plain })).rejects.toMatchObject({ code: "unsupported_url" });
+    await expect(resolveSource("https://example.com/page", { workspaceRoot: ws, checkRedirects: offline, env: plain })).rejects.toMatchObject({ code: "unsupported_url" });
     expect(seen).toEqual([]);
   });
 
@@ -187,7 +190,7 @@ describe("cobalt, the user's own instance", () => {
     for (const mode of ["login", "bot", "limited", "private", "geo"]) {
       process.env.FAKE_YTDLP_MODE = mode;
       const url = mode === "login" ? REEL : "https://www.youtube.com/watch?v=jNQXAC9IVRw";
-      await expect(resolveSource(url, { workspaceRoot: ws, env: env() })).rejects.toBeInstanceOf(SourceError);
+      await expect(resolveSource(url, { workspaceRoot: ws, checkRedirects: offline, env: env() })).rejects.toBeInstanceOf(SourceError);
     }
     expect(seen).toEqual([]);
   });
@@ -195,7 +198,7 @@ describe("cobalt, the user's own instance", () => {
   it("reports both failures when the instance cannot fetch it either", async () => {
     process.env.FAKE_YTDLP_MODE = "unsupported";
     answer = () => ({ status: 400, json: { status: "error", error: { code: "error.api.link.unsupported" } } });
-    const error = await resolveSource("https://example.com/page", { workspaceRoot: ws, env: env() }).catch((e) => e);
+    const error = await resolveSource("https://example.com/page", { workspaceRoot: ws, checkRedirects: offline, env: env() }).catch((e) => e);
     expect(error.code).toBe("unsupported_url");
     expect(error.message).toContain("cannot read a video from this link");
     expect(error.message).toMatch(/cobalt instance could not fetch it: it does not support this link/);

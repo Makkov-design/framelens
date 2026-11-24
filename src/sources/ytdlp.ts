@@ -6,6 +6,7 @@ import { callSignal } from "../runtime/call.js";
 import { cookieArgs, redactArgs } from "./cookies.js";
 import { mayBeAccessControl } from "./access.js";
 import { SourceError } from "./errors.js";
+import { oneLine } from "../text.js";
 import type { CaptionTrack } from "./types.js";
 
 /** Best video up to 1080p plus best audio; falls back to a single file, then to anything. */
@@ -122,7 +123,8 @@ export function mapYtDlpFailure(stderr: string, url: string): SourceError {
   const text = stderr.replace(/\r/g, "");
   const platform = platformName(url);
   const errorLine = [...text.split("\n")].reverse().find((l) => /^ERROR:/i.test(l.trim()))?.trim() ?? text.trim().split("\n").pop() ?? "";
-  const brief = errorLine.replace(/^ERROR:\s*(\[[^\]]+\]\s*[\w-]*:?\s*)?/i, "").slice(0, 300);
+  // The site's words (a page's track names, its error text) are third-party: one line, capped, and marked.
+  const brief = oneLine(errorLine.replace(/^ERROR:\s*(\[[^\]]+\]\s*[\w-]*:?\s*)?/i, ""), 200);
   // yt-dlp's own words travel with the error: the message below is help text, but the cobalt policy and the login
   // profile decide on what the site actually said (src/sources/access.ts).
   const detail = text.trim().slice(-4000);
@@ -132,20 +134,20 @@ export function mapYtDlpFailure(stderr: string, url: string): SourceError {
     return new SourceError(
       "unsupported_url",
       `Frame Lens cannot read a video from this link (${platform}). Open the page, save the video file yourself and pass its path, or put it in the inbox folder. Detail: ${brief}`,
-      { accessControl, detail },
+      { accessControl, detail, thirdParty: true },
     );
   }
   if (GEO.test(text)) {
-    return new SourceError("geo_blocked", `${platform} blocks this video in your country. Save the file another way and pass its path or use the inbox folder. Detail: ${brief}`, { accessControl: true, detail });
+    return new SourceError("geo_blocked", `${platform} blocks this video in your country. Save the file another way and pass its path or use the inbox folder. Detail: ${brief}`, { accessControl: true, detail, thirdParty: true });
   }
   if (GONE.test(text)) {
-    return new SourceError("unavailable", `${platform} says this video is private, removed or unavailable, so it cannot be fetched. Detail: ${brief}`, { accessControl: true, detail });
+    return new SourceError("unavailable", `${platform} says this video is private, removed or unavailable, so it cannot be fetched. Detail: ${brief}`, { accessControl: true, detail, thirdParty: true });
   }
   if (LOGIN.test(text)) return new SourceError("login_required", LOGIN_TIERS(platform), { accessControl: true, detail });
   if (/http error 429|too many requests/i.test(text)) {
     return new SourceError("download_failed", `${platform} is limiting requests from this connection (HTTP 429). Wait a while and try again, or save the file yourself into the inbox folder.`, { accessControl: true, detail });
   }
-  return new SourceError("download_failed", `yt-dlp could not fetch this link. ${brief || "No error text was reported."}`, { accessControl, detail });
+  return new SourceError("download_failed", `yt-dlp could not fetch this link. ${brief || "No error text was reported."}`, { accessControl, detail, thirdParty: Boolean(brief) });
 }
 
 interface Info {
@@ -159,10 +161,17 @@ interface Info {
   filesize_approx?: number | null;
 }
 
+/**
+ * A caption track's key as a language tag (en, pt-BR, zh-Hans, en-orig). The key comes from the site (a page's
+ * `<track srclang>`), lands in metadata and names a file: anything else is not asked for, and reads as "und".
+ */
+const LANGUAGE_TAG = /^[A-Za-z]{2,3}(-[A-Za-z0-9]{1,8}){0,3}$/;
+export const captionLanguage = (key: string): string => (LANGUAGE_TAG.test(key) ? key : "und");
+
 /** Which caption tracks to download: the video's own language (manual, or automatic) and English if a person wrote it. */
 export function pickCaptionLanguages(info: Info): string[] {
-  const manual = Object.keys(info.subtitles ?? {});
-  const auto = Object.keys(info.automatic_captions ?? {});
+  const manual = Object.keys(info.subtitles ?? {}).filter((k) => LANGUAGE_TAG.test(k));
+  const auto = Object.keys(info.automatic_captions ?? {}).filter((k) => LANGUAGE_TAG.test(k));
   const base = (k: string) => k.split("-")[0]!.toLowerCase();
   const origKey = auto.find((k) => k.endsWith("-orig"));
   const own = (info.language ? base(info.language) : undefined) ?? (origKey ? base(origKey) : undefined);
@@ -296,7 +305,7 @@ export async function fetchWithYtDlp(params: FetchParams): Promise<FetchResult> 
     const path = join(mediaDir, name);
     if (SUB_EXTENSIONS.has(ext)) {
       const language = name.slice("source.".length, name.length - ext.length);
-      if (language) captions.push({ path, language, auto: !manual.has(language) });
+      if (language) captions.push({ path, language: captionLanguage(language), auto: !manual.has(language) });
     } else if (![".part", ".ytdl", ".temp", ".tmp"].includes(ext)) {
       const size = statSync(path).size;
       if (!media || size > media.size) media = { path, size };

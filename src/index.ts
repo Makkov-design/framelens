@@ -56,7 +56,7 @@ function createEngine(logger: Logger, transcriptFallback?: TranscriptFallback): 
         const { value } = await singleFlight(captures, ws.dir, options.signal ?? callSignal(), async () => {
           logger.info("login required; capturing through the Frame Lens browser profile", { id });
           const mediaPath = await captureVideo(input.trim(), ws.ensure("media"), tools, maxDownloadMb(process.env) * 1024 * 1024);
-          const record = { id, kind: "url" as const, input, url: input.trim(), mediaPath, fetchedAt: new Date().toISOString(), tools: {} };
+          const record = { id, kind: "url" as const, input, url: input.trim(), sourceUrl: input.trim(), mediaPath, fetchedAt: new Date().toISOString(), tools: {} };
           ws.writeJson("source.json", record);
           return record;
         }, "The capture");

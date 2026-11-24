@@ -1,12 +1,13 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { basename, extname, isAbsolute, join, resolve } from "node:path";
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { basename, extname, isAbsolute, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { InvalidInputError } from "../errors.js";
-import { callSignal, singleFlight, throwIfCancelled } from "../runtime/call.js";
+import { InvalidInputError, quotesThirdParty } from "../errors.js";
+import { CancelledError, callSignal, singleFlight, throwIfCancelled } from "../runtime/call.js";
 import { parseVideoRef } from "../youtube.js";
 import { readToolVersion, requireTool, type Env, type ToolLocation } from "../tools/index.js";
-import { cobaltMayRetry, fetchWithCobalt } from "./cobalt.js";
+import { anySignal } from "../tools/download.js";
+import { checkHop, cobaltMayRetry, fetchWithCobalt, pinnedGet, systemLookup, type Lookup } from "./cobalt.js";
 import { SourceError } from "./errors.js";
 import { inboxNote, newestInboxFile } from "./inbox.js";
 import type { ResolveOptions, SourceKind, SourceRecord } from "./types.js";
@@ -98,6 +99,17 @@ function readRecord(dir: string): SourceRecord | undefined {
   }
 }
 
+/** `path` is a file whose real location is inside `folder` (no `..`, no link out of it). */
+function insideFolder(path: string, folder: string): boolean {
+  try {
+    const file = realpathSync(path);
+    const root = realpathSync(folder);
+    return statSync(file).isFile() && file.startsWith(root + sep);
+  } catch {
+    return false;
+  }
+}
+
 function writeRecord(dir: string, record: SourceRecord): void {
   // A cancelled call records nothing: a later call would take it for a finished download.
   throwIfCancelled();
@@ -124,6 +136,44 @@ export async function resolveSource(input: string, options: ResolveOptions): Pro
   const signal = options.signal ?? callSignal();
   const { value, shared } = await singleFlight(inFlight, dir, signal, () => fetchIntoWorkspace(dir, target, input, env, { ...options, ...(signal && { signal }) }), "The download");
   return shared ? { ...value, input, reused: true } : value;
+}
+
+const LINK_WORDING = { who: "The link", what: "an address" };
+const MAX_REDIRECTS = 5;
+
+/**
+ * yt-dlp follows a link's redirects itself, with no check of where they go. For a link that is not YouTube, the
+ * redirects its server sends to a plain GET are walked first with the check the cobalt and \`exact\` downloads use
+ * (\`checkHop\`): a hop to another host must be https to a public address, so a public link cannot send the download to
+ * this computer, the local network or a cloud metadata address. The link's own host may be local (the user's choice).
+ * Not covered (README, SECURITY.md): a server that answers yt-dlp differently from this request, the requests a site
+ * extractor makes on its own, and a link this computer cannot reach directly (behind a proxy), which yt-dlp is left
+ * to report.
+ */
+export async function checkLinkRedirects(link: string, signal?: AbortSignal, lookup: Lookup = systemLookup): Promise<void> {
+  const first = new URL(link);
+  const stop = anySignal(signal, AbortSignal.timeout(15_000));
+  let current = first;
+  for (let hop = 0; ; hop++) {
+    const address = await checkHop(current, first, lookup, LINK_WORDING);
+    let res;
+    try {
+      res = await pinnedGet(current, address, stop);
+    } catch {
+      if (signal?.aborted) throw new CancelledError();
+      throwIfCancelled();
+      return;
+    }
+    await res.body?.cancel().catch(() => undefined);
+    const location = res.headers.get("location");
+    if (res.status < 300 || res.status >= 400 || !location) return;
+    if (hop === MAX_REDIRECTS) throw new SourceError("download_failed", `The link redirects more than ${MAX_REDIRECTS} times; it was not downloaded.`);
+    try {
+      current = new URL(location, current);
+    } catch {
+      throw new SourceError("download_failed", "The link redirected to an address that is not valid; it was not downloaded.");
+    }
+  }
 }
 
 /** Downloads in progress, by workspace folder. */
@@ -168,12 +218,17 @@ async function fetchLink(
 ): Promise<SourceRecord> {
   const log = options.log ?? (() => {});
   const previous = readRecord(dir);
-  if (previous && previous.id === target.id && previous.kind === target.kind && existsSync(previous.mediaPath)) {
+  // A `.framelens/` folder can come with a project someone else made: a record is only reused for the same link, and
+  // only files inside its own media folder are read.
+  const media = join(dir, "media");
+  if (previous && previous.id === target.id && previous.kind === target.kind && previous.sourceUrl === target.url && insideFolder(previous.mediaPath, media)) {
     log(`Reusing ${previous.mediaPath}`);
-    const captions = previous.captions?.filter((c) => existsSync(c.path));
+    const captions = previous.captions?.filter((c) => c && typeof c.path === "string" && insideFolder(c.path, media));
     return { ...previous, input, captions: captions?.length ? captions : undefined, reused: true };
   }
 
+  // yt-dlp follows redirects without a hop check: the link's own redirects are walked first.
+  if (target.kind === "url") await (options.checkRedirects ?? checkLinkRedirects)(target.url, options.signal);
   const locate = options.locate ?? (async (name) => requireTool(name, { env, ...options.find }));
   let ytdlp: ToolLocation;
   let ffmpeg: ToolLocation;
@@ -211,13 +266,17 @@ async function fetchLink(
     } catch (cobaltError) {
       const second = cobaltError instanceof Error ? cobaltError.message : String(cobaltError);
       const code = error instanceof SourceError ? error.code : "download_failed";
-      throw new SourceError(code, `${first} (${second})`, error instanceof SourceError ? { accessControl: error.accessControl, ...(error.detail && { detail: error.detail }) } : {});
+      throw new SourceError(code, `${first} (${second})`, {
+        ...(error instanceof SourceError && { accessControl: error.accessControl, ...(error.detail && { detail: error.detail }) }),
+        thirdParty: quotesThirdParty(error) || quotesThirdParty(cobaltError),
+      });
     }
     const record: SourceRecord = {
       id: target.id,
       kind: target.kind as SourceKind,
       input,
       url: target.url,
+      sourceUrl: target.url,
       title: viaCobalt.title,
       mediaPath: viaCobalt.mediaPath,
       fetchedAt,
@@ -232,6 +291,7 @@ async function fetchLink(
     kind: target.kind as SourceKind,
     input,
     url: target.kind === "youtube" ? target.url : (fetched.canonicalUrl ?? target.url),
+    sourceUrl: target.url,
     title: fetched.title,
     mediaPath: fetched.mediaPath,
     captions: fetched.captions.length ? fetched.captions : undefined,

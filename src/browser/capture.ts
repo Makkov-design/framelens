@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { InvalidInputError } from "../errors.js";
 import type { MediaTools } from "../media/exec.js";
 import { isBotCheckOrLimit } from "../sources/access.js";
+import { checkHop, pinnedLookup, systemLookup, type Lookup } from "../sources/cobalt.js";
 import { evaluate, findBrowser, launchBrowser, navigate, profileDir } from "./cdp.js";
 
 /** Login pages for `framelens login <site>`. */
@@ -37,21 +38,23 @@ export function chooseMedia(candidates: MediaCandidate[]): { video?: MediaCandid
   return { ...(video && { video }), ...(audio && { audio }) };
 }
 
+const NO_ORIGIN = new URL("about:blank");
+const CAPTURE_WORDING = { who: "The page's media link", what: "an address" };
 const isLocal = (url: string) => /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?\//.test(url);
 
 /**
  * Downloads a URL to a file (following redirects), stopping at `maxBytes`. Always settles: over the cap, on a stalled
  * or failed transfer, the partial file is removed and the promise rejects.
  */
-export function download(url: string, file: string, maxBytes: number, redirects = 5, origin = url): Promise<void> {
+export async function download(url: string, file: string, maxBytes: number, redirects = 5, origin = url, lookup: Lookup = systemLookup): Promise<void> {
+  // Plain http only for a page on this computer (tests, local previews); everything remote goes over https, and a
+  // remote server cannot redirect us to this computer.
+  const local = isLocal(url);
+  if (!(local ? isLocal(origin) : url.startsWith("https://"))) throw new Error("Only https media links are downloaded.");
+  // Every remote hop must go to a public address (the check cobalt and `exact` use), and is connected to as checked.
+  // The media link comes from the page, so no host is trusted: `about:blank` has no origin any link can match.
+  const address = local ? undefined : await checkHop(new URL(url), NO_ORIGIN, lookup, CAPTURE_WORDING);
   return new Promise((resolve, reject) => {
-    // Plain http only for a page on this computer (tests, local previews); everything remote goes over https, and a
-    // remote server cannot redirect us to this computer.
-    const local = isLocal(url);
-    if (!(local ? isLocal(origin) : url.startsWith("https://"))) {
-      reject(new Error("Only https media links are downloaded."));
-      return;
-    }
     let settled = false;
     const fail = (error: Error) => {
       if (settled) return;
@@ -74,11 +77,11 @@ export function download(url: string, file: string, maxBytes: number, redirects 
     };
     let out: ReturnType<typeof createWriteStream> | undefined;
     const get = local ? httpGet : httpsGet;
-    const req = get(url, { headers: { "user-agent": "Mozilla/5.0 (framelens)" } }, (res) => {
+    const req = get(url, { headers: { "user-agent": "Mozilla/5.0 (framelens)" }, ...(address && { lookup: pinnedLookup(address) }) }, (res) => {
       if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location && redirects > 0) {
         res.resume();
         settled = true;
-        download(new URL(res.headers.location, url).toString(), file, maxBytes, redirects - 1, origin).then(resolve, reject);
+        download(new URL(res.headers.location, url).toString(), file, maxBytes, redirects - 1, origin, lookup).then(resolve, reject);
         return;
       }
       if (res.statusCode !== 200) {

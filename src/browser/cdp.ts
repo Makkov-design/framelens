@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { InvalidInputError } from "../errors.js";
 import { callSignal, throwIfCancelled } from "../runtime/call.js";
+import { childEnv } from "../tools/children.js";
 
 /** Chrome or Edge on this computer, or `FRAMELENS_BROWSER`. */
 export function findBrowser(env: Record<string, string | undefined> = process.env, platform = process.platform): string | undefined {
@@ -222,7 +223,7 @@ export async function launchBrowser(options: {
       `--window-size=${width},${height}`,
       "about:blank",
     ],
-    { stdio: "ignore", windowsHide: true, detached: process.platform !== "win32" },
+    { stdio: "ignore", windowsHide: true, detached: process.platform !== "win32", env: childEnv() },
   );
   running.add(child);
   child.once("exit", () => running.delete(child));

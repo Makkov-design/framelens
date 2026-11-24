@@ -185,6 +185,12 @@ your computer, the local network or a cloud metadata address, and a redirect may
 Files sent gzip-, deflate- or br-encoded are decoded; other encodings (zstd, lists of encodings) are refused. At most
 30 MB, after decoding, in 30 s.
 
+**Other links and `web`.** Before yt-dlp fetches a link that is not YouTube, Frame Lens walks the redirects its
+server answers with under the same rule, so a public link cannot send the download to your computer or local network;
+the requests a site extractor makes on its own are not covered (see [SECURITY.md](SECURITY.md)). `web` refuses any
+page or frame on your computer or local network, other than the host you gave, and says when the page was read at
+another address than the one you gave.
+
 Frame Lens never bypasses logins, CAPTCHAs or bot checks and never uses online downloader sites or scraping services.
 Platforms' terms may forbid automated downloading: analyze videos you are allowed to watch and use, for reference.
 </details>

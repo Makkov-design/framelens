@@ -1,6 +1,6 @@
 import { CancelledError, callSignal } from "../runtime/call.js";
 import { killTree, spawnTracked } from "../tools/children.js";
-import { InvalidInputError } from "../errors.js";
+import { InvalidInputError, ToolOutputError } from "../errors.js";
 import { parseShowinfo } from "../media/frames.js";
 import type { MediaTools } from "../media/exec.js";
 import { spawnPath, type ToolLocator } from "../tools/spawn-path.js";
@@ -104,7 +104,7 @@ export async function decodeGray(
       }
       if (code !== 0) {
         const tail = stderr.trim().split("\n").filter((l) => !l.includes("Parsed_showinfo")).slice(-6).join("\n");
-        reject(new Error(`ffmpeg failed after ${frames.length} frames: ${tail || `exit code ${code}`}`));
+        reject(new ToolOutputError(`ffmpeg failed after ${frames.length} frames`, tail, `exit code ${code}`));
         return;
       }
       const times = parseShowinfo(stderr);

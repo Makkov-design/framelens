@@ -2,9 +2,15 @@
  * Third-party text (a source's title, a caption, a page's element ids, a Lottie layer name) on one line, for
  * comments, Markdown and summaries. TikTok and Instagram titles are the post's caption and can hold line breaks: in a
  * `//` comment the next line would run as code in the user's project, and in Markdown it would start a heading.
+ * C1 controls, zero-width characters, bidi overrides and isolates, and the byte-order mark go too: they hide or
+ * reorder what a reader sees.
  */
 export function oneLine(text: unknown, max = 200): string {
-  return String(text ?? "").replace(/[\u0000-\u001f\u007f\u2028\u2029`]+/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
+  return String(text ?? "")
+    .replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff`]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, max);
 }
 
 /**

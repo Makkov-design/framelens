@@ -4,7 +4,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import type { Engine, Source } from "./engine.js";
-import { AnalyzerError, InvalidInputError } from "./errors.js";
+import { AnalyzerError, InvalidInputError, quotesThirdParty } from "./errors.js";
 import type { Logger } from "./logger.js";
 import { oneLine } from "./text.js";
 import { EXPORT_TARGETS } from "./export/exporters.js";
@@ -57,6 +57,15 @@ function sourceLine(source: Source, thirdParty = source.record.kind !== "file"):
 }
 
 /**
+ * An error's message for a tool result. ffmpeg's and yt-dlp's own words can repeat text from the source (a file name
+ * in a playlist, a page's caption track): such a message carries the same notice as a result.
+ */
+export function errorText(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return quotesThirdParty(error) ? `${message}\n> ${NOTICE}` : message;
+}
+
+/**
  * Tells the agent what automatic setup did during the call (a downloaded ffmpeg or yt-dlp), at the end of the text
  * and as `setup` in structuredContent, so it can pass it on instead of the download happening silently.
  */
@@ -84,7 +93,7 @@ export function registerLocalTools(server: McpServer, engine: Engine, logger: Lo
       logger.info("tool done", { tool, ms: Date.now() - startedAt });
       return withSetupNotes(result, notes);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = errorText(error);
       if (error instanceof InvalidInputError || error instanceof AnalyzerError) {
         logger.warn("tool failed", { tool, error: message });
         return withSetupNotes({ content: [{ type: "text", text: message }], isError: true }, setupNotesOf(error));
@@ -113,7 +122,7 @@ export function registerLocalTools(server: McpServer, engine: Engine, logger: Lo
     ({ source }, extra) =>
       run("probe", extra, async () => {
         const s = await engine.source(source);
-        const captions = (s.record.captions ?? []).map((c) => `${c.language}${c.auto ? " (auto)" : ""}`);
+        const captions = (s.record.captions ?? []).map((c) => `${oneLine(c.language, 40)}${c.auto ? " (auto)" : ""}`);
         const text = [
           sourceLine(s),
           "",

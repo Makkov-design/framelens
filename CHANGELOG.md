@@ -30,12 +30,31 @@ and install tools. Every change went through an independent audit, fixes and a r
   before it extracts anything (at most 50 MB packed and by its listing unpacked, exactly the expected file names,
   plain files only), and measures what it extracted (at most 50 MB) before copying it in.
   CI also runs `probe` through the built bundle on Node 20, 22 and 24 and the unit tests on Windows and macOS.
-- The bundled Gemini client is `@google/genai` 3.0.0 (was 2.32.0). Calls stay on the `v1beta` API, where the
+- The bundled Gemini client is `@google/genai` 3.6.1 (was 2.32.0). Calls stay on the `v1beta` API, where the
   default `-latest` models exist (3.x defaults to `v1`), and a `GOOGLE_GENAI_API_VERSION` in the environment is
   ignored. The bundle still runs on Node 20.
+- Development: Dependabot proposes a release once it has been out for 3 days (minor and patch) or 14 days (major).
 
 ### Fixed
 
+- Error results that quote ffmpeg's or yt-dlp's output (a file name in a playlist, a page's caption track name) keep
+  it to one line of at most 200 characters and carry the third-party notice, like other results.
+- `web` refuses a page, redirect, script navigation or frame on this computer, the local network or a cloud metadata
+  address, unless it is the host you gave, and says when the page was read at another address than the one given.
+- A link fetched with yt-dlp (not YouTube) has its redirects walked first with the `exact` rule: a public link that
+  redirects to this computer or the local network is refused before yt-dlp starts. What this does not cover is in
+  SECURITY.md.
+- The login-profile capture checks that every hop of its media download goes to a public address.
+- A caption track whose name is not a language tag is not downloaded, and a caption file named by the site reads as
+  `und`; caption languages are printed on one line.
+- Third-party text on one line (`oneLine`) also drops C1 controls, zero-width characters, bidi overrides and isolates
+  and the byte-order mark. The Gemini transcript's text and speaker are kept on one line, and `exact` puts its
+  third-party notice first.
+- ffmpeg, ffprobe, yt-dlp and the browser no longer inherit the Gemini, Google, Figma and cobalt keys or the cookie
+  settings (cookies still reach yt-dlp as its arguments).
+- A `.framelens/` folder that came with a project is no longer trusted blindly: a stored source is reused only for the
+  same link and only for files inside that workspace's own `media` folder. Workspaces from before this check are
+  downloaded once more.
 - Cancelling a tool call stops the yt-dlp, ffmpeg or browser it started, with their own children; the server stops
   all of them when it exits (they used to run on for up to 30 minutes). When the client closes stdin, the calls it
   already sent are answered first. A cancelled call leaves no result in the workspace and sends no progress after

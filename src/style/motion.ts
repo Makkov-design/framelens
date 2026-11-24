@@ -1,7 +1,7 @@
 import { CancelledError, callSignal } from "../runtime/call.js";
 import { killTree, spawnTracked } from "../tools/children.js";
 import { existsSync, readFileSync, rmSync } from "node:fs";
-import { InvalidInputError } from "../errors.js";
+import { InvalidInputError, ToolOutputError } from "../errors.js";
 import type { MediaTools } from "../media/exec.js";
 import { spawnPath, type ToolLocator } from "../tools/spawn-path.js";
 import { filterValue } from "../media/sheets.js";
@@ -172,7 +172,7 @@ function streamFrames(ffmpeg: string, args: string[], frameBytes: number, expect
       }
       if (tooLarge) resolve({ data: new Uint8Array(0), tooLarge: true });
       else if (timedOut) reject(new Error(`ffmpeg timed out after ${Math.round(timeoutMs / 1000)} s reading the frames.`));
-      else if (code !== 0) reject(new Error(`ffmpeg failed: ${stderr.trim().split("\n").slice(-6).join("\n") || `exit code ${code}`}`));
+      else if (code !== 0) reject(new ToolOutputError("ffmpeg failed", stderr.trim().split("\n").slice(-6).join("\n"), `exit code ${code}`));
       // Only whole frames; the buffer is not copied.
       else resolve({ data: buffer.subarray(0, used - (used % frameBytes)), tooLarge: false });
     });

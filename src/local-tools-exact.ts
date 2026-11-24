@@ -19,6 +19,7 @@ export function exactSummary(r: ExactResult, maxMoves = 25): string {
     (m) => `- ${m.start.toFixed(2)}–${m.end.toFixed(2)} s ${m.target} · ${m.property} ${m.from.join(",")}→${m.to.join(",")} · ${m.curve} (${m.hold ? "hold" : m.easing}, ${m.evidence})`,
   );
   return [
+    `> ${NOTICE}`,
     `> ${a.title} · ${a.kind} · ${a.width ?? "?"}×${a.height ?? "?"} · ${a.fps} fps · ${dur} s · ${a.layerCount} layers/nodes`,
     `> Workspace: ${ws.dir}`,
     "",
@@ -33,7 +34,6 @@ export function exactSummary(r: ExactResult, maxMoves = 25): string {
     ...(a.unknowns.length ? ["", `Unknowns (${a.unknowns.length}): ${a.unknowns.slice(0, 6).join(" | ")}${a.unknowns.length > 6 ? " | …" : ""}`] : []),
     "",
     `Files: ${ws.display(r.files.spec!)}, ${ws.display(r.files.style!)}${r.files.rive ? `, ${ws.display(r.files.rive)}` : ""}${r.exported ? `, starter in ${ws.display(r.exported.dir)}` : ""}.`,
-    NOTICE,
   ].join("\n");
 }
 
