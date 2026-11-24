@@ -1,6 +1,6 @@
 // src/text.ts
 function oneLine(text2, max = 200) {
-  return String(text2 ?? "").replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff`]+/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
+  return String(text2 ?? "").replace(/[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u180e\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff\ufff9-\ufffb`]+|[\u{e0000}-\u{e007f}]+/gu, " ").replace(/\s+/g, " ").trim().slice(0, max);
 }
 function safeHex(value, fallback = "#111111") {
   if (typeof value !== "string") return fallback;
