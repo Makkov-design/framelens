@@ -72,14 +72,19 @@ jobs:
       - if: steps.version.outputs.published == 'false'
         run: npm ci --ignore-scripts
 
-      # prepublishOnly runs typecheck, the tests and the bundle first.
+      # A published version can never be replaced, so everything is checked before the upload: the same checks
+      # prepublishOnly runs, and that the bundle built here is byte for byte the committed one.
+      - name: Typecheck, tests and bundle
+        if: steps.version.outputs.published == 'false'
+        run: npm run check
+      - name: Committed bundle is the one that will be published
+        if: steps.version.outputs.published == 'false'
+        run: git diff --exit-code --stat -- dist/framelens.mjs || (echo "The tag's dist/framelens.mjs is stale. Nothing was published; fix main and tag a new version." && exit 1)
+
+      # --ignore-scripts: the checks above already ran, and a second build must not touch the bundle now.
       - name: Publish
         if: steps.version.outputs.published == 'false'
-        run: npm publish --provenance --access public
-
-      - name: Published bundle is the committed one
-        if: steps.version.outputs.published == 'false'
-        run: git diff --exit-code --stat -- dist/framelens.mjs
+        run: npm publish --provenance --access public --ignore-scripts
 
       - name: Wait until npm serves the version
         env:

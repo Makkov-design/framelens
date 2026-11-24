@@ -230,3 +230,10 @@ download past the limit. Whatever a stopped, cancelled or failed download wrote 
 - Branch `feat/<phase>-<area>`, pull request into `main`, CI green before merge. Commit messages end with the
   co-author line used in this repository.
 - Every milestone gets an independent audit (quality, security, tests, a live run) before the next starts.
+- Repository maintenance may read public pages that the shipped server never contacts. `scripts/check-listings.mjs`
+  (run weekly by `listings-check.yml`, never by the package) reads npm, the MCP Registry and five catalogue pages
+  (Glama, LobeHub, MCP Market, claudemarketplaces.com, mcprush) to see whether they show the current version.
+  Reason: catalogues copy a release on their own schedule and offer no way to push one, so a stale or misnamed
+  listing is otherwise found by accident. It sends plain GETs with a user agent that names this repository, no
+  cookies or keys, and treats a refusal as "not readable" (principle 7). None of these services is a dependency of
+  `dist/framelens.mjs`.
