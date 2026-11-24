@@ -2,6 +2,7 @@
 // Prints one version's section of CHANGELOG.md (without its heading), for the release workflow.
 // Usage: node scripts/changelog-section.mjs 2.3.0 [path]
 import { readFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 
 export function changelogSection(text, version) {
   const lines = text.split(/\r?\n/);
@@ -13,7 +14,7 @@ export function changelogSection(text, version) {
   return body.length > 0 ? body : null;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const [version, path = "CHANGELOG.md"] = process.argv.slice(2);
   const section = version ? changelogSection(readFileSync(path, "utf8"), version) : null;
   if (!section) {
