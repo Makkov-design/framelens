@@ -4,8 +4,11 @@
 
 ### Added
 
-- A "Publish to npm" workflow that releases through npm trusted publishing, so the package carries a signed
-  provenance statement tying it to this repository and commit.
+- Releases are automatic: pushing a version tag publishes to npm through trusted publishing (so the package carries a
+  signed provenance statement tying it to this repository and commit), then to the MCP Registry, and creates the
+  GitHub release from that version's changelog section.
+- A weekly check compares the version on npm with the MCP Registry and the catalogues that copy from it, and opens
+  an issue naming the ones that fell behind.
 
 ## 2.2.0 — 2026-11-23
 

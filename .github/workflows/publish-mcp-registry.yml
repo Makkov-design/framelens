@@ -1,9 +1,11 @@
 name: Publish to MCP Registry
 
-# Run by hand (Actions tab > "Publish to MCP Registry" > Run workflow) after `npm publish` of the same version.
+# Called by release.yml after the npm upload of the same version; can also be run by hand (Actions tab >
+# "Publish to MCP Registry" > Run workflow), for example to repeat a failed registry step.
 # Logs in with GitHub OIDC, which grants the io.github.Makkov-design/* namespace: no token or secret is needed.
 on:
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
