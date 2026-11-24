@@ -3,11 +3,13 @@
  * comments, Markdown and summaries. TikTok and Instagram titles are the post's caption and can hold line breaks: in a
  * `//` comment the next line would run as code in the user's project, and in Markdown it would start a heading.
  * C1 controls, soft hyphens, zero-width and other invisible format characters, bidi marks, overrides and isolates,
- * interlinear annotations, tag characters and the byte-order mark go too: they hide or reorder what a reader sees.
+ * interlinear annotations, tag characters, variation selectors, blank fillers (Hangul fillers, the braille blank,
+ * the combining grapheme joiner, musical format marks) and the byte-order mark go too: they hide or reorder what a
+ * reader sees.
  */
 export function oneLine(text: unknown, max = 200): string {
   return String(text ?? "")
-    .replace(/[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u180e\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff\ufff9-\ufffb`]+|[\u{e0000}-\u{e007f}]+/gu, " ")
+    .replace(/[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u180e\u200b-\u200f\u2028-\u202e\u2060-\u206f\u034f\u115f\u1160\u3164\u2800\ufe00-\ufe0f\ufeff\ufff9-\ufffb`]+|[\u{1d173}-\u{1d17a}\u{e0000}-\u{e007f}]+/gu, " ")
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, max);

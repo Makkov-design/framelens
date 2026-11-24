@@ -16,9 +16,10 @@ described in the README's Security section.
 - Links fetched with yt-dlp (any link that is not YouTube): before yt-dlp runs, Frame Lens sends the link one plain
   GET and walks the redirects its server answers with (at most 5, 15 s in all), under the same rule as `exact`; a
   refused hop means yt-dlp is never started. Exempt: the link's own origin (same scheme, host and port), which may be
-  local, and a user name and password in the link the user gave. Refused: a redirect to another origin that is not
-  https (an http-to-http redirect to another host included), or that resolves to this computer, the local network or
-  a cloud metadata address, and any redirect that adds a user name or password. Not covered: a server that answers yt-dlp differently from that GET, the requests a site
+  local, and a user name and password in the link the user gave, which a redirect on that same origin may keep (a
+  relative Location inherits them). Refused: a redirect to another origin that is not https (an http-to-http redirect
+  to another host included), or that resolves to this computer, the local network or a cloud metadata address, and
+  any redirect that adds or changes a user name or password, or carries one to another origin. Not covered: a server that answers yt-dlp differently from that GET, the requests a site
   extractor makes on its own (API and media addresses it builds), and a link this computer cannot reach directly (for
   example only through a proxy), where the walk is skipped and yt-dlp's own result stands.
 - `web`: every document the page loads (its redirects, the navigations its scripts start, its frames) is held until
@@ -38,7 +39,8 @@ described in the README's Security section.
   `~/.framelens/browser-profile` when neither it nor `~/.framelens` is a link. A marker alone (one that came with a
   repository) is not enough, and a custom profile from 2.1 is refused: delete it by hand.
 - Exports name the source link without its query, fragment or user name. A user name and password in a link the user
-  gave are left out of tool results, error messages and progress lines.
+  gave are left out of tool results, error messages, progress lines, the log, motion-spec.json and every file but the
+  workspace's source.json.
 - Error results that quote ffmpeg's or yt-dlp's output keep it to one line of at most 200 characters and carry the
   third-party notice.
 - No answer from a download source may crash the server (`test/runtime/download-guard.test.ts`).

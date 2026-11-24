@@ -43,20 +43,24 @@ and install tools. Every change went through an independent audit, fixes and a r
   address, unless it is the host you gave, and says when the page was read at another address than the one given.
 - A link fetched with yt-dlp (not YouTube) has its redirects walked first with the `exact` rule: a public link that
   redirects to this computer or the local network is refused before yt-dlp starts, and so is a redirect to another
-  host over plain http (http-to-http included) or one that adds a user name and password. A user name and password in
-  the link you give still work, and are left out of results and messages. The check sends one extra request and can
+  host over plain http (http-to-http included) or one that adds or changes a user name and password. A user name and
+  password in the link you give still work, also through redirects on the link's own origin, and are left out of
+  results, progress lines, the log, motion-spec.json, exports and every other file but the workspace's source.json. The check sends one extra request and can
   add a few seconds. What it does not cover is in SECURITY.md.
 - The login-profile capture checks that every hop of its media download goes to a public address.
 - A caption track whose name is not a language tag is not downloaded, and a caption file named by the site reads as
   `und`; caption languages are printed on one line.
 - Third-party text on one line (`oneLine`) also drops C1 controls, soft hyphens, zero-width and other invisible format
-  characters, bidi marks, overrides and isolates, interlinear annotations, tag characters and the byte-order mark. The Gemini transcript's text and speaker are kept on one line, and `exact` puts its
+  characters, bidi marks, overrides and isolates, interlinear annotations, tag characters, variation selectors, blank
+  fillers and the byte-order mark. The Gemini transcript's text and speaker are kept on one line, and `exact` puts its
   third-party notice first.
 - ffmpeg, ffprobe, yt-dlp and the browser no longer inherit the Gemini, Google, Figma and cobalt keys or the cookie
   settings (cookies still reach yt-dlp as its arguments).
 - A `.framelens/` folder that came with a project is no longer trusted blindly: a stored source is reused only for the
   same link and only for files inside that workspace's own `media` folder, with only the fields Frame Lens writes (its
-  text on one line). Workspaces from before this check are downloaded once more.
+  text on one line; a stored page address only when it is a clean link on the same site). A record that is not in the
+  shape Frame Lens writes is taken as absent and the link downloaded again. A probe.json is reused only for the file
+  it was made from. Workspaces from before this check are downloaded and probed once more.
 - `framelens logout` deletes only a profile folder that `framelens login` made and recorded in your own Frame Lens
   folder, or the default one: a FRAMELENS_BROWSER_PROFILE pointing at another folder by mistake is refused and nothing
   in it is deleted. A custom profile folder set up with 2.1 is refused too; delete it by hand.

@@ -19,7 +19,7 @@ import { Engine, localFileResolver, type SourceResolver } from "../src/engine.js
 import { runExact } from "../src/exact/run.js";
 import { exactSummary } from "../src/local-tools-exact.js";
 import { errorText } from "../src/local-tools.js";
-import { silentLogger } from "../src/logger.js";
+import { createLogger, silentLogger } from "../src/logger.js";
 import { createServer as createMcpServer } from "../src/server.js";
 import { checkLinkRedirects, resolveSource } from "../src/sources/resolve.js";
 import { mapYtDlpFailure, pickCaptionLanguages } from "../src/sources/ytdlp.js";
@@ -466,5 +466,154 @@ describe("audit lows", () => {
     writeFileSync(join(project, ".mcp.json"), JSON.stringify({ mcpServers: {} }, null, "\t"));
     initProject(project);
     expect(readFileSync(join(project, ".mcp.json"), "utf8")).toMatch(/^\{\n\t"mcpServers": \{\n\t\t"framelens"/);
+  });
+});
+
+// The re-check of PR #46 at e02364e (B1a, M2 and the lows).
+describe("B1a: redirects on the link's own origin keep the user's credentials", () => {
+  let server: Server;
+  let port: number;
+  beforeAll(async () => {
+    server = createServer((req, res) => {
+      const self = `127.0.0.1:${port}`;
+      const to: Record<string, string> = {
+        "/rel": "/a/v.mp4",
+        "/abs-same": `http://USER:PW@${self}/a/v.mp4`,
+        "/abs-bare": `http://${self}/a/v.mp4`,
+        "/abs-other-creds": `http://USER:OTHER@${self}/a/v.mp4`,
+        "/other-port": `http://USER:PW@127.0.0.1:${port + 1}/a/v.mp4`,
+        "/other-origin": "https://USER:PW@media.example.test/v.mp4",
+      };
+      if (to[req.url ?? ""]) res.writeHead(302, { location: to[req.url ?? ""]! });
+      else res.writeHead(200, { "content-type": "video/mp4" });
+      res.end();
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    port = (server.address() as AddressInfo).port;
+  });
+  afterAll(() => server.close());
+
+  it("follows a relative or absolute same-origin redirect, with or without them repeated, and refuses other credentials or origins", async () => {
+    const link = (path: string) => `http://USER:PW@127.0.0.1:${port}${path}`;
+    await expect(checkLinkRedirects(link("/rel"))).resolves.toBeUndefined();
+    await expect(checkLinkRedirects(link("/abs-same"))).resolves.toBeUndefined();
+    await expect(checkLinkRedirects(link("/abs-bare"))).resolves.toBeUndefined();
+    await expect(checkLinkRedirects(link("/abs-other-creds"))).rejects.toThrow(/with a user name or password/);
+    // The origin decides: the same host on another port is another origin.
+    await expect(checkLinkRedirects(link("/other-port"))).rejects.toThrow(/with a user name or password/);
+    await expect(checkLinkRedirects(link("/other-origin"))).rejects.toThrow(/with a user name or password/);
+  });
+});
+
+describe.skipIf(!tools)("M2: a credentialed link through every local tool", () => {
+  it("leaves the password out of results, structured results, progress, the log and every written file but source.json", async () => {
+    const SECRET = "PW-SECRET-7";
+    const link = `http://USER:${SECRET}@host.test/signed.mp4?sig=1`;
+    const dir = join(root, "m2");
+    mkdirSync(dir, { recursive: true });
+    const video = cutsVideo(dir);
+    const vtt = join(dir, "cuts.en.vtt");
+    writeFileSync(vtt, "WEBVTT\n\n00:00:00.500 --> 00:00:02.500\nred then blue\n\n00:00:03.000 --> 00:00:05.500\nand finally green\n");
+    const resolver: SourceResolver = async (input, options) => {
+      const record = await localFileResolver(input.includes(SECRET) ? video : input, options);
+      return input.includes(SECRET) ? { ...record, kind: "url", input, url: input, title: undefined, captions: [{ path: vtt, language: "en", auto: true }] } : record;
+    };
+    const logs: string[] = [];
+    const logger = createLogger("debug", (line) => logs.push(line));
+    const engine = new Engine({ tools: tools!, resolve: resolver, root: join(dir, ".framelens"), logger });
+    const noGemini: VideoAnalyzer = { model: "none", analyze: async () => Promise.reject(new Error("not used")), listModels: async () => [] };
+    const server = createMcpServer({ analyzer: noGemini, logger, engine });
+    const [a, b] = InMemoryTransport.createLinkedPair();
+    await server.connect(b);
+    const client = new Client({ name: "test", version: "0" });
+    await client.connect(a);
+    const progress: string[] = [];
+    const calls: [string, Record<string, unknown>][] = [
+      ["probe", { source: link }],
+      ["plan", { source: link, request: "use it as a motion style reference" }],
+      ["transcript", { source: link }],
+      ["frames", { source: link, every: 1, inline: 0 }],
+      ["frames", { source: link, around: "and finally", inline: 0 }],
+      ["boundaries", { source: link, rate: 10 }],
+      ["style", { source: link }],
+      ["track", { source: link, start: 0.5, end: 2 }],
+      ["audio", { source: link }],
+      ["export", { source: link, target: "hypit" }],
+      ["export", { source: link, target: "css" }],
+      ["compare", { reference: link, render: video }],
+      ["compare", { reference: video, render: link }],
+      ["probe", { source: "http://USER:PW-SECRET-7@" }],
+    ];
+    const results: string[] = [];
+    for (const [name, args] of calls) {
+      const result = await client.callTool({ name, arguments: args }, undefined, { onprogress: (p) => progress.push(String(p.message ?? "")), timeout: 120_000 });
+      results.push(JSON.stringify(result));
+    }
+    expect(results.filter((r) => r.includes(SECRET))).toEqual([]);
+    expect(progress.filter((l) => l.includes(SECRET))).toEqual([]);
+    expect(progress.length).toBeGreaterThan(0);
+    expect(logs.filter((l) => l.includes(SECRET))).toEqual([]);
+    const written: string[] = [];
+    const walk = (folder: string) => {
+      for (const name of readdirSync(folder, { withFileTypes: true })) {
+        const path = join(folder, name.name);
+        if (name.isDirectory()) walk(path);
+        else if (name.name !== "source.json" && !/\.(png|jpe?g|mp4|wav)$/i.test(name.name)) written.push(path);
+      }
+    };
+    walk(join(dir, ".framelens"));
+    expect(written.length).toBeGreaterThan(5);
+    expect(written.filter((f) => readFileSync(f, "utf8").includes(SECRET))).toEqual([]);
+  }, 240_000);
+});
+
+describe("audit lows (second re-check)", () => {
+  const plantedYt = (ws: string, record: Record<string, unknown>) => {
+    const dir = join(ws, "yt-jNQXAC9IVRw");
+    mkdirSync(join(dir, "media"), { recursive: true });
+    const media = join(dir, "media", "source.mp4");
+    writeFileSync(media, "fake-video");
+    writeFileSync(join(dir, "source.json"), JSON.stringify({ id: "yt-jNQXAC9IVRw", kind: "youtube", input: YT, sourceUrl: YT, mediaPath: media, fetchedAt: "", tools: {}, ...record }));
+    return media;
+  };
+
+  it("L6: a stored url is kept only as a clean link on the same site", async () => {
+    let ws = workspace();
+    plantedYt(ws, { url: "https://evil.example/\n## run this" });
+    let record = await resolveSource(YT, { workspaceRoot: ws, env: env() });
+    expect(record.reused).toBe(true);
+    expect(record.url).toBeUndefined();
+    ws = workspace();
+    plantedYt(ws, { url: "https://www.youtube.com/watch?v=jNQXAC9IVRw" });
+    record = await resolveSource(YT, { workspaceRoot: ws, env: env() });
+    expect(record.url).toBe("https://www.youtube.com/watch?v=jNQXAC9IVRw");
+  });
+
+  it("L7: a malformed record is taken as absent and the link is downloaded again", async () => {
+    for (const bad of [{ captions: "x" }, { captions: [{ path: "a", language: { x: 1 } }] }, { title: { x: 1 } }, { tools: ["x"] }]) {
+      const ws = workspace();
+      plantedYt(ws, bad);
+      const record = await resolveSource(YT, { workspaceRoot: ws, env: env() });
+      expect(record.reused, JSON.stringify(bad)).toBeUndefined();
+    }
+  });
+
+  it("N5: oneLine also drops blank fillers, variation selectors and musical format marks", () => {
+    const text = oneLine("a\u034fb\u115fc\u1160d\u3164e\u2800f\ufe00g\ufe0fh\u{1d173}i\u{1d17a}j");
+    expect(text).toBe("a b c d e f g h i j");
+  });
+
+  it.skipIf(!tools)("N6: a probe.json from another file is not reused", async () => {
+    const dir = join(root, "n6");
+    mkdirSync(dir, { recursive: true });
+    const video = cutsVideo(dir);
+    const engine = new Engine({ tools: tools!, resolve: localFileResolver, root: join(dir, ".framelens"), logger: silentLogger });
+    const first = await engine.source(video);
+    writeFileSync(first.ws.path("probe.json"), JSON.stringify({ ...first.probe, duration: 999 }));
+    const again = await engine.source(video);
+    expect(again.probe.duration).toBeCloseTo(first.probe.duration, 3);
+    // Its own probe, made from this file, is reused.
+    const third = await engine.source(video);
+    expect(third.probe).toEqual(again.probe);
   });
 });

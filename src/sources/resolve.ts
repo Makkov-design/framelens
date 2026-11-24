@@ -92,12 +92,37 @@ function fileClassification(path: string): Classified {
   return { kind: "file", id: fileId(abs), path: abs };
 }
 
+/**
+ * The stored record, or undefined when it is missing or not in the shape Frame Lens writes (a hand-edited or planted
+ * file): then the link is downloaded again instead of failing on a field of the wrong type.
+ */
 function readRecord(dir: string): SourceRecord | undefined {
   try {
     const record = JSON.parse(readFileSync(join(dir, "source.json"), "utf8")) as SourceRecord;
-    return record && typeof record.mediaPath === "string" && typeof record.id === "string" ? record : undefined;
+    if (!record || typeof record !== "object" || typeof record.mediaPath !== "string" || typeof record.id !== "string") return undefined;
+    const text = (v: unknown) => v === undefined || typeof v === "string";
+    if (!text(record.url) || !text(record.title) || !text(record.sourceUrl) || !text(record.fetchedAt)) return undefined;
+    if (record.tools !== undefined && (typeof record.tools !== "object" || record.tools === null || Array.isArray(record.tools))) return undefined;
+    if (record.captions !== undefined) {
+      if (!Array.isArray(record.captions)) return undefined;
+      if (!record.captions.every((c) => c && typeof c === "object" && typeof c.path === "string" && typeof c.language === "string")) return undefined;
+    }
+    return record;
   } catch {
     return undefined;
+  }
+}
+
+/** `stored` is an http(s) link on the same host as `link`, the shape yt-dlp's canonical page address has. */
+function sameSiteLink(stored: unknown, link: string): stored is string {
+  if (typeof stored !== "string") return false;
+  try {
+    const a = new URL(stored);
+    const b = new URL(link);
+    const site = (h: string) => h.toLowerCase().replace(/^(www|m)\./, "");
+    return (a.protocol === "http:" || a.protocol === "https:") && !a.username && !a.password && site(a.hostname) === site(b.hostname);
+  } catch {
+    return false;
   }
 }
 
@@ -155,8 +180,15 @@ export async function checkLinkRedirects(link: string, signal?: AbortSignal, loo
   const stop = anySignal(signal, AbortSignal.timeout(15_000));
   let current = first;
   for (let hop = 0; ; hop++) {
-    // The user's own link may carry a user name and password (theirs to give); a redirect may not add one.
-    const address = hop === 0 ? undefined : await checkHop(current, first, lookup, LINK_WORDING);
+    // The user's own link may carry a user name and password (theirs to give). A redirect on the link's own origin may
+    // keep exactly those (a relative Location inherits them); any other credentials, or any on another origin, are
+    // refused: a redirect may not add or change them.
+    let address: string | undefined;
+    if (hop > 0 && (current.username || current.password)) {
+      if (current.origin !== first.origin || current.username !== first.username || current.password !== first.password) {
+        throw new SourceError("download_failed", "The link redirected to an address with a user name or password; it was not downloaded.");
+      }
+    } else if (hop > 0) address = await checkHop(current, first, lookup, LINK_WORDING);
     let res;
     try {
       res = await pinnedGet(current, address, stop);
@@ -230,14 +262,16 @@ async function fetchLink(
   const media = join(dir, "media");
   if (previous && previous.id === target.id && previous.kind === target.kind && previous.sourceUrl === target.url && insideFolder(previous.mediaPath, media, options.workspaceRoot)) {
     log(`Reusing ${previous.mediaPath}`);
-    const captions = previous.captions?.filter((c) => c && typeof c.path === "string" && insideFolder(c.path, media, options.workspaceRoot));
+    const captions = previous.captions?.filter((c) => insideFolder(c.path, media, options.workspaceRoot));
     // Only the fields Frame Lens writes are carried over, its text on one line: a planted record's free text (an
     // inbox note, a warning) is not shown as Frame Lens's own words.
     const record: SourceRecord = {
       id: previous.id,
       kind: previous.kind,
       input,
-      ...(typeof previous.url === "string" && { url: previous.url }),
+      // The page's own address as yt-dlp reported it may differ from the link (a canonical link); a stored one must be
+      // an http(s) link on the same site, else it is dropped.
+      ...(sameSiteLink(previous.url, target.url) && { url: oneLine(previous.url, 2000) }),
       sourceUrl: target.url,
       ...(typeof previous.title === "string" && { title: oneLine(previous.title, 500) }),
       mediaPath: previous.mediaPath,

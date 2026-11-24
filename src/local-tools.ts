@@ -61,7 +61,8 @@ function sourceLine(source: Source, thirdParty = source.record.kind !== "file"):
  * in a playlist, a page's caption track): such a message carries the same notice as a result.
  */
 export function errorText(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
+  // A link the user gave may carry their user name and password: never repeated in a result.
+  const message = hideCredentials(error instanceof Error ? error.message : String(error));
   return quotesThirdParty(error) ? `${message}\n> ${NOTICE}` : message;
 }
 
@@ -102,7 +103,7 @@ export function registerLocalTools(server: McpServer, engine: Engine, logger: Lo
         logger.info("tool cancelled", { tool, ms: Date.now() - startedAt });
         return withSetupNotes({ content: [{ type: "text", text: `${tool} was cancelled; the programs it started were stopped.` }], isError: true }, setupNotesOf(error));
       }
-      logger.error("tool crashed", { tool, error });
+      logger.error("tool crashed", { tool, error: message });
       return withSetupNotes({ content: [{ type: "text", text: `${tool} failed: ${message}` }], isError: true }, setupNotesOf(error));
     } finally {
       call.stop();
@@ -472,7 +473,7 @@ export function registerLocalTools(server: McpServer, engine: Engine, logger: Lo
       run("export", extra, async () => {
         const { ws, title, dir, files, inboxNote } = await engine.export(args.source, args.target, options.version ?? "dev");
         const text = [
-          `> ${oneLine(title)}`,
+          `> ${oneLine(hideCredentials(title))}`,
           `> Workspace: ${ws.display(ws.dir)}`,
           ...(inboxNote ? [`> ${inboxNote}`] : []),
           "",

@@ -9,6 +9,7 @@ import { createLogger } from "./logger.js";
 import { createServer } from "./server.js";
 import { createSetupAnalyzer } from "./setup.js";
 import { VERSION } from "./version.js";
+import { hideCredentials } from "./text.js";
 import { Engine, type TranscriptFallback } from "./engine.js";
 import { execTool } from "./media/exec.js";
 import { createHash } from "node:crypto";
@@ -42,7 +43,8 @@ function createEngine(logger: Logger, transcriptFallback?: TranscriptFallback): 
     tools,
     resolve: async (input, options) => {
       try {
-        const log = (line: string) => {
+        const log = (raw: string) => {
+          const line = hideCredentials(raw);
           logger.info(line);
           reportProgress(line);
         };

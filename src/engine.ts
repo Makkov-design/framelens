@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { appendFileSync, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { appendFileSync, existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { AnalyzerError, InvalidInputError } from "./errors.js";
 import { hideCredentials, oneLine } from "./text.js";
@@ -171,6 +171,16 @@ export function readSavedReading(file: string): { reading: PageReading; captured
   return { reading: cleanReading(raw), ...(Number.isFinite(capturedAt) && capturedAt <= Date.now() + 60_000 && { capturedAt }) };
 }
 
+/** Which file a probe was made from: its real path, size and modification time. */
+function mediaKey(path: string): string | undefined {
+  try {
+    const stat = statSync(path);
+    return `${realpathSync(path)}|${stat.size}|${Math.floor(stat.mtimeMs)}`;
+  } catch {
+    return undefined;
+  }
+}
+
 export class Engine {
   constructor(
     private readonly options: {
@@ -194,10 +204,22 @@ export class Engine {
     const signal = callSignal();
     const record = await this.options.resolve(input, { workspaceRoot: this.options.root, ...(signal && { signal }) });
     const ws = new Workspace(this.options.root, record.id);
-    let probe = ws.readJson<ProbeInfo>("probe.json");
+    // The probe belongs to the file it was made from: a probe.json from another download (or one that came with the
+    // folder) is not reused.
+    const media = mediaKey(record.mediaPath);
+    let probe: ProbeInfo | undefined;
+    try {
+      const stored = ws.readJson<ProbeInfo & { media?: string }>("probe.json");
+      if (stored && media && stored.media === media) {
+        const { media: _media, ...rest } = stored;
+        probe = rest;
+      }
+    } catch {
+      probe = undefined;
+    }
     if (!probe) {
       probe = await probeMedia(record.mediaPath, this.options.tools);
-      ws.writeJson("probe.json", probe);
+      ws.writeJson("probe.json", { ...probe, ...(media && { media }) });
       this.progress(ws, `probed: ${probe.duration.toFixed(1)} s, ${probe.width ?? "?"}×${probe.height ?? "?"}, ${probe.fps ?? "?"} fps${probe.vfr ? " (VFR)" : ""}`);
     }
     return { ws, record, probe };
@@ -775,7 +797,7 @@ export class Engine {
     const comparison: Comparison = { ...partial, verdict: verdict(partial, fps) };
     const shift = comparison.cuts.shift;
     const md = [
-      `# Compare: ${oneLine(ref.source.record.title ?? reference)} vs ${oneLine(out.source.record.title ?? render)}`,
+      `# Compare: ${oneLine(ref.source.record.title ?? hideCredentials(reference))} vs ${oneLine(out.source.record.title ?? hideCredentials(render))}`,
       "",
       ...comparison.verdict.map((v) => `- ${v}`),
       "",
@@ -806,6 +828,8 @@ export class Engine {
       id = `web-${createHash("sha1").update(url).digest("hex").slice(0, 10)}`;
       ws = new Workspace(this.options.root, id);
       result = await readPage(url, ws.ensure("frames", "web"), this.options.tools);
+      // web.json, motion-spec.json and the result name the page without a user name and password from the address.
+      result = { ...result, reading: { ...result.reading, url: hideCredentials(result.reading.url) } };
     } else {
       // A reading the browser extension saved in the user's own browser (pages behind their login), or a web.json.
       savedReading = url.toLowerCase() === "inbox" ? newestInboxReading(env) : resolve(url.replace(/^["']|["']$/g, ""));
@@ -848,6 +872,9 @@ export class Engine {
 
   /** Appends a line to PROGRESS.md so a later session can see what was already done. */
   private progress(ws: Workspace, line: string): void {
+    // One place for every progress line (PROGRESS.md, the client's progress notifications, the debug log): a link
+    // the user gave may carry their user name and password.
+    line = hideCredentials(line);
     const file = ws.path("PROGRESS.md");
     if (!existsSync(file)) ws.writeText("PROGRESS.md", "# Progress\n\nTool runs, oldest first. Add your own notes and open questions below them.\n\n");
     appendFileSync(file, `- ${new Date().toISOString().slice(0, 19)}Z ${line}\n`);

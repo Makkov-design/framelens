@@ -7,7 +7,7 @@ import type { Logger } from "./logger.js";
 import { errorText, withSetupNotes, WRITES_WORKSPACE } from "./local-tools.js";
 import { collectSetupNotes, setupNotesOf } from "./tools/setup.js";
 import { mcpCallContext, withCall } from "./runtime/call.js";
-import { oneLine } from "./text.js";
+import { hideCredentials, oneLine } from "./text.js";
 
 /** Tools that drive a local browser: reading the animations of a live web page. */
 export function registerBrowserTools(server: McpServer, engine: Engine, logger: Logger, options: { version?: string } = {}): void {
@@ -43,9 +43,10 @@ export function registerBrowserTools(server: McpServer, engine: Engine, logger: 
         const ended = r.animations.filter((a) => a.ended).length;
         const fonts = r.fonts.slice(0, 6).map((f) => `${f.selector} ${f.family.split(",")[0]} ${f.weight} ${f.size}`);
         // A page that redirected or navigated away was read at another address: say so first.
-        const moved = !savedReading && r.url && r.url !== url.trim() && r.url !== new URL(url.trim()).href;
+        const given = hideCredentials(url.trim());
+        const moved = !savedReading && r.url && r.url !== given && r.url !== hideCredentials(new URL(url.trim()).href);
         const lines = [
-          `> ${oneLine(r.title || r.url || url)} · ${r.viewport.width}×${r.viewport.height} · page ${r.scrollHeight}px tall${savedReading ? ` · read in the user's browser: ${savedReading}` : ""}${moved ? ` · read at ${oneLine(r.url, 300)}, not the address given` : ""}`,
+          `> ${oneLine(r.title || r.url || given)} · ${r.viewport.width}×${r.viewport.height} · page ${r.scrollHeight}px tall${savedReading ? ` · read in the user's browser: ${savedReading}` : ""}${moved ? ` · read at ${oneLine(r.url, 300)}, not the address given` : ""}`,
           ...(result.refused?.length ? [`> Not opened: ${result.refused.join(", ")}: the page tried to go to this computer or the local network.`] : []),
           `> Workspace: ${ws.dir}`,
           ...(inboxNote ? [`> ${inboxNote}`] : []),

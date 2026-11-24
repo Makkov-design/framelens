@@ -5,7 +5,7 @@ import type { ProbeInfo } from "../media/probe.js";
 import type { Transcript } from "../speech/transcript.js";
 import type { SourceRecord, Workspace } from "../workspace/workspace.js";
 import { formatTimestamp } from "../youtube.js";
-import { oneLine, shareableLink } from "../text.js";
+import { hideCredentials, oneLine, shareableLink } from "../text.js";
 import { mergePalettes, palette, type Swatch } from "./palette.js";
 import { uniqueEvents, type ClassifiedChange, type MotionEvent } from "./motion.js";
 import type { Transition } from "./transitions.js";
@@ -264,8 +264,9 @@ export function buildSpec(input: {
     generatedBy: `framelens ${input.version}`,
     source: {
       kind: input.record.kind,
-      input: input.record.input,
-      ...(input.record.url && { url: input.record.url }),
+      // motion-spec.json is shared and exported; the full link (with a user name and password) stays in source.json.
+      input: hideCredentials(input.record.input),
+      ...(input.record.url && { url: hideCredentials(input.record.url) }),
       ...(input.record.title && { title: input.record.title }),
     },
     range,
