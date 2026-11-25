@@ -4,6 +4,14 @@
 
 ### Added
 
+- Name check: automatic captions spell product and proper names by ear ("Rare UI" for RareUI, "Val" for Vaul).
+  When the words come from automatic captions, `plan` for `listen` and `learn` picks the likely names (capitalised
+  words, words after cue words such as "called", "by" or "use", web addresses, said or written), adds a `frames` step
+  640 px wide a second after each is said, and writes `NAMES.md` (caption spelling, on-screen spelling for the agent to
+  fill in, time, evidence `seen` or `said`). `NAMES.md` is written once, so a later `plan` keeps what the agent wrote.
+  Caption names are third-party text: escaped and quoted in the plan step, marked as such at the top of `NAMES.md`,
+  and the plan result carries the third-party notice. `NAMES.md` is never written through a link, and a `NAMES.md`
+  that is a link or a hard link is neither written nor pointed to.
 - Releases are automatic: pushing a version tag publishes to npm through trusted publishing (so the package carries a
   signed provenance statement tying it to this repository and commit), then to the MCP Registry, and creates the
   GitHub release from that version's changelog section.

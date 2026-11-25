@@ -226,6 +226,42 @@ export class Workspace {
   }
 
   /**
+   * Writes a new file and returns its path, or undefined when something is already there: the file is created only if
+   * the name is free, so the write never follows a link (even one inside the workspace) or replaces a file.
+   */
+  writeTextOnce(name: string, text: string): string | undefined {
+    throwIfCancelled();
+    this.ensure();
+    const file = this.path(name);
+    try {
+      writeFileSync(file, text, { flag: "wx" });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") return undefined;
+      throw error;
+    }
+    return file;
+  }
+
+  /**
+   * What is at a name in the workspace, without following links: nothing, a plain file of its own (one link, so not a
+   * hard link to a file elsewhere), or something else (a link, a folder, a path that leads out of the workspace).
+   */
+  fileState(name: string): "absent" | "file" | "other" {
+    let file: string;
+    try {
+      file = this.path(name);
+    } catch {
+      return "other";
+    }
+    try {
+      const stat = lstatSync(file);
+      return stat.isFile() && stat.nlink === 1 ? "file" : "other";
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code === "ENOENT" ? "absent" : "other";
+    }
+  }
+
+  /**
    * The absolute path, as tool output shows it. A relative one would be read against the agent's own folder, which
    * is not the server's when the client starts it elsewhere (Claude Desktop) or the workspace moved to the home folder.
    */

@@ -45,7 +45,7 @@ research and reasoning lives in the plan page; this file is what the code must f
 | `sources/` | Turning any input into a local media file plus `source.json`: resolve, yt-dlp, direct URL, local file, inbox folder, cookies |
 | `tools/` | Finding and running external binaries (ffmpeg, ffprobe, yt-dlp, whisper), version checks, pinned downloads |
 | `media/` | ffprobe probe (VFR, HDR, audio), frame extraction, contact sheets with time and word labels, visual-change candidates, dynamics index |
-| `speech/` | Transcript with word times: captions first, local whisper if present, Gemini as fallback |
+| `speech/` | Transcript with word times: captions first, local whisper if present, Gemini as fallback; `names.ts` picks likely names in automatic captions for the name check (`NAMES.md`) |
 | `workspace/` | Workspace folder layout, `manifest.json`, cached pass results, `PROGRESS.md` |
 | `runtime/` | The per-call context (`call.ts`): the client's cancel signal and MCP progress, carried to the code that runs programs |
 | `router/` | Video type classification and the goal-based plan |
@@ -115,12 +115,20 @@ transcript.md      readable transcript with [m:ss] marks
 frames/            single frames named by source time, e.g. 000012.480.jpg
 sheets/            contact sheets + sheets/<name>.json index (cell → time, frame number, words)
 plan.json          the router's plan for the current goal
+NAMES.md           likely names in automatic captions for the agent to check on screen (created once, never through a link)
 ANALYSIS.md        whole-piece reading (2.1): purpose, hook, structure, systems, why it works
 TIMELINE.md        time-located sections (2.1)
 STYLE.md           art direction (2.1)
 motion-spec.json   machine spec (2.1, see below)
 PROGRESS.md        what is done, open questions, next step — so another session can resume
 ```
+
+`NAMES.md` is the one file the agent edits that `plan` points it to, so it is handled like the rest of a workspace
+that may have come with a project: it is created only when the name is free (`Workspace.writeTextOnce`, exclusive
+create, so never through a link), and a later `plan` names it again only when it is a plain file of the workspace's
+own (`Workspace.fileState`: not a link, not a hard link to a file elsewhere). Frame Lens never reads it back. Its
+caption names are third-party text: escaped with `mdText` in the file and in the plan step, under the third-party
+notice in the result.
 
 ## MCP tools (v2)
 
