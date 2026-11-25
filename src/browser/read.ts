@@ -18,8 +18,6 @@ export interface PageResult {
   reading: PageReading;
   /** Pages and frames the page tried to open on this computer or the local network, which were refused. */
   refused?: string[];
-  /** Scripts, images, fetches and other subresources the page asked for there, which were not loaded. */
-  blocked?: string[];
   /** Screenshots down the page. */
   views: string[];
   /** The opening animations frame by frame (all page animations paused and stepped together). */
@@ -41,7 +39,7 @@ export async function readPage(url: string, outDir: string, tools: MediaTools, o
     // The recorder runs before the page's own scripts, so motion that ends before the page is read still counts.
     await session.cdp.send("Page.enable", {}, session.sessionId);
     await session.cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: RECORDER_SCRIPT }, session.sessionId);
-    const { refused, blocked } = await guardRequests(session, new URL(url), options.lookup);
+    const refused = await guardNavigations(session, new URL(url), options.lookup);
     await navigate(session, url).catch((error: unknown) => {
       if (refused.length) throw new InvalidInputError(`${oneLine(url, 300)} redirected to ${refused[0]}, on this computer or the local network; it was not opened.`);
       throw error;
@@ -94,7 +92,7 @@ export async function readPage(url: string, outDir: string, tools: MediaTools, o
     const sheet = frames.length
       ? (await buildSheets(frames, outDir, "opening", { columns: 4, rows: Math.min(6, Math.ceil(frames.length / 4)), width: 480, label: (f) => `${f.t.toFixed(2)} s` }, tools))[0]
       : undefined;
-    return { reading: mergeReadings(readings), views, ...(sheet && { sheet }), ...(refused.length && { refused: [...new Set(refused)] }), ...(blocked.length && { blocked: [...new Set(blocked)] }) };
+    return { reading: mergeReadings(readings), views, ...(sheet && { sheet }), ...(refused.length && { refused: [...new Set(refused)] }) };
   } finally {
     await session.close();
     removeProfile(profile);
@@ -102,82 +100,35 @@ export async function readPage(url: string, outDir: string, tools: MediaTools, o
 }
 
 /**
- * Holds every request of the tab until its host is checked: documents (the page, its redirects, the navigations its
- * scripts start, its frames) and subresources (scripts, styles, images, fetch and XHR). One on this computer or the
- * local network is refused, unless it is the host the user gave. A page cannot send the reading, its text and
- * screenshots, to an admin page or a cloud metadata address, nor pull an internal script's text into the reading.
- * Workers (service, shared and dedicated) and out-of-process frames get the same check in their own targets.
- * Returns the lists the refused documents and blocked subresources are added to. WebSockets are not requests the
- * browser lets us hold (SECURITY.md).
+ * Holds every document request of the tab (the page, its redirects, the navigations its scripts start, its frames)
+ * until its host is checked: one on this computer or the local network is refused, unless it is the host the user
+ * gave. A page cannot send the reading, its text and screenshots, to an admin page or a cloud metadata address.
+ * Returns the list the refused addresses are added to.
  */
-async function guardRequests(session: BrowserSession, input: URL, lookup: Lookup = systemLookup): Promise<{ refused: string[]; blocked: string[] }> {
+async function guardNavigations(session: BrowserSession, input: URL, lookup: Lookup = systemLookup): Promise<string[]> {
   const refused: string[] = [];
-  const blocked: string[] = [];
   const own = hostOf(input);
-  // One lookup per host: a page asks for many subresources from the same few hosts.
-  const verdicts = new Map<string, Promise<boolean>>();
-  const isPrivate = (host: string) => {
-    let verdict = verdicts.get(host);
-    if (!verdict) {
-      verdict = hostAddresses(host, lookup).then((addresses) => addresses.some(isPrivateAddress), () => false);
-      verdicts.set(host, verdict);
-    }
-    return verdict;
-  };
-  // The tab and every worker or frame it starts in a target of its own: each gets the same check.
-  const guarded = new Set<string>([session.sessionId]);
   session.cdp.on("Fetch.requestPaused", (params, sid) => {
-    if (!sid || !guarded.has(sid)) return;
+    if (sid !== session.sessionId) return;
     const requestId = params.requestId as string;
     const target = String((params.request as { url?: unknown } | undefined)?.url ?? "");
-    const isDocument = params.resourceType === "Document";
     void (async () => {
       let refuse = false;
       try {
         const next = new URL(target);
         const host = hostOf(next);
-        // A name that does not resolve here does not open in the browser either.
-        if ((next.protocol === "http:" || next.protocol === "https:") && host !== own) refuse = await isPrivate(host);
+        if ((next.protocol === "http:" || next.protocol === "https:") && host !== own) refuse = (await hostAddresses(host, lookup)).some(isPrivateAddress);
       } catch {
-        // Not a link: nothing to check.
+        // A name that does not resolve here does not open in the browser either.
       }
       if (refuse) {
-        (isDocument ? refused : blocked).push(oneLine(target, 120));
-        await session.cdp.send("Fetch.failRequest", { requestId, errorReason: "BlockedByClient" }, sid);
-      } else await session.cdp.send("Fetch.continueRequest", { requestId }, sid);
+        refused.push(oneLine(target, 120));
+        await session.cdp.send("Fetch.failRequest", { requestId, errorReason: "BlockedByClient" }, session.sessionId);
+      } else await session.cdp.send("Fetch.continueRequest", { requestId }, session.sessionId);
     })().catch(() => undefined);
   });
-  const fetchAll = { patterns: [{ urlPattern: "*", requestStage: "Request" }] };
-  // Service workers, shared workers, dedicated workers and out-of-process frames make their requests in targets of
-  // their own, which the tab's interception does not see. Each is attached paused, guarded, then let run: one that
-  // cannot be guarded is closed instead (fail closed).
-  session.cdp.on("Target.attachedToTarget", (params) => {
-    const child = params.sessionId as string | undefined;
-    const info = params.targetInfo as { type?: string; targetId?: string } | undefined;
-    if (!child) return;
-    void (async () => {
-      try {
-        if (info?.type !== "page") {
-          await session.cdp.send("Fetch.enable", fetchAll, child);
-          guarded.add(child);
-          await session.cdp.send("Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }, child).catch(() => undefined);
-        }
-        await session.cdp.send("Runtime.runIfWaitingForDebugger", {}, child);
-      } catch {
-        if (info?.targetId) await session.cdp.send("Target.closeTarget", { targetId: info.targetId }).catch(() => undefined);
-      }
-    })();
-  });
-  await session.cdp.send("Fetch.enable", fetchAll, session.sessionId);
-  // Workers and frames of the tab, and the service and shared workers its pages register (those belong to the browser).
-  await session.cdp.send("Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }, session.sessionId);
-  await session.cdp.send("Target.setAutoAttach", {
-    autoAttach: true,
-    waitForDebuggerOnStart: true,
-    flatten: true,
-    filter: [{ type: "service_worker", exclude: false }, { type: "shared_worker", exclude: false }, { exclude: true }],
-  });
-  return { refused, blocked };
+  await session.cdp.send("Fetch.enable", { patterns: [{ urlPattern: "*", resourceType: "Document", requestStage: "Request" }] }, session.sessionId);
+  return refused;
 }
 
 /**

@@ -218,12 +218,9 @@ password; every hop to another host must be https and resolve only to public add
 address that was checked.
 The same check walks a link's redirects before yt-dlp follows them (`checkLinkRedirects` in `sources/resolve.ts`; one
 plain GET to the link's own host, no new service) and covers every hop of the login-profile capture's media download
-(`browser/capture.ts`). `web` holds every request over CDP (`Fetch.requestPaused`, `browser/read.ts`), documents and
-subresources alike, and refuses one whose host resolves to a private address, other than the host the user gave (one
-lookup per host per reading). Workers (service, shared, dedicated) and out-of-process frames run in targets of their
-own: `Target.setAutoAttach` with `waitForDebuggerOnStart`, on the tab and on the browser for service and shared
-workers, attaches each paused, enables the same interception in it, then lets it run; one that cannot be guarded is
-closed. WebSockets, WebRTC and WebTransport cannot be held this way.
+(`browser/capture.ts`). `web` holds each document request over CDP (`Fetch.requestPaused`, `browser/read.ts`) and
+refuses one whose host resolves to a private address, other than the host the user gave. Subresources, workers and
+WebSockets are not checked (SECURITY.md states the limit).
 `exact` decodes gzip, deflate and br through `stream.pipeline` (never `pipe`, which left the socket open and let the
 time limit's abort surface as an unhandled error) and refuses other encodings. yt-dlp's `--max-filesize` covers only a
 size known up front, so `sources/ytdlp.ts` also measures the `source.*` files every 250 ms (not the postprocessor's

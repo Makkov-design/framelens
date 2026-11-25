@@ -153,7 +153,6 @@ describe.skipIf(!canRun)("with a real browser", () => {
   let dir: string;
   let server: Server;
   let base: string;
-  const internalHits: string[] = [];
 
   beforeAll(async () => {
     dir = tempDir();
@@ -194,33 +193,13 @@ setTimeout(() => document.getElementById("late").classList.add("on"), 300);
       } else if (req.url === "/bounce") {
         res.writeHead(302, { location: `http://localhost:${(server.address() as AddressInfo).port}/admin` });
         res.end();
-      } else if (req.url === "/sub") {
-        // A public page pulling an internal script, image and fetch from another name for this machine (L2).
-        const port = (server.address() as AddressInfo).port;
+      } else if (req.url === "/worker-page") {
+        // A page whose title comes from a dedicated worker: workers must run as in a normal browser.
         res.writeHead(200, { "content-type": "text/html" });
-        res.end(`<!doctype html><title>Sub</title><script src="http://localhost:${port}/internal.js"></script><img src="http://localhost:${port}/internal.png"><script>fetch("http://localhost:${port}/internal-api").catch(() => {});</script>`);
-      } else if (req.url === "/workers") {
-        // Workers of the page's own host fetch from another name for this machine (audit H1).
-        res.writeHead(200, { "content-type": "text/html" });
-        res.end(`<!doctype html><title>Workers</title><script>
-navigator.serviceWorker.register("/sw.js").then(() => navigator.serviceWorker.ready).then((r) => r.active.postMessage("go")).catch(() => {});
-try { const w = new SharedWorker("/shared.js"); w.port.start(); } catch (e) {}
-try { new Worker("/dedicated.js"); } catch (e) {}
-</script>`);
-      } else if (req.url === "/sw.js" || req.url === "/shared.js" || req.url === "/dedicated.js") {
-        const port = (server.address() as AddressInfo).port;
-        const name = req.url.slice(1, -3);
-        const fetchInternal = (when: string) => `fetch("http://localhost:${port}/internal-${name}-${when}").catch(() => {});`;
+        res.end(`<!doctype html><title>Waiting</title><script>new Worker("/worker.js").onmessage = (e) => { document.title = e.data; };</script>`);
+      } else if (req.url === "/worker.js") {
         res.writeHead(200, { "content-type": "text/javascript" });
-        res.end(
-          name === "sw"
-            ? `self.addEventListener("install", (e) => { ${fetchInternal("install")} self.skipWaiting(); }); self.addEventListener("activate", (e) => e.waitUntil(clients.claim())); self.addEventListener("message", () => { ${fetchInternal("message")} });`
-            : `${fetchInternal("start")} self.onconnect = () => { ${fetchInternal("connect")} };`,
-        );
-      } else if (req.url?.startsWith("/internal")) {
-        internalHits.push(req.url);
-        res.writeHead(200, { "content-type": "text/javascript" });
-        res.end(`document.title = "SECRET-JS";`);
+        res.end(`postMessage("Worker ran");`);
       } else if (req.url === "/same") {
         res.writeHead(200, { "content-type": "text/html" });
         res.end(`<!doctype html><title>Same</title><script>location.replace("/admin");</script>`);
@@ -281,23 +260,9 @@ try { new Worker("/dedicated.js"); } catch (e) {}
     expect(same.refused).toBeUndefined();
   }, 120_000);
 
-  it("does not load a page's scripts, images or fetches from another host on this computer (audit L2)", async () => {
-    internalHits.length = 0;
-    const result = await readPage(`${base}/sub`, dir, tools!, { maxScroll: 0 });
-    expect(result.reading.title).toBe("Sub");
-    expect(internalHits).toEqual([]);
-    expect(result.blocked?.some((u) => /localhost:\d+\/internal\.js/.test(u))).toBe(true);
-    expect(result.refused).toBeUndefined();
-  }, 120_000);
-
-  it("does not let a service worker, shared worker or worker reach another host on this computer (audit H1)", async () => {
-    internalHits.length = 0;
-    const result = await readPage(`${base}/workers`, dir, tools!, { maxScroll: 0 });
-    expect(result.reading.title).toBe("Workers");
-    // Give a late worker fetch time to arrive before checking.
-    await new Promise((r) => setTimeout(r, 500));
-    expect(internalHits).toEqual([]);
-    expect(result.blocked?.some((u) => /internal-sw-install/.test(u))).toBe(true);
+  it("lets a page's dedicated worker run", async () => {
+    const result = await readPage(`${base}/worker-page`, dir, tools!, { maxScroll: 0 });
+    expect(result.reading.title).toBe("Worker ran");
   }, 120_000);
 
   it("gives up on a page that makes the reading script loop, instead of hanging", async () => {

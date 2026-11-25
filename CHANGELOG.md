@@ -3,10 +3,8 @@
 ## 2.3.0 — 2026-11-25
 
 Frame Lens now reads names from the screen where automatic captions misspell them: `plan` for `listen` and `learn`
-adds a name check and writes `NAMES.md`. `web` checks every request a page makes, its workers' included, so a public
-page cannot pull anything from your computer or local network into the reading. A web page's spec labels each
-number by how it was obtained, and exports hide a token in a link's path. This is the first version released by the
-release workflow, with npm provenance.
+adds a name check and writes `NAMES.md`. A web page's spec labels each number by how it was obtained, and exports
+hide a token in a link's path. This is the first version released by the release workflow, with npm provenance.
 
 ### Added
 
@@ -31,6 +29,9 @@ release workflow, with npm provenance.
   `claude mcp add … -- npx -y framelens`, the Claude Code plugin, any client's `npx -y framelens`, then
   `framelens init`; building from a clone comes last. The website states that ffmpeg and yt-dlp are set up on first
   use, lists `track` in the style plan, and says what 2.3.0 changed. CONTRIBUTING.md describes the tag-driven release.
+- SECURITY.md states the limit of `web` plainly: only the page and its redirects, script navigations and frames are
+  checked; the page's own scripts, images, fetches, workers, prefetches and WebSockets can reach this computer or the
+  local network, as in your browser. Open only pages you would open there.
 - A web page's `motion-spec.json` labels each move per field: times and repeats `measured`, frame counts at Frame
   Lens's 60 fps `inferred`, and where the move is fastest `derived` from the page's cubic-bezier (`inferred` for
   steps and other eases); it was all `measured`, with a placeholder peak. Its palette carries each colour's real
@@ -38,9 +39,6 @@ release workflow, with npm provenance.
 
 ### Fixed
 
-- `web` no longer loads a page's scripts, styles, images, fetch or XHR requests from this computer, the local network
-  or a cloud metadata address (other than the host you gave), nor lets the page's service workers, shared workers or
-  workers reach them; the result says how many were not loaded. WebSockets are not covered.
 - Exports also leave out a token in the source link's path: path parameters (`;jsessionid=…`, also `%3B`), the
   segment after one named like `token`, `key` or `sig`, and the value of a segment such as `auth=…`, shown as `…`.
   Ids that are the address itself (Figma, Drive, Loom) are kept.

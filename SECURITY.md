@@ -23,16 +23,15 @@ control of the calling assistant beyond what the README's "Privacy and design pr
   any redirect that adds or changes a user name or password, or carries one to another origin. Not covered: a server that answers yt-dlp differently from that GET, the requests a site
   extractor makes on its own (API and media addresses it builds), and a link this computer cannot reach directly (for
   example only through a proxy), where the walk is skipped and yt-dlp's own result stands.
-- `web`: every request the page makes (the page, its redirects, the navigations its scripts start, its frames, and
-  its scripts, styles, images, fetch and XHR requests), and every request of the workers it starts (service workers,
-  shared workers, dedicated workers, also at install time and later) and of its out-of-process frames, is held until
-  its host is checked; one that resolves to this
-  computer, the local network or a cloud metadata address is refused.
+- `web`: every document the page loads (its redirects, the navigations its scripts start, its frames) is held until
+  its host is checked; one that resolves to this computer, the local network or a cloud metadata address is refused.
   Exempt: the host name the user gave, on any port and over http or https (a dev server's other ports). Not exempt:
-  another name for the same machine (the user gave `localhost`, the page goes to `127.0.0.1`). The result names an address it was read at other than the one given, and how many
-  subresources were not loaded. A worker or frame that cannot be put under
-  this check is closed. Not covered: WebSocket, WebRTC and WebTransport connections (the browser does not let them be
-  held), and the browser resolves names itself (no pinned address).
+  another name for the same machine (the user gave `localhost`, the page goes to `127.0.0.1`). The result names an
+  address it was read at other than the one given. **Limit:** only those documents are checked. A page that `web`
+  opens can make its own requests, as it can in your browser: scripts, styles, images, fetch and XHR, workers of
+  every kind, prefetches and WebSockets, also to this computer or the local network, and what they return can end up
+  in the reading. The browser resolves names itself (no pinned address). Open only pages you would open in your own
+  browser.
 - The login-profile capture downloads the page's media over https only, and every hop must resolve to a public address,
   connected to as checked.
 - Downloads through yt-dlp stop at `FRAMELENS_MAX_DOWNLOAD_MB`, also when the site gives no size up front.
