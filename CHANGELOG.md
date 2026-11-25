@@ -4,6 +4,14 @@
 
 ### Added
 
+- Name check: automatic captions spell product and proper names by ear ("Rare UI" for RareUI, "Val" for Vaul).
+  When the words come from automatic captions, `plan` for `listen` and `learn` picks the likely names (capitalised
+  words, words after cue words such as "called", "by" or "use", web addresses, said or written), adds a `frames` step
+  640 px wide a second after each is said, and writes `NAMES.md` (caption spelling, on-screen spelling for the agent to
+  fill in, time, evidence `seen` or `said`). `NAMES.md` is written once, so a later `plan` keeps what the agent wrote.
+  Caption names are third-party text: escaped and quoted in the plan step, marked as such at the top of `NAMES.md`,
+  and the plan result carries the third-party notice. `NAMES.md` is never written through a link, and a `NAMES.md`
+  that is a link or a hard link is neither written nor pointed to.
 - Releases are automatic: pushing a version tag publishes to npm through trusted publishing (so the package carries a
   signed provenance statement tying it to this repository and commit), then to the MCP Registry, and creates the
   GitHub release from that version's changelog section.
@@ -15,7 +23,7 @@
 - Install instructions (README, website, `llms.txt`, AGENTS.md, the skill) lead with the npm routes:
   `claude mcp add … -- npx -y framelens`, the Claude Code plugin, any client's `npx -y framelens`, then
   `framelens init`; building from a clone comes last. The website states that ffmpeg and yt-dlp are set up on first
-  use, lists `track` in the style plan, and says what 2.2.0 changed. CONTRIBUTING.md describes the tag-driven release.
+  use, lists `track` in the style plan, and says what 2.2.0 changed and that the name check comes next. CONTRIBUTING.md describes the tag-driven release.
 - A web page's `motion-spec.json` labels each move per field: times and repeats `measured`, frame counts at Frame
   Lens's 60 fps `inferred`, and where the move is fastest `derived` from the page's cubic-bezier (`inferred` for
   steps and other eases); it was all `measured`, with a placeholder peak. Its palette carries each colour's real
