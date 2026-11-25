@@ -4,7 +4,7 @@ import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { captureVideo, chooseMedia } from "../../src/browser/capture.js";
-import { findBrowser } from "../../src/browser/cdp.js";
+import { browserStartDeadlineMs, findBrowser } from "../../src/browser/cdp.js";
 import { readPage } from "../../src/browser/read.js";
 import { easingFamily, effectiveEasing, mergeReadings, specFromPage, type PageAnimation, type PageReading } from "../../src/browser/web.js";
 import { createHash } from "node:crypto";
@@ -121,6 +121,11 @@ describe("web animation data", () => {
   it("finds no browser where none is configured", () => {
     expect(findBrowser({ FRAMELENS_BROWSER: "/nope/chrome" })).toBeUndefined();
   });
+
+  it("gives a cold browser start a minute in CI and 20 s elsewhere", () => {
+    expect(browserStartDeadlineMs({})).toBe(20_000);
+    expect(browserStartDeadlineMs({ CI: "true" })).toBe(60_000);
+  });
 });
 
 const browser = findBrowser();
@@ -177,6 +182,19 @@ Object.defineProperty(window, "gsap", { get() { throw new Error("no"); } });
 requestAnimationFrame(() => requestAnimationFrame(() => document.getElementById("f").classList.add("on")));
 setTimeout(() => document.getElementById("late").classList.add("on"), 300);
 </script>`);
+      } else if (req.url === "/admin") {
+        res.writeHead(200, { "content-type": "text/html" });
+        res.end(`<!doctype html><title>Admin secrets</title><h1>admin</h1>`);
+      } else if (req.url === "/away") {
+        // Security review F2: a page that sends the browser to another host on this computer.
+        res.writeHead(200, { "content-type": "text/html" });
+        res.end(`<!doctype html><title>Away</title><script>location.replace("http://localhost:${(server.address() as AddressInfo).port}/admin");</script>`);
+      } else if (req.url === "/bounce") {
+        res.writeHead(302, { location: `http://localhost:${(server.address() as AddressInfo).port}/admin` });
+        res.end();
+      } else if (req.url === "/same") {
+        res.writeHead(200, { "content-type": "text/html" });
+        res.end(`<!doctype html><title>Same</title><script>location.replace("/admin");</script>`);
       } else if (req.url === "/hang") {
         res.writeHead(200, { "content-type": "text/html" });
         res.end(`<!doctype html><title>Hang</title><script>document.getAnimations = () => { for (;;) {} };</script>`);
@@ -223,6 +241,15 @@ setTimeout(() => document.getElementById("late").classList.add("on"), 300);
     expect(result.reading.title).toBe("Hostile");
     expect(result.reading.animations).toEqual([]);
     expect(result.reading.fonts.map((f) => f.selector).join(" ")).not.toContain("\n");
+  }, 120_000);
+
+  it("refuses a navigation or redirect to another host on this computer, and reads the user's own host (security review F2)", async () => {
+    await expect(readPage(`${base}/away`, dir, tools!, { maxScroll: 0 })).rejects.toThrow(/sent the browser to http:\/\/localhost:\d+\/admin, on this computer or the local network/);
+    await expect(readPage(`${base}/bounce`, dir, tools!, { maxScroll: 0 })).rejects.toThrow(/redirected to http:\/\/localhost:\d+\/admin, on this computer or the local network/);
+    const same = await readPage(`${base}/same`, dir, tools!, { maxScroll: 0 });
+    expect(same.reading.title).toBe("Admin secrets");
+    expect(same.reading.url).toBe(`${base}/admin`);
+    expect(same.refused).toBeUndefined();
   }, 120_000);
 
   it("gives up on a page that makes the reading script loop, instead of hanging", async () => {

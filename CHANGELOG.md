@@ -9,6 +9,147 @@
   words, words after cue words such as "called", "by" or "use", web addresses, said or written), adds a `frames` step
   640 px wide a second after each is said, and writes `NAMES.md` (caption spelling, on-screen spelling for the agent to
   fill in, time, evidence `seen` or `said`). `NAMES.md` is written once, so a later `plan` keeps what the agent wrote.
+  Caption names are third-party text: escaped and quoted in the plan step, marked as such at the top of `NAMES.md`,
+  and the plan result carries the third-party notice. `NAMES.md` is never written through a link, and a `NAMES.md`
+  that is a link or a hard link is neither written nor pointed to.
+- Releases are automatic: pushing a version tag publishes to npm through trusted publishing (so the package carries a
+  signed provenance statement tying it to this repository and commit), then to the MCP Registry, and creates the
+  GitHub release from that version's changelog section.
+- A weekly check compares the version on npm with the MCP Registry and the catalogues that copy from it, and opens
+  an issue naming the ones that fell behind.
+
+## 2.2.0 — 2026-11-23
+
+Frame Lens now follows the client: a cancelled call stops the yt-dlp, ffmpeg or browser it started, long calls send
+progress, and a server whose client is gone exits. Automatic setup now covers Linux on arm64, and yt-dlp on Alpine
+(where ffmpeg comes from `apk`). Link downloads
+stop at their size limit also when the site gives no size, and `exact` and cobalt downloads never follow a redirect
+into your network. The local tools are no longer marked read-only, because they write workspaces and may download
+and install tools. Every change went through an independent audit, fixes and a re-check.
+
+### Added
+
+- Local tools send MCP progress notifications when the client passes a progress token: each finished step, setup and
+  download lines, and a heartbeat every 15 s, so a client that resets its timeout on progress keeps waiting for a
+  long `style`, `track` or download.
+
+### Changed
+
+- The local tools (`probe`, `plan`, `frames`, `style`, `track`, `web`, `exact` and the rest) are no longer annotated
+  `readOnlyHint: true`: they write workspaces and may download a video or install ffmpeg and yt-dlp. They are marked
+  not destructive. A client that runs read-only tools without asking may now ask before these. The Gemini tools stay
+  read-only.
+- `plan` reads the picture changes of a source longer than 10 minutes in 12 sample windows of 30 s instead of every
+  second, and says so in its notes; `boundaries` over a whole long source gets a time limit that grows with its length.
+- Development: on Dependabot's npm PRs a workflow rebuilds and commits the bundle, so they can pass CI once a
+  maintainer approves the CI run; major bumps come as PRs of their own. The workflow checks the build's artifact
+  before it extracts anything (at most 50 MB packed and by its listing unpacked, exactly the expected file names,
+  plain files only), and measures what it extracted (at most 50 MB) before copying it in.
+  CI also runs `probe` through the built bundle on Node 20, 22 and 24 and the unit tests on Windows and macOS.
+- The bundled Gemini client is `@google/genai` 3.6.1 (was 2.32.0). Calls stay on the `v1beta` API, where the
+  default `-latest` models exist (3.x defaults to `v1`), and a `GOOGLE_GENAI_API_VERSION` in the environment is
+  ignored. The bundle still runs on Node 20.
+- Development: Dependabot proposes a release once it has been out for 3 days (minor and patch) or 14 days (major).
+
+### Fixed
+
+- Error results that quote ffmpeg's or yt-dlp's output (a file name in a playlist, a page's caption track name) keep
+  it to one line of at most 200 characters and carry the third-party notice, like other results.
+- `web` refuses a page, redirect, script navigation or frame on this computer, the local network or a cloud metadata
+  address, unless it is the host you gave, and says when the page was read at another address than the one given.
+- A link fetched with yt-dlp (not YouTube) has its redirects walked first with the `exact` rule: a public link that
+  redirects to this computer or the local network is refused before yt-dlp starts, and so is a redirect to another
+  host over plain http (http-to-http included) or one that adds or changes a user name and password. A user name and
+  password in the link you give still work, also through redirects on the link's own origin, and are left out of
+  results, progress lines, the log, motion-spec.json, exports and every other file but the workspace's source.json. The check sends one extra request and can
+  add a few seconds. What it does not cover is in SECURITY.md.
+- The login-profile capture checks that every hop of its media download goes to a public address.
+- A caption track whose name is not a language tag is not downloaded, and a caption file named by the site reads as
+  `und`; caption languages are printed on one line.
+- Third-party text on one line (`oneLine`) also drops C1 controls, soft hyphens, zero-width and other invisible format
+  characters, bidi marks, overrides and isolates, interlinear annotations, tag characters, variation selectors, blank
+  fillers and the byte-order mark. The Gemini transcript's text and speaker are kept on one line, and `exact` puts its
+  third-party notice first.
+- ffmpeg, ffprobe, yt-dlp and the browser no longer inherit the Gemini, Google, Figma and cobalt keys or the cookie
+  settings (cookies still reach yt-dlp as its arguments).
+- A `.framelens/` folder that came with a project is no longer trusted blindly: a stored source is reused only for the
+  same link and only for files inside that workspace's own `media` folder, with only the fields Frame Lens writes (its
+  text on one line; a stored page address only when it is a clean link on the same site). A record that is not in the
+  shape Frame Lens writes is taken as absent and the link downloaded again. A probe.json is reused only for the file
+  it was made from. Workspaces from before this check are downloaded and probed once more.
+- `framelens logout` deletes only a profile folder that `framelens login` made and recorded in your own Frame Lens
+  folder, or the default one: a FRAMELENS_BROWSER_PROFILE pointing at another folder by mistake is refused and nothing
+  in it is deleted. A custom profile folder set up with 2.1 is refused too; delete it by hand.
+- Exports (`hypit`'s ANALYSIS.md and the starter projects) name the source link without its query, fragment or user
+  name, which can hold a signed link's access parameters; the workspace keeps the full link. In a git repository,
+  `framelens init` adds `.framelens/` to `.gitignore` when nothing ignores it yet.
+- `framelens init` warns, instead of saying to commit `.mcp.json`, when another server's settings there (its
+  environment, headers, arguments or address) hold what looks like a literal secret; it names the setting, never the
+  value. Other servers' settings are kept as they were, and so is the file's indentation.
+- Workspace writes no longer follow a link out of the workspace folder, and a `.framelens` in the working folder that
+  is a link elsewhere is not used (the home folder is, and the server says why).
+- Development: the MCP SDK's `hono` and `@hono/node-server` are at 4.13.19 and 2.1.10 (npm advisories for 4.13.13 and
+  2.1.5). They are not in the bundle: the stdio server never loaded them.
+- Cancelling a tool call stops the yt-dlp, ffmpeg or browser it started, with their own children; the server stops
+  all of them when it exits (they used to run on for up to 30 minutes). When the client closes stdin, the calls it
+  already sent are answered first. A cancelled call leaves no result in the workspace and sends no progress after
+  its answer.
+- A server whose client died during a call exits and stops the call's downloads instead of running on until their
+  own time limits, also when started through `npx` (whose `sh -c` or `cmd /c` and `npm exec` outlive the client):
+  while it finishes its calls after stdin closed, a ping it cannot write tells it the client is gone.
+- A shared first-use install of ffmpeg or yt-dlp, and the one ffmpeg feature check, no longer stop for one call's
+  cancel or report to its progress; an install whose waiting calls were all cancelled is reported on the next call.
+- Two calls on the same new link at once (`transcript` and `frames` together) no longer break each other's download:
+  the second waits for the first (also for the login-profile capture). A cancelled or failed download removes its
+  partial files, and leaves nothing a later call takes for complete.
+- A download from a site that does not say the size up front (HLS and DASH streams) is measured as it runs and
+  stopped once past `FRAMELENS_MAX_DOWNLOAD_MB` instead of running on; yt-dlp's `--max-filesize` only covered a known
+  size. The copies yt-dlp makes while it merges video and sound are not counted.
+- `exact` link downloads check every redirect, like the cobalt route: a redirect to another host must be https to a
+  public address and may not add a user name or password, so a redirect cannot send the download to this computer,
+  the local network or a cloud metadata address. The host of the link itself may still be local (a dev server).
+  gzip, deflate and br answers are decoded (zstd and lists of encodings are refused), and a stalled, cut or broken
+  answer ends the call with a message instead of a crash. The cobalt download follows the same rule: no address it
+  is sent to may add a user name or password, not even one on your instance.
+- A program that hits its time limit says so and names the limit, instead of reading as a failed command. Output a
+  stray descendant writes after its program exited is flagged as possibly incomplete.
+- Temporary files get unguessable names instead of the process id and the time.
+- `style`, `track`, `compare` and `export` work when ffmpeg exists only as the automatically installed pinned build:
+  the code that pipes frames from ffmpeg now locates it first instead of spawning the bare name.
+- Automatic setup and `doctor --prepare` offer the pinned ffmpeg on glibc Linux on arm64 too (FFmpeg 9.0.2 from the
+  same build server, SHA-256 verified), and on Alpine and other musl systems none (they need `apk add ffmpeg`): the
+  check now asks for the C library instead of looking for the x64 loader, and a glibc build left on disk is not used.
+  A glibc system without the loader the build needs (Guix, NixOS without stub-ld) is told so instead of downloading
+  60 MB that cannot start.
+- yt-dlp's automatic setup downloads the `musllinux` build on Alpine and other musl Linux (pinned from the
+  release's signed SHA2-256SUMS). The Docker image installs ffmpeg from Alpine's packages (its version, not the
+  pinned 9.0.2).
+- The pinned ffmpeg and yt-dlp are looked for under the platform and architecture asked for (tests that check the
+  Linux x64 setup failed on arm64 Macs).
+- Gemini tools stop their request when the call is cancelled and send progress while Gemini works. An answer Gemini
+  could not complete (`MALFORMED_RESPONSE`) or a reply that is not the API's JSON reads as a bad response that is
+  tried again on the next call, not as an empty answer or an unknown error.
+- The Gemini transcript fallback for YouTube links without captions runs only when a transcript is required
+  (`transcript`, `frames` with `around`), no longer for frame labels, `plan` or `style`. A failure that would repeat
+  (key, blocked video, the day's quota, an unreadable answer) is remembered for the session instead of sending the
+  whole video to Gemini on every call; overload, timeouts and per-minute limits are tried again on the next call.
+  `plan` says "no captions (speech not checked)" instead of claiming no speech was found.
+- `compare` measures picture similarity at the reference's aspect ratio, so a vertical or square video is no longer
+  squashed into 16:9. The ratio comes from the stored picture size: a video stored landscape with a rotation flag
+  is still compared as landscape.
+- `style` and `compare` return their notes (only the first 180 s analyzed, transitions not looked for); `compare`
+  says when its cuts and palette cover less of the files than its picture similarity.
+- `web` no longer loses a finished reading on Windows when the browser's temporary profile is still locked as it is
+  removed.
+- `framelens init` keeps the environment variables and settings added to an existing `framelens` entry in
+  `.mcp.json` (and carries over those of a `ytlens` entry); only the command and its pinned version are rewritten.
+  The file is replaced in one step, and one that does not hold a JSON object is left untouched with a clear error.
+- SubRip (`.srt`) captions are read (they parsed to NaN times); TTML, ASS, LRC and broken caption files are skipped;
+  a separator line holding only spaces no longer merges two cues.
+- A cached transcript is rebuilt when `language` asks for one the captions have in another language.
+- A `file://` link with a host answers with a clear source error instead of a raw TypeError.
+- In CI (the `CI` variable set), a browser gets 60 s instead of 20 s to start, so a cold start on a busy runner does
+  not fail `web`.
 
 ## 2.1.0 — 2026-11-09
 

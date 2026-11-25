@@ -4,6 +4,7 @@ import { findBrowser } from "./browser/cdp.js";
 import {
   autoInstallEnabled,
   ffmpegAsset,
+  ffmpegUnpinnedReason,
   FFMPEG_PIN,
   findTool,
   missingToolMessage,
@@ -14,6 +15,7 @@ import {
   TOOL_ENV,
   ToolError,
   YTDLP_PIN,
+  ytDlpAsset,
   type Env,
   type ToolName,
 } from "./tools/index.js";
@@ -68,6 +70,10 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<number> {
     });
     if (have.every((l) => l && l.source !== "pinned")) {
       out(`ffmpeg and ffprobe are installed (${have[0]!.path}); nothing to download.`);
+    } else if (!ffmpegAsset()) {
+      // No pinned build here: the Linux builds need glibc (Alpine and other musl systems), and some platforms have none.
+      exitCode = 1;
+      warn(`No pinned ffmpeg for this system: ${ffmpegUnpinnedReason()}`);
     } else {
       try {
         const prepared = await (options.prepareFfmpeg ?? prepareFfmpeg)({ env, ...(options.signal && { signal: options.signal }), log: out });
@@ -86,7 +92,7 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<number> {
       const location = findTool(name, { env });
       if (!location) {
         out(`  [missing] ${name}: unlocks ${UNLOCKS[name]}`);
-        const pinned = name === "yt-dlp" ? Boolean(YTDLP_PIN.assets[`${process.platform}-${process.arch}` as keyof typeof YTDLP_PIN.assets]) : Boolean(ffmpegAsset());
+        const pinned = name === "yt-dlp" ? Boolean(ytDlpAsset()) : Boolean(ffmpegAsset());
         out(`            ${autoInstallEnabled(env) && pinned ? "Downloaded automatically (pinned, verified) the first time a tool needs it; or: " : ""}${missingToolMessage(name)}`);
         continue;
       }

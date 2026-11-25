@@ -12,6 +12,7 @@ import { AnalyzerError, type QuotaInfo } from "./errors.js";
 import type { Logger } from "./logger.js";
 import { SYSTEM_INSTRUCTION } from "./prompts.js";
 import type { Clip, VideoRef } from "./youtube.js";
+import { CancelledError, callSignal } from "./runtime/call.js";
 
 export type Detail = "default" | "low";
 
@@ -91,6 +92,9 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
+/** The Gemini Developer API version every call uses. */
+export const GEMINI_API_VERSION = "v1beta";
+
 /** Longest wait for a per-minute limit before trying again. */
 const MAX_RETRY_DELAY_MS = 60_000;
 
@@ -137,9 +141,28 @@ export class GeminiAnalyzer implements VideoAnalyzer {
       };
     }
 
-    // One deadline for the whole call, retries and fallback models included.
-    const deadline = AbortSignal.timeout(this.timeoutMs);
+    // One deadline for the whole call, retries and fallback models included; a cancelled tool call stops it too.
+    const call = callSignal();
+    if (call?.aborted) throw new CancelledError("The Gemini call");
+    const stop = new AbortController();
+    const timer = setTimeout(() => stop.abort(new DOMException("The Gemini call timed out", "TimeoutError")), this.timeoutMs);
+    timer.unref?.();
+    const onCancel = () => stop.abort(new CancelledError("The Gemini call"));
+    call?.addEventListener("abort", onCancel, { once: true });
+    const deadline = stop.signal;
     const deadlineAt = Date.now() + this.timeoutMs;
+    try {
+      return await this.analyzeWithin(request, videoPart, deadline, deadlineAt);
+    } catch (error) {
+      if (call?.aborted) throw new CancelledError("The Gemini call");
+      throw error;
+    } finally {
+      clearTimeout(timer);
+      call?.removeEventListener("abort", onCancel);
+    }
+  }
+
+  private async analyzeWithin(request: AnalyzeRequest, videoPart: Part, deadline: AbortSignal, deadlineAt: number): Promise<AnalyzeResult> {
     const config: GenerateContentConfig = {
       systemInstruction: SYSTEM_INSTRUCTION,
       abortSignal: deadline,
@@ -164,6 +187,10 @@ export class GeminiAnalyzer implements VideoAnalyzer {
     const text = response.text ?? "";
     if (finishReason && BLOCKING_FINISH_REASONS.has(finishReason)) {
       throw new AnalyzerError("blocked", `Gemini stopped the answer because of its content filters (${finishReason}).`);
+    }
+    // The model produced something the API could not turn into an answer (e.g. a function call it cannot parse).
+    if (finishReason === "MALFORMED_RESPONSE" || finishReason === "MALFORMED_FUNCTION_CALL") {
+      throw new AnalyzerError("bad_response", `Gemini returned an answer it could not complete (${finishReason}). Try again, or rephrase the request.`, undefined, undefined, true);
     }
     if (!text.trim()) {
       throw new AnalyzerError(
@@ -285,6 +312,10 @@ export class GeminiAnalyzer implements VideoAnalyzer {
       }
       if (/fetch failed|ECONNRESET|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|network/i.test(raw)) {
         return new AnalyzerError("unavailable", withDetail("Could not reach the Gemini API (network error)."));
+      }
+      // A 200 whose body is not JSON (a proxy's page, a cut-off answer): the SDK's JSON.parse fails.
+      if (error instanceof SyntaxError || /Unexpected token|is not valid JSON|JSON at position|Unexpected end of JSON/i.test(raw)) {
+        return new AnalyzerError("bad_response", withDetail("Gemini answered with something that is not the API's JSON (a proxy or a cut-off response?)."), undefined, undefined, true);
       }
       return new AnalyzerError("unknown", withDetail("Gemini request failed."));
     }
@@ -416,6 +447,9 @@ function quotaMessage(quota: QuotaInfo, model: string): string {
 export function createGeminiAnalyzer(config: Config, logger: Logger): GeminiAnalyzer {
   const client = new GoogleGenAI({
     apiKey: config.apiKey,
+    // @google/genai 3 defaults to v1, where the `-latest` aliases (our default models) and some preview models
+    // do not exist. Pinned here, it also wins over a GOOGLE_GENAI_API_VERSION in the user's environment.
+    apiVersion: GEMINI_API_VERSION,
     httpOptions: {
       timeout: config.timeoutMs,
       // GeminiAnalyzer retries itself, because it can tell a daily quota from a per-minute one.

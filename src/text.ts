@@ -2,9 +2,17 @@
  * Third-party text (a source's title, a caption, a page's element ids, a Lottie layer name) on one line, for
  * comments, Markdown and summaries. TikTok and Instagram titles are the post's caption and can hold line breaks: in a
  * `//` comment the next line would run as code in the user's project, and in Markdown it would start a heading.
+ * C1 controls, soft hyphens, zero-width and other invisible format characters, bidi marks, overrides and isolates,
+ * interlinear annotations, tag characters, variation selectors, blank fillers (Hangul fillers, the braille blank,
+ * the combining grapheme joiner, musical format marks) and the byte-order mark go too: they hide or reorder what a
+ * reader sees.
  */
 export function oneLine(text: unknown, max = 200): string {
-  return String(text ?? "").replace(/[\u0000-\u001f\u007f\u2028\u2029`]+/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
+  return String(text ?? "")
+    .replace(/[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u180e\u200b-\u200f\u2028-\u202e\u2060-\u206f\u034f\u115f\u1160\u3164\u2800\ufe00-\ufe0f\ufeff\ufff9-\ufffb`]+|[\u{1d173}-\u{1d17a}\u{e0000}-\u{e007f}]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, max);
 }
 
 /**
@@ -26,4 +34,26 @@ export function safeHex(value: unknown, fallback = "#111111"): string {
   if (/^#[0-9a-f]{6}$/i.test(v)) return v.toUpperCase();
   if (/^#[0-9a-f]{3}$/i.test(v)) return `#${v.slice(1).replace(/./g, (c) => c + c)}`.toUpperCase();
   return fallback;
+}
+
+/**
+ * A source link for files people share (exports): without a user name, password, query or fragment, which can carry
+ * access tokens (a signed link's parameters). A YouTube watch link keeps its video id. Anything that is not an
+ * http(s) link (a file path) is returned as is.
+ */
+export function shareableLink(text: string): string {
+  let url: URL;
+  try {
+    url = new URL(text.trim());
+  } catch {
+    return text;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return text;
+  const v = /(^|\.)youtube\.com$/i.test(url.hostname) ? url.searchParams.get("v") : null;
+  return `${url.origin}${url.pathname}${v ? `?v=${encodeURIComponent(v)}` : ""}`;
+}
+
+/** Text with any `user:password@` taken out of the links in it: a link the user gave may carry their credentials. */
+export function hideCredentials(text: string): string {
+  return String(text ?? "").replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/?#@]*@/gi, "$1");
 }

@@ -1,7 +1,8 @@
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { isAbsolute, join, posix, relative, resolve, win32 } from "node:path";
+import { dirname, isAbsolute, join, posix, relative, resolve, sep, win32 } from "node:path";
 import { framelensHome } from "../tools/env.js";
+import { throwIfCancelled } from "../runtime/call.js";
 
 /** What the sources layer writes to `source.json` and hands to the core. */
 export interface SourceRecord {
@@ -114,11 +115,60 @@ export function chooseWorkspaceRoot(
   const canWrite = options.canWrite ?? canWriteWorkspace;
   const local = join(resolve(cwd), ".framelens");
   const system = isSystemFolder(cwd, env, options.platform);
-  if (!system && canWrite(local)) return { root: local, from: "cwd", reason: `the folder the server was started in (${resolve(cwd)})` };
-  const why = system ? `the server was started in a system folder (${resolve(cwd)})` : `the folder the server was started in cannot be written to (${resolve(cwd)})`;
+  // A .framelens that is a link out of the folder (it came with the project) is not written through.
+  const linkedOut = !system && isLink(local) && !realInside(local, cwd);
+  if (!system && !linkedOut && canWrite(local)) return { root: local, from: "cwd", reason: `the folder the server was started in (${resolve(cwd)})` };
+  const why = system
+    ? `the server was started in a system folder (${resolve(cwd)})`
+    : linkedOut
+      ? `${local} is a link to a folder outside ${resolve(cwd)}`
+      : `the folder the server was started in cannot be written to (${resolve(cwd)})`;
   const home = resolve(options.home ?? framelensHome(env));
   if (canWrite(home)) return { root: home, from: "home", reason: `${why}; using the home folder instead` };
   return { root: join(tmpdir(), "framelens"), from: "temp", reason: `${why}, and the home folder cannot be written to either; using the temp folder` };
+}
+
+function isLink(path: string): boolean {
+  try {
+    return lstatSync(path).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
+/** `path` exists and its real location (links resolved) is inside `folder`'s real location. */
+export function realInside(path: string, folder: string): boolean {
+  try {
+    const root = realpathSync(folder);
+    const real = realpathSync(path);
+    return real === root || real.startsWith(root.endsWith(sep) ? root : root + sep);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether writing `target` stays inside `root` once links are followed: the deepest part of the path that exists
+ * (a link counts, even a broken one) must really be inside `root`. Nothing that exists below `root` yet is fine.
+ */
+function writableInside(target: string, root: string): boolean {
+  let current = target;
+  for (;;) {
+    let exists = true;
+    try {
+      lstatSync(current);
+    } catch {
+      exists = false;
+    }
+    if (exists) {
+      const rel = relative(root, current);
+      if (rel.startsWith("..") || isAbsolute(rel)) return true;
+      return realInside(current, root);
+    }
+    const parent = dirname(current);
+    if (parent === current) return true;
+    current = parent;
+  }
 }
 
 /** The folder that holds every source's workspace (see chooseWorkspaceRoot). */
@@ -140,6 +190,8 @@ export class Workspace {
     const target = resolve(this.dir, ...parts);
     const rel = relative(this.dir, target);
     if (rel.startsWith("..") || isAbsolute(rel)) throw new Error(`Path escapes the workspace: ${parts.join("/")}`);
+    // A link inside the workspace folder (one that came with a project's .framelens) cannot lead a write out of it.
+    if (!writableInside(target, dirname(this.dir))) throw new Error(`Path leads out of the workspace through a link: ${parts.join("/")}`);
     return target;
   }
 
@@ -157,6 +209,8 @@ export class Workspace {
   }
 
   writeJson(name: string, value: unknown): string {
+    // Results are cached by file name: a cancelled call must not leave one behind for a later call to trust.
+    throwIfCancelled();
     this.ensure();
     const file = this.path(name);
     writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
@@ -164,10 +218,47 @@ export class Workspace {
   }
 
   writeText(name: string, text: string): string {
+    throwIfCancelled();
     this.ensure();
     const file = this.path(name);
     writeFileSync(file, text);
     return file;
+  }
+
+  /**
+   * Writes a new file and returns its path, or undefined when something is already there: the file is created only if
+   * the name is free, so the write never follows a link (even one inside the workspace) or replaces a file.
+   */
+  writeTextOnce(name: string, text: string): string | undefined {
+    throwIfCancelled();
+    this.ensure();
+    const file = this.path(name);
+    try {
+      writeFileSync(file, text, { flag: "wx" });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") return undefined;
+      throw error;
+    }
+    return file;
+  }
+
+  /**
+   * What is at a name in the workspace, without following links: nothing, a plain file of its own (one link, so not a
+   * hard link to a file elsewhere), or something else (a link, a folder, a path that leads out of the workspace).
+   */
+  fileState(name: string): "absent" | "file" | "other" {
+    let file: string;
+    try {
+      file = this.path(name);
+    } catch {
+      return "other";
+    }
+    try {
+      const stat = lstatSync(file);
+      return stat.isFile() && stat.nlink === 1 ? "file" : "other";
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code === "ENOENT" ? "absent" : "other";
+    }
   }
 
   /**

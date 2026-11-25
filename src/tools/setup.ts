@@ -1,12 +1,14 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { dirname } from "node:path";
-import type { Exec } from "../media/exec.js";
+import type { Exec, MediaTools } from "../media/exec.js";
 import { cleanStalePartials } from "./download.js";
 import { readEnv, type Env } from "./env.js";
 import { ToolError } from "./errors.js";
-import { ffmpegAsset, pinnedFfmpegIntact, prepareFfmpeg, type PrepareFfmpegOptions, type PrepareFfmpegResult } from "./ffmpeg.js";
+import { ffmpegAsset, ffmpegUnpinnedReason, pinnedFfmpegIntact, prepareFfmpeg, type PrepareFfmpegOptions, type PrepareFfmpegResult } from "./ffmpeg.js";
+import type { ToolLocator } from "./spawn-path.js";
+import { callProgress, callSignal, outsideCall, untilAborted } from "../runtime/call.js";
 import { findTool, missingToolMessage, type ToolLocation, type ToolName } from "./find.js";
-import { pinnedYtDlpIntact, prepareYtDlp, YTDLP_PIN, type PrepareOptions, type PrepareResult } from "./ytdlp.js";
+import { pinnedYtDlpIntact, prepareYtDlp, ytDlpAsset, type PrepareOptions, type PrepareResult } from "./ytdlp.js";
 
 /** Automatic setup is on unless FRAMELENS_AUTO_INSTALL is 0, false, no or off. */
 export function autoInstallEnabled(env: Env = process.env): boolean {
@@ -54,6 +56,12 @@ export interface ToolSetupOptions {
 export class ToolSetup {
   private readonly installing = new Map<"ffmpeg" | "yt-dlp", Promise<string>>();
   private readonly located = new Map<ToolName, ToolLocation>();
+  /** Install notes some call has shown, and the ones no call could (every waiter was cancelled). */
+  private readonly noted = new Set<"ffmpeg" | "yt-dlp">();
+  private readonly undelivered = new Map<"ffmpeg" | "yt-dlp", string>();
+  /** Progress reporters of the calls waiting for an install. */
+  private readonly listeners = new Map<"ffmpeg" | "yt-dlp", Set<(line: string) => void>>();
+  private readonly lastLine = new Map<"ffmpeg" | "yt-dlp", string>();
 
   constructor(private readonly options: ToolSetupOptions = {}) {}
 
@@ -71,30 +79,67 @@ export class ToolSetup {
 
   /** The tool's location, downloading the pinned build first when it is missing (or changed) and setup is on. */
   async locate(name: ToolName, signal?: AbortSignal): Promise<ToolLocation> {
+    const group = name === "yt-dlp" ? "yt-dlp" : "ffmpeg";
+    const late = this.undelivered.get(group);
+    if (late && callNotes.getStore()) {
+      this.undelivered.delete(group);
+      this.noted.add(group);
+      callNotes.getStore()!.push(late);
+    }
     const cached = this.located.get(name);
     if (cached) return cached;
-    const find = () => findTool(name, { env: this.env, ...(this.options.platform && { platform: this.options.platform }) });
+    const find = () => findTool(name, { env: this.env, ...(this.options.platform && { platform: this.options.platform }), ...(this.options.arch && { arch: this.options.arch }) });
     let found = find();
     if (found && !this.intact(found)) found = undefined;
     if (!found) {
-      const group = name === "yt-dlp" ? "yt-dlp" : "ffmpeg";
       const platform = this.options.platform ?? process.platform;
       const arch = this.options.arch ?? process.arch;
-      const pinned = group === "yt-dlp" ? Boolean(YTDLP_PIN.assets[`${platform}-${arch}` as keyof typeof YTDLP_PIN.assets]) : Boolean(ffmpegAsset(platform, arch));
+      const pinned = group === "yt-dlp" ? Boolean(ytDlpAsset(platform, arch)) : Boolean(ffmpegAsset(platform, arch));
       if (!autoInstallEnabled(this.env)) {
         throw new ToolError("not_found", `${missingToolMessage(name)} (Automatic setup is off: FRAMELENS_AUTO_INSTALL=0.)`);
       }
-      if (!pinned) throw new ToolError("not_found", missingToolMessage(name));
+      if (!pinned) {
+        // Nothing downloadable that would start here (musl, a glibc without the standard loader, another platform).
+        const reason = group === "ffmpeg" ? ffmpegUnpinnedReason(platform, arch) : undefined;
+        throw new ToolError("not_found", `${missingToolMessage(name)}${reason ? ` No automatic setup: ${reason}` : ""}`);
+      }
+      // Registered before the install starts, so its first line is heard too. The install runs outside every call; its download lines go to each call waiting for it that reports progress.
+      const report = callProgress();
+      const listeners = this.listeners.get(group) ?? new Set<(line: string) => void>();
+      this.listeners.set(group, listeners);
+      if (report) listeners.add(report);
       let pending = this.installing.get(group);
+      // A call that joins an install already under way hears where it is.
+      const last = pending && this.lastLine.get(group);
+      if (report && last) report(last);
       if (!pending) {
-        pending = this.install(group, signal);
-        this.installing.set(group, pending);
-        pending.then(
-          () => undefined,
-          () => this.installing.delete(group),
+        // Shared by every call that needs the tool: it runs without any one call's signal (it has its own time and
+        // stall limits), and each caller stops waiting when its own call is cancelled.
+        const started = outsideCall(() => this.install(group));
+        pending = started;
+        this.installing.set(group, started);
+        started.then(
+          (note) => {
+            this.lastLine.delete(group);
+            // When every call that waited was cancelled, the next call that uses the tool says what was installed.
+            // After the waiters' own continuations (microtasks) have run.
+            setImmediate(() => {
+              if (!this.noted.has(group)) this.undelivered.set(group, note);
+            });
+          },
+          () => {
+            this.lastLine.delete(group);
+            this.installing.delete(group);
+          },
         );
       }
-      const note = await pending;
+      let note: string;
+      try {
+        note = await untilAborted(pending, signal ?? callSignal(), `Waiting for the ${group} download`);
+      } finally {
+        if (report) listeners.delete(report);
+      }
+      this.noted.add(group);
       callNotes.getStore()?.push(note);
       found = find();
       if (!found || !this.intact(found)) throw new ToolError("not_found", missingToolMessage(name));
@@ -106,13 +151,16 @@ export class ToolSetup {
     return found;
   }
 
-  private async install(group: "ffmpeg" | "yt-dlp", signal?: AbortSignal): Promise<string> {
+  private async install(group: "ffmpeg" | "yt-dlp"): Promise<string> {
     const common = {
       env: this.env,
       ...(this.options.platform && { platform: this.options.platform }),
       ...(this.options.arch && { arch: this.options.arch }),
-      ...(signal && { signal }),
-      ...(this.options.log && { log: this.options.log }),
+      log: (line: string) => {
+        this.options.log?.(line);
+        this.lastLine.set(group, line);
+        for (const report of this.listeners.get(group) ?? []) report(line);
+      },
     };
     try {
       if (group === "ffmpeg") {
@@ -141,11 +189,24 @@ export class ToolSetup {
    */
   startPath(name: "ffmpeg" | "ffprobe"): string {
     try {
-      const found = findTool(name, { env: this.env, ...(this.options.platform && { platform: this.options.platform }) });
+      const found = findTool(name, { env: this.env, ...(this.options.platform && { platform: this.options.platform }), ...(this.options.arch && { arch: this.options.arch }) });
       return found && found.source !== "pinned" ? found.path : name;
     } catch {
       return name;
     }
+  }
+
+  /**
+   * The MediaTools the engine runs with: start paths, the wrapped `exec`, and `locate` for code that spawns ffmpeg
+   * itself (a pipe), which would otherwise spawn the bare name and miss a pinned-only install.
+   */
+  mediaTools(exec: Exec): MediaTools & ToolLocator {
+    return {
+      ffmpeg: this.startPath("ffmpeg"),
+      ffprobe: this.startPath("ffprobe"),
+      exec: this.wrapExec(exec),
+      locate: async (name, signal) => (await this.locate(name, signal)).path,
+    };
   }
 
   /**

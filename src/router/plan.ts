@@ -1,6 +1,7 @@
 import type { Boundaries } from "../media/boundaries.js";
 import type { ProbeInfo } from "../media/probe.js";
 import { NAME_LAG_SECONDS } from "../speech/names.js";
+import { mdText } from "../text.js";
 
 export const GOALS = ["listen", "learn", "find", "style", "sound", "production"] as const;
 export type Goal = (typeof GOALS)[number];
@@ -59,7 +60,7 @@ export function classify(probe: ProbeInfo, boundaries: Boundaries | undefined, h
   }
   const cpm = boundaries?.changesPerMinute ?? 0;
   const dyn = boundaries?.dynamics ?? 0;
-  const reasons = [`${cpm} picture changes per minute`, `mean change ${dyn}`, hasSpeech ? "has speech" : "no captions or speech found"];
+  const reasons = [`${cpm} picture changes per minute`, `mean change ${dyn}`, hasSpeech ? "has speech" : "no captions (speech not checked: `transcript` checks it)"];
   if (!hasSpeech && probe.hasAudio && cpm >= 10) return { type: "music-video", reasons };
   if (cpm >= 15 || dyn >= 0.08) return { type: "motion-graphics", reasons };
   if (cpm < 1.5 && dyn < 0.02) return { type: "talking-head", reasons };
@@ -437,7 +438,8 @@ export function buildPlan(input: {
   // Automatic captions spell names by ear; the screen often shows them right: in a logo, a title, the URL bar.
   if ((goal === "listen" || goal === "learn") && probe.hasVideo && !still && input.names?.at.length) {
     const { list, at } = input.names;
-    const shown = list.slice(0, 6).join(", ") + (list.length > 6 ? ", …" : "");
+    // Caption text is third-party: each name quoted and escaped, so it reads as data in the step's Markdown.
+    const shown = list.slice(0, 6).map((n) => `"${mdText(n, 60)}"`).join(", ") + (list.length > 6 ? ", …" : "");
     steps.push({
       tool: "frames",
       args: { at: at.slice(0, MAX_AT), width: NAME_WIDTH, columns: 2, rows: 3 },

@@ -1,8 +1,7 @@
 import { readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import type { MediaTools } from "./exec.js";
 import { filterValue } from "./sheets.js";
+import { tempPath } from "./temp.js";
 
 export interface ChangeSample {
   t: number;
@@ -19,6 +18,8 @@ export interface Boundaries {
   dynamics: number;
   /** Candidates per minute. */
   changesPerMinute: number;
+  /** Set when only windows of the range were read (a long source in `plan`): how many, and their total seconds. */
+  sampled?: { windows: number; seconds: number };
 }
 
 /** Parses ffmpeg's `metadata=print` output into time and scene score pairs. */
@@ -41,12 +42,12 @@ export function parseSceneScores(text: string): ChangeSample[] {
 export async function findBoundaries(
   source: string,
   tools: MediaTools,
-  options: { start?: number; end?: number; rate?: number; threshold?: number } = {},
+  options: { start?: number; end?: number; rate?: number; threshold?: number; timeoutMs?: number } = {},
 ): Promise<Boundaries> {
   const rate = options.rate ?? 4;
   const threshold = options.threshold ?? 0.3;
   const start = Math.max(0, options.start ?? 0);
-  const out = join(tmpdir(), `framelens-scene-${process.pid}-${Date.now()}.txt`);
+  const out = tempPath("framelens-scene-", ".txt");
   try {
     await tools.exec(tools.ffmpeg, [
       "-hide_banner", "-nostdin", "-v", "error",
@@ -60,7 +61,7 @@ export async function findBoundaries(
         `select='gte(scene,0)',metadata=print:file=${filterValue(out)}`,
       "-fps_mode", "passthrough",
       "-f", "null", "-",
-    ]);
+    ], options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : undefined);
     const samples = parseSceneScores(readFileSync(out, "utf8")).map((s) => ({ t: Math.round((s.t + start) * 1000) / 1000, score: s.score }));
     const candidates = samples.filter((s) => s.score >= threshold);
     const span = samples.length ? samples.length / rate : 0;
@@ -74,4 +75,19 @@ export async function findBoundaries(
   } finally {
     rmSync(out, { force: true });
   }
+}
+
+/** Joins the boundaries of equally long windows into one reading of the whole: candidates in order, the mean dynamics. */
+export function mergeBoundaries(parts: Boundaries[], rate: number, threshold: number, windowSeconds: number): Boundaries {
+  const candidates = parts.flatMap((p) => p.candidates).sort((a, b) => a.t - b.t);
+  const seconds = parts.length * windowSeconds;
+  const dynamics = parts.length ? parts.reduce((sum, p) => sum + p.dynamics, 0) / parts.length : 0;
+  return {
+    rate,
+    threshold,
+    candidates,
+    dynamics: Math.round(dynamics * 1000) / 1000,
+    changesPerMinute: seconds ? Math.round((candidates.length / seconds) * 60 * 10) / 10 : 0,
+    sampled: { windows: parts.length, seconds },
+  };
 }

@@ -47,6 +47,7 @@ research and reasoning lives in the plan page; this file is what the code must f
 | `media/` | ffprobe probe (VFR, HDR, audio), frame extraction, contact sheets with time and word labels, visual-change candidates, dynamics index |
 | `speech/` | Transcript with word times: captions first, local whisper if present, Gemini as fallback; `names.ts` picks likely names in automatic captions for the name check (`NAMES.md`) |
 | `workspace/` | Workspace folder layout, `manifest.json`, cached pass results, `PROGRESS.md` |
+| `runtime/` | The per-call context (`call.ts`): the client's cancel signal and MCP progress, carried to the code that runs programs |
 | `router/` | Video type classification and the goal-based plan |
 | `style/` (2.1) | Shots, cuts, transitions (`transitions.ts`: dissolves, fades, dips, wipes from every frame at 64×36), palette, typography notes, `STYLE.md`, `motion-spec.json`, `ANALYSIS.md`, `TIMELINE.md` |
 | `track/` (2.1) | Element tracking (normalised cross-correlation, then Lucas–Kanade subpixel refinement with gain and offset, drift checked against the first template) and curve fitting (cubic-bezier, spring, linear, steps by least squares with Nelder–Mead), `TRACK.md`, `tracks.json` |
@@ -56,6 +57,47 @@ research and reasoning lives in the plan page; this file is what the code must f
 
 Every external process goes through `tools/` (one place for timeouts, Windows quoting, `windowsHide`, killing the
 tree on abort). stdout is reserved for MCP: logs go to stderr through `logger.ts`.
+
+**Cancellation, progress, shutdown.** Each tool call (the local tools, `web`, `exact`, and the Gemini tools, whose
+request to Gemini is aborted with the call) runs inside a call context (`runtime/call.ts`, an AsyncLocalStorage) that holds
+the client's `extra.signal` and, when the client sent a progress token, a reporter. The code that starts programs
+(`tools/run.ts`, `media/exec.ts`, the ffmpeg pipes in `track/decode.ts` and `style/motion.ts`) reads the signal from
+there, so the engine's methods need no signal parameter. Those programs are spawned by `tools/children.ts`: no
+shell, their own process group on POSIX (killing the group stops what they started, such as yt-dlp's ffmpeg; on
+Windows taskkill walks the tree), and registered until they end. The browser is the one child spawned elsewhere
+(`browser/cdp.ts`, its own group as well): it is killed when its call is cancelled, at the end of its lifetime and on
+exit. A cancelled call kills its children. The server kills all of them on exit, SIGINT, SIGTERM, SIGHUP and a broken
+stdout; when the client closes stdin, the requests it already sent are answered first (`runtime/stdio.ts` counts
+them), then the server exits — unless the client itself is gone, in which case nobody would read the answers and the
+server exits at once, killing the children. While draining it checks every second that the process that started it
+is still there, and every 5 s writes an MCP `ping` to the client: a write that fails (EPIPE) means the client's end
+of stdout is closed. The ping is what works under launchers that outlive the client (`npx` runs the server under
+`sh -c` or `cmd /c`, and `npm exec`; `test/runtime/shutdown.test.ts` goes through such a launcher on POSIX and
+Windows); before stdin closes nothing of this runs, so a call in progress is never stopped by it. A script client
+that pipes its requests, closes stdin and reads stdout by hand therefore sees
+`{"jsonrpc":"2.0","id":"framelens-alive-N","method":"ping"}` lines between the answers during a call longer than
+5 s: a valid JSON-RPC request (MCP allows `ping` from either side) that it may ignore or answer, and that nothing
+waits for. A SIGKILL of the server cannot be caught: its children, each in its own process group,
+then run until they end. `run` settles when the program exits even if a descendant that left the group keeps the
+pipes open, and never signals a pid after the child is reaped.
+
+Shared work never runs under one call's signal: the first-use install of ffmpeg or yt-dlp and the one drawtext check
+run outside any call (`outsideCall`) on their own limits, and each caller waits with its own signal (`untilAborted`).
+The install's download lines go to every call waiting for it that reports progress (a call that joins late first
+hears the latest line), and an install note that no waiting call could show goes to the next call that uses the
+tool. A cancelled call's reporter goes silent once the call has answered. Tool versions are not cached from a
+cancelled call. Nothing is written to a workspace under a cancelled call (`Workspace.writeJson` and
+`writeText` check), so a later call never trusts a result cut short. Progress notifications carry each finished
+step (the lines written to `PROGRESS.md`, setup and download log lines) and a heartbeat every 15 s, so a client that
+resets its timeout on progress waits for a long `style` or download. A program that hits its time limit is reported
+with that limit, not as a failed command.
+
+**One download per workspace.** `resolveSource` (and the login-profile capture in `index.ts`) keep the downloads in
+flight by workspace folder (`singleFlight`): a second call on
+the same new link waits for the first (and gets its record or its error) instead of starting a second yt-dlp that
+deletes the first one's files. A waiter whose download was cancelled by the other caller tries again itself.
+`source.json` is written only after the media is complete, so a cancelled download leaves nothing a later call takes
+for a finished one.
 
 ## Workspace
 
@@ -73,12 +115,20 @@ transcript.md      readable transcript with [m:ss] marks
 frames/            single frames named by source time, e.g. 000012.480.jpg
 sheets/            contact sheets + sheets/<name>.json index (cell → time, frame number, words)
 plan.json          the router's plan for the current goal
+NAMES.md           likely names in automatic captions for the agent to check on screen (created once, never through a link)
 ANALYSIS.md        whole-piece reading (2.1): purpose, hook, structure, systems, why it works
 TIMELINE.md        time-located sections (2.1)
 STYLE.md           art direction (2.1)
 motion-spec.json   machine spec (2.1, see below)
 PROGRESS.md        what is done, open questions, next step — so another session can resume
 ```
+
+`NAMES.md` is the one file the agent edits that `plan` points it to, so it is handled like the rest of a workspace
+that may have come with a project: it is created only when the name is free (`Workspace.writeTextOnce`, exclusive
+create, so never through a link), and a later `plan` names it again only when it is a plain file of the workspace's
+own (`Workspace.fileState`: not a link, not a hard link to a file elsewhere). Frame Lens never reads it back. Its
+caption names are third-party text: escaped with `mdText` in the file and in the plan step, under the third-party
+notice in the result.
 
 ## MCP tools (v2)
 
@@ -87,7 +137,7 @@ All new tools take `source` (URL, path or YouTube ID) and return a short text su
 | Tool | Phase | Does |
 |---|---|---|
 | `probe` | 2.0 | Resolve and fetch the source, probe it, report kind, duration, fps, captions, dynamics, workspace path |
-| `plan` | 2.0 | Goal (or free-text request) + probe → passes, densities, ranges, token estimate. Style goal: 1–3 ×10 passages of about 12 % of the video each (2–8 s, by summed change strength, never overlapping), every-frame windows around the strongest changes (one per 8 s, 2–8, overlapping or touching windows joined, longer stretches split into windows of ≤ 2 s); the estimate counts frames and image tokens per sheet layout |
+| `plan` | 2.0 | Picture changes over the whole source up to 10 min; a longer one is read in 12 windows of 30 s spread over it, and the plan says so. Goal (or free-text request) + probe → passes, densities, ranges, token estimate. Style goal: 1–3 ×10 passages of about 12 % of the video each (2–8 s, by summed change strength, never overlapping), every-frame windows around the strongest changes (one per 8 s, 2–8, overlapping or touching windows joined, longer stretches split into windows of ≤ 2 s); the estimate counts frames and image tokens per sheet layout |
 | `transcript` | 2.0 | Word-timed transcript; returns the text (bounded) and file paths |
 | `frames` | 2.0 | Frames or contact sheets for a range: `at`, `every` (s), `fps`, `every_frame`, `around` (phrase), `columns`, `rows`, `cell`, word labels. Returns sheet paths; inlines at most a few sheets |
 | `boundaries` | 2.0 | Visual-change candidates with scores (not editorial cut labels) |
@@ -161,6 +211,21 @@ browser extension (`extension/`, 2.1): the user records the tab or reads the pag
 the user's own cobalt instance (`FRAMELENS_COBALT_URL`); a failure that may be access control never does (allow-list
 in `sources/cobalt.ts`, wording in `sources/access.ts`). One video per request, with pauses between requests.
 
+Redirects are followed by hand wherever a download takes an address from third-party data: `checkHop` and
+`pinnedGet` in `sources/cobalt.ts`, shared by cobalt and `exact` links (`exact/http.ts`). The trusted origin (the
+user's cobalt instance, or the host of the link given to `exact`) may be local; no hop may add a user name or
+password; every hop to another host must be https and resolve only to public addresses, and is connected to at the
+address that was checked.
+The same check walks a link's redirects before yt-dlp follows them (`checkLinkRedirects` in `sources/resolve.ts`; one
+plain GET to the link's own host, no new service) and covers every hop of the login-profile capture's media download
+(`browser/capture.ts`). `web` holds each document request over CDP (`Fetch.requestPaused`, `browser/read.ts`) and
+refuses one whose host resolves to a private address, other than the host the user gave.
+`exact` decodes gzip, deflate and br through `stream.pipeline` (never `pipe`, which left the socket open and let the
+time limit's abort surface as an unhandled error) and refuses other encodings. yt-dlp's `--max-filesize` covers only a
+size known up front, so `sources/ytdlp.ts` also measures the `source.*` files every 250 ms (not the postprocessor's
+`source.temp.<ext>`, nor the finished `source.<ext>` while the merge's inputs are still beside it) and stops the
+download past the limit. Whatever a stopped, cancelled or failed download wrote is removed in `fetchWithYtDlp`.
+
 ## Engineering rules
 
 - TypeScript strict, ESM, Node ≥ 20, zero runtime dependencies; bundle with `npm run bundle` and commit
@@ -173,3 +238,10 @@ in `sources/cobalt.ts`, wording in `sources/access.ts`). One video per request, 
 - Branch `feat/<phase>-<area>`, pull request into `main`, CI green before merge. Commit messages end with the
   co-author line used in this repository.
 - Every milestone gets an independent audit (quality, security, tests, a live run) before the next starts.
+- Repository maintenance may read public pages that the shipped server never contacts. `scripts/check-listings.mjs`
+  (run weekly by `listings-check.yml`, never by the package) reads npm, the MCP Registry and five catalogue pages
+  (Glama, LobeHub, MCP Market, claudemarketplaces.com, mcprush) to see whether they show the current version.
+  Reason: catalogues copy a release on their own schedule and offer no way to push one, so a stale or misnamed
+  listing is otherwise found by accident. It sends plain GETs with a user agent that names this repository, no
+  cookies or keys, and treats a refusal as "not readable" (principle 7). None of these services is a dependency of
+  `dist/framelens.mjs`.

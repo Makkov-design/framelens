@@ -6,12 +6,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { cleanStalePartials, placeVerified } from "../../src/tools/download.js";
-import { ffmpegPinnedPath, FFMPEG_PIN, prepareFfmpeg, type FfmpegAsset } from "../../src/tools/ffmpeg.js";
+import { ffmpegAsset, ffmpegPinnedPath, ffmpegUnpinnedReason, FFMPEG_PIN, prepareFfmpeg, type FfmpegAsset } from "../../src/tools/ffmpeg.js";
 import { findTool } from "../../src/tools/find.js";
 import { autoInstallEnabled, collectSetupNotes, ToolSetup } from "../../src/tools/setup.js";
 import { prepareYtDlp, YTDLP_PIN } from "../../src/tools/ytdlp.js";
 import { withSetupNotes } from "../../src/local-tools.js";
 import { makeZip } from "../fixtures/zip.js";
+import { CancelledError, withCall } from "../../src/runtime/call.js";
 
 const sha = (data: Buffer | string) => createHash("sha256").update(data).digest("hex");
 const ffmpegBody = Buffer.from("pretend ffmpeg ".repeat(5000));
@@ -99,9 +100,9 @@ const asset = (url = `${base}/ffmpeg.zip`, over: Partial<FfmpegAsset["archives"]
 const pinnedDir = () => join(home, "tools", "ffmpeg", FFMPEG_PIN.version);
 
 describe("pinned ffmpeg", () => {
-  it("pins one FFmpeg version with archive and binary hashes for Windows x64, macOS arm64 and x64, and Linux x64", () => {
+  it("pins one FFmpeg version with archive and binary hashes for Windows x64, macOS arm64 and x64, and Linux x64 and arm64", () => {
     expect(FFMPEG_PIN.version).toMatch(/^\d+\.\d+(\.\d+)?$/);
-    expect(Object.keys(FFMPEG_PIN.assets).sort()).toEqual(["darwin-arm64", "darwin-x64", "linux-x64", "win32-x64"]);
+    expect(Object.keys(FFMPEG_PIN.assets).sort()).toEqual(["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64", "win32-x64"]);
     for (const a of Object.values(FFMPEG_PIN.assets)) {
       const tools = a.archives.flatMap((x) => x.files.map((f) => f.tool)).sort();
       expect(tools).toEqual(["ffmpeg", "ffprobe"]);
@@ -152,7 +153,7 @@ describe("pinned ffmpeg", () => {
   it("stops a download that is larger than the pinned archive, and reports HTTP errors and unsupported platforms", async () => {
     await expect(prepareFfmpeg({ env: { FRAMELENS_HOME: home }, platform: "win32", arch: "x64", asset: asset(`${base}/huge.zip`) })).rejects.toThrow(/larger than the pinned/);
     await expect(prepareFfmpeg({ env: { FRAMELENS_HOME: home }, platform: "win32", arch: "x64", asset: asset(`${base}/nope.zip`) })).rejects.toMatchObject({ code: "download_failed" });
-    await expect(prepareFfmpeg({ env: { FRAMELENS_HOME: home }, platform: "linux", arch: "arm64" })).rejects.toMatchObject({ code: "unsupported_platform" });
+    await expect(prepareFfmpeg({ env: { FRAMELENS_HOME: home }, platform: "win32", arch: "arm64" })).rejects.toMatchObject({ code: "unsupported_platform" });
   });
 
   it("gives up on a stalled or too slow download with a clear message and leaves nothing behind", async () => {
@@ -223,13 +224,13 @@ describe("pinned ffmpeg", () => {
 
   it("is found after PATH and WinGet, so an ffmpeg the user installed wins", async () => {
     const env = { FRAMELENS_HOME: home, PATH: "" };
-    expect(findTool("ffmpeg", { env, platform: "win32" })).toBeUndefined();
+    expect(findTool("ffmpeg", { env, platform: "win32", arch: "x64" })).toBeUndefined();
     await prepareFfmpeg({ env, platform: "win32", arch: "x64", asset: asset() });
-    expect(findTool("ffprobe", { env, platform: "win32" })).toMatchObject({ source: "pinned" });
+    expect(findTool("ffprobe", { env, platform: "win32", arch: "x64" })).toMatchObject({ source: "pinned" });
     const own = join(home, "own");
     mkdirSync(own);
     writeFileSync(join(own, "ffmpeg.exe"), "mine");
-    expect(findTool("ffmpeg", { env: { ...env, PATH: own }, platform: "win32" })).toMatchObject({ source: "path" });
+    expect(findTool("ffmpeg", { env: { ...env, PATH: own }, platform: "win32", arch: "x64" })).toMatchObject({ source: "path" });
   });
 });
 
@@ -296,6 +297,116 @@ describe("automatic setup", () => {
     // With the real check, a file that is not the pinned build is never accepted.
     const real = new ToolSetup({ env: { FRAMELENS_HOME: home, PATH: "" }, platform, arch: "x64", prepareFfmpeg: fakeInstall([], "still not the pinned build") });
     await expect(real.locate("ffprobe")).rejects.toThrow(/not installed/);
+  });
+
+  it("keeps a shared install running when the call that started it is cancelled; that call alone stops waiting", async () => {
+    const calls: string[] = [];
+    let gotSignal = false;
+    const slow = fakeInstall(calls);
+    const setup = new ToolSetup({
+      env: { FRAMELENS_HOME: home, PATH: "" },
+      platform,
+      arch: "x64",
+      intact,
+      prepareFfmpeg: async (options) => {
+        gotSignal = options.signal !== undefined;
+        await new Promise((r) => setTimeout(r, 300));
+        return slow();
+      },
+    });
+    const a = new AbortController();
+    const first = setup.locate("ffmpeg", a.signal);
+    const second = setup.locate("ffprobe");
+    setTimeout(() => a.abort(), 50);
+    await expect(first).rejects.toBeInstanceOf(CancelledError);
+    expect((await second).path).toMatch(/ffprobe/);
+    // The install is no one call's work: it never got a call's signal, and it ran once.
+    expect(gotSignal).toBe(false);
+    expect(calls).toEqual(["ffmpeg"]);
+  });
+
+  it("offers no pinned ffmpeg on musl (the builds are glibc), and the glibc builds on x64 and arm64", () => {
+    expect(ffmpegAsset("linux", "x64", FFMPEG_PIN, true)).toBeUndefined();
+    expect(ffmpegAsset("linux", "arm64", FFMPEG_PIN, true)).toBeUndefined();
+    expect(ffmpegAsset("linux", "arm64", FFMPEG_PIN, false)?.archives[0]!.url).toMatch(/linux\/arm64\/\d+_9\.0\.2\/ffmpeg\.zip$/);
+    expect(ffmpegAsset("linux", "x64", FFMPEG_PIN, false)).toBeDefined();
+    // macOS and Windows never ask about the C library.
+    expect(ffmpegAsset("darwin", "arm64", FFMPEG_PIN)).toBeDefined();
+  });
+
+  it("says what was installed on the next call when every call that waited for the install was cancelled", async () => {
+    const calls: string[] = [];
+    const slow = fakeInstall(calls);
+    const setup = new ToolSetup({
+      env: { FRAMELENS_HOME: home, PATH: "" },
+      platform,
+      arch: "x64",
+      intact,
+      prepareFfmpeg: async () => (await new Promise((r) => setTimeout(r, 200)), slow()),
+    });
+    const a = new AbortController();
+    const first = collectSetupNotes(() => setup.locate("ffmpeg", a.signal));
+    setTimeout(() => a.abort(), 30);
+    await expect(first).rejects.toBeInstanceOf(CancelledError);
+    await new Promise((r) => setTimeout(r, 400));
+    const next = await collectSetupNotes(() => setup.locate("ffmpeg"));
+    expect(next.notes).toHaveLength(1);
+    expect(next.notes[0]).toMatch(/downloaded FFmpeg/);
+    // Said once, not on every later call.
+    expect((await collectSetupNotes(() => setup.locate("ffprobe"))).notes).toEqual([]);
+    expect(calls).toEqual(["ffmpeg"]);
+  });
+
+  it.skipIf(process.platform !== "linux" || !["x64", "arm64"].includes(process.arch))("offers no pinned ffmpeg on a glibc system without the loader it needs (Guix, NixOS), and says why", () => {
+    const arch = process.arch;
+    const loader = FFMPEG_PIN.assets[`linux-${arch}`]!.interpreter!;
+    expect(ffmpegAsset("linux", arch, FFMPEG_PIN, false, () => false)).toBeUndefined();
+    expect(ffmpegAsset("linux", arch, FFMPEG_PIN, false, (path) => path === loader)).toBeDefined();
+    expect(ffmpegUnpinnedReason("linux", arch, false, () => false)).toMatch(new RegExp(`needs ${loader.replace(/[.]/g, "\\.")}, which this system does not have`));
+    expect(ffmpegUnpinnedReason("linux", arch, true)).toMatch(/musl \(Alpine\).*apk add ffmpeg/);
+    expect(ffmpegUnpinnedReason("linux", arch, false, () => true)).toBeUndefined();
+    // Another arch's loader is not this machine's to check: that asset is offered as is.
+    const other = arch === "x64" ? "arm64" : "x64";
+    expect(ffmpegAsset("linux", other, FFMPEG_PIN, false, () => false)).toBeDefined();
+  });
+
+  it("sends the shared install's download lines to every call waiting for it that reports progress", async () => {
+    const calls: string[] = [];
+    const done = fakeInstall(calls);
+    const setup = new ToolSetup({
+      env: { FRAMELENS_HOME: home, PATH: "" },
+      platform,
+      arch: "x64",
+      intact,
+      prepareFfmpeg: async (options) => {
+        options.log?.("Downloading FFmpeg (test)");
+        await new Promise((r) => setTimeout(r, 50));
+        return done();
+      },
+    });
+    const heardA: string[] = [];
+    const heardB: string[] = [];
+    await Promise.all([
+      withCall({ progress: (line) => heardA.push(line) }, () => setup.locate("ffmpeg")),
+      withCall({ progress: (line) => heardB.push(line) }, () => setup.locate("ffprobe")),
+    ]);
+    expect(heardA).toEqual(["Downloading FFmpeg (test)"]);
+    expect(heardB).toEqual(["Downloading FFmpeg (test)"]);
+    expect(calls).toEqual(["ffmpeg"]);
+  });
+
+  it("finds the pinned build of the platform and arch it was asked for, not the machine's (an arm64 Mac running the linux-x64 tests)", async () => {
+    const real = Object.getOwnPropertyDescriptor(process, "arch")!;
+    // An arch with no pinned build at all: the lookup must use the arch it was asked for, not the machine's.
+    Object.defineProperty(process, "arch", { ...real, value: "riscv64" });
+    try {
+      const calls: string[] = [];
+      const setup = new ToolSetup({ env: { FRAMELENS_HOME: home, PATH: "" }, platform, arch: "x64", prepareFfmpeg: fakeInstall(calls), intact });
+      expect((await setup.locate("ffmpeg")).source).toBe("pinned");
+      expect(calls).toEqual(["ffmpeg"]);
+    } finally {
+      Object.defineProperty(process, "arch", real);
+    }
   });
 
   it("does not download when FRAMELENS_AUTO_INSTALL=0, and says how to get the tool", async () => {

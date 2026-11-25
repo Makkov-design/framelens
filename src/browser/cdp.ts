@@ -4,6 +4,8 @@ import { get } from "node:http";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { InvalidInputError } from "../errors.js";
+import { callSignal, throwIfCancelled } from "../runtime/call.js";
+import { childEnv } from "../tools/children.js";
 
 /** Chrome or Edge on this computer, or `FRAMELENS_BROWSER`. */
 export function findBrowser(env: Record<string, string | undefined> = process.env, platform = process.platform): string | undefined {
@@ -38,13 +40,16 @@ export function isEverydayProfile(path: string): boolean {
  * Where `framelens login` keeps its own browser profile: never the user's everyday one. `logout` deletes this folder
  * and capture drives it, so a FRAMELENS_BROWSER_PROFILE pointing at the browser's own profile is refused.
  */
-export function profileDir(env: Record<string, string | undefined> = process.env): string {
+export function profileDir(env: Record<string, string | undefined> = process.env, home = homedir()): string {
   const configured = env.FRAMELENS_BROWSER_PROFILE?.trim();
   if (configured && isEverydayProfile(configured)) {
     throw new InvalidInputError("FRAMELENS_BROWSER_PROFILE points at your everyday browser profile. Frame Lens uses a separate folder only; unset it or choose a new empty folder.");
   }
-  return configured || join(homedir(), ".framelens", "browser-profile");
+  return configured || defaultProfileDir(home);
 }
+
+/** The profile folder when FRAMELENS_BROWSER_PROFILE is not set. */
+export const defaultProfileDir = (home = homedir()): string => join(home, ".framelens", "browser-profile");
 
 type Handler = (params: Record<string, unknown>, sessionId?: string) => void;
 
@@ -163,7 +168,7 @@ function endAllOnExit(): void {
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
     process.once(signal, () => {
       for (const child of running) killTree(child);
-      process.exit(signal === "SIGINT" ? 130 : 143);
+      process.exit(signal === "SIGINT" ? 130 : signal === "SIGHUP" ? 129 : 143);
     });
   }
 }
@@ -183,6 +188,14 @@ function killTree(child: ChildProcess): void {
 }
 
 /**
+ * How long a browser may take to open its DevTools port. A cold first start on a busy CI runner can pass 20 s (seen on
+ * GitHub's Ubuntu runners while ffmpeg tests run alongside), so CI gets a minute.
+ */
+export function browserStartDeadlineMs(env: Record<string, string | undefined> = process.env): number {
+  return env.CI ? 60_000 : 20_000;
+}
+
+/**
  * Starts Chrome or Edge with its own profile and a DevTools port, opens one tab and attaches to it. The browser is
  * always killed on close and after `maxLifetimeMs`, so a hung page cannot leave it running.
  */
@@ -194,6 +207,7 @@ export async function launchBrowser(options: {
   height?: number;
   maxLifetimeMs?: number;
 }): Promise<BrowserSession> {
+  throwIfCancelled();
   mkdirSync(options.profile, { recursive: true });
   const portFile = join(options.profile, "DevToolsActivePort");
   rmSync(portFile, { force: true });
@@ -212,11 +226,17 @@ export async function launchBrowser(options: {
       `--window-size=${width},${height}`,
       "about:blank",
     ],
-    { stdio: "ignore", windowsHide: true, detached: process.platform !== "win32" },
+    { stdio: "ignore", windowsHide: true, detached: process.platform !== "win32", env: childEnv() },
   );
   running.add(child);
   child.once("exit", () => running.delete(child));
   endAllOnExit();
+  // A cancelled `web` call ends its browser now, not at the end of its lifetime.
+  const signal = callSignal();
+  const onAbort = () => killTree(child);
+  if (signal?.aborted) onAbort();
+  else signal?.addEventListener("abort", onAbort, { once: true });
+  child.once("exit", () => signal?.removeEventListener("abort", onAbort));
   const lifetime = setTimeout(() => killTree(child), options.maxLifetimeMs ?? 5 * 60_000);
   lifetime.unref();
   const fail = (message: string) => {
@@ -225,10 +245,11 @@ export async function launchBrowser(options: {
     return new Error(message);
   };
 
-  const deadline = Date.now() + 20_000;
+  const startMs = browserStartDeadlineMs();
+  const deadline = Date.now() + startMs;
   while (!existsSync(portFile) || !readFileSync(portFile, "utf8").includes("\n")) {
     if (child.exitCode !== null) throw fail("The browser exited at start. If it is already open with this profile, close that window first.");
-    if (Date.now() > deadline) throw fail("The browser did not start within 20 s.");
+    if (Date.now() > deadline) throw fail(`The browser did not start within ${startMs / 1000} s.`);
     await new Promise((r) => setTimeout(r, 150));
   }
   const port = Number(readFileSync(portFile, "utf8").split("\n")[0]);

@@ -1,7 +1,7 @@
 import { login, logout } from "./browser/capture.js";
 import { runDoctor } from "./doctor.js";
 import { ConfigError, InvalidInputError } from "./errors.js";
-import { INIT_NEXT_STEPS, initProject } from "./init.js";
+import { initNextSteps, initProject } from "./init.js";
 import { VERSION } from "./version.js";
 
 export const HELP = `Frame Lens ${VERSION}: eyes and ears for AI agents (an MCP server).
@@ -37,8 +37,8 @@ export async function runCommand(
     case undefined:
       return { handled: false };
     case "init": {
-      const { files } = initProject(cwd);
-      print(`framelens ${VERSION}: added ${files.join(" and ")} to ${cwd}\n${INIT_NEXT_STEPS}`);
+      const result = initProject(cwd);
+      print(`framelens ${VERSION}: added ${result.files.join(" and ")} to ${cwd}\n${initNextSteps(result)}`);
       return { handled: true };
     }
     case "doctor":

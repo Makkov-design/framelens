@@ -1,7 +1,9 @@
-import { spawn } from "node:child_process";
-import { InvalidInputError } from "../errors.js";
+import { CancelledError, callSignal } from "../runtime/call.js";
+import { killTree, spawnTracked } from "../tools/children.js";
+import { InvalidInputError, ToolOutputError } from "../errors.js";
 import { parseShowinfo } from "../media/frames.js";
 import type { MediaTools } from "../media/exec.js";
+import { spawnPath, type ToolLocator } from "../tools/spawn-path.js";
 import type { GrayFrames } from "./tracker.js";
 
 /** Most bytes of decoded frames held for one window. */
@@ -23,9 +25,9 @@ export function workSize(width: number, height: number, frameCount: number, budg
  * Decodes every frame of `range` as 8-bit grey at `size`, through a pipe: nothing is written to disk and only this
  * window is held in memory. Times come from ffmpeg's showinfo, so variable-rate files keep their real timestamps.
  */
-export function decodeGray(
+export async function decodeGray(
   source: string,
-  tools: MediaTools,
+  tools: MediaTools & ToolLocator,
   range: { start: number; end: number },
   size: { width: number; height: number },
   options: { maxFrames: number; fps: number; timeoutMs?: number },
@@ -37,8 +39,18 @@ export function decodeGray(
     "-vf", `scale=${size.width}:${size.height}:flags=area,format=gray,showinfo`,
     "-fps_mode", "passthrough", "-f", "rawvideo", "-pix_fmt", "gray", "pipe:1",
   ];
+  const ffmpeg = await spawnPath(tools, "ffmpeg");
   return new Promise((resolve, reject) => {
-    const child = spawn(tools.ffmpeg, args, { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawnTracked(ffmpeg, args);
+    // Cancelling the tool call stops the decode (and the window is not fitted from part of it).
+    const signal = callSignal();
+    let cancelled = false;
+    const onAbort = () => {
+      cancelled = true;
+      killTree(child);
+    };
+    if (signal?.aborted) onAbort();
+    else signal?.addEventListener("abort", onAbort, { once: true });
     const frames: Uint8Array[] = [];
     let pending: Buffer[] = [];
     let pendingBytes = 0;
@@ -48,7 +60,7 @@ export function decodeGray(
     const timeoutMs = options.timeoutMs ?? 5 * 60_000;
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill("SIGKILL");
+      killTree(child);
     }, timeoutMs);
     child.stdout.on("data", (chunk: Buffer) => {
       pending.push(chunk);
@@ -62,7 +74,7 @@ export function decodeGray(
         pending = [all.subarray(frameBytes)];
         pendingBytes -= frameBytes;
       }
-      if (tooMany) child.kill("SIGKILL");
+      if (tooMany) killTree(child);
     });
     child.stderr.on("data", (chunk: Buffer) => {
       stderr += chunk.toString("utf8");
@@ -71,10 +83,16 @@ export function decodeGray(
     });
     child.on("error", (error: NodeJS.ErrnoException) => {
       clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
       reject(error.code === "ENOENT" ? new InvalidInputError("ffmpeg was not found on this computer. Run `npx framelens doctor` to see how to install it.") : error);
     });
     child.on("close", (code) => {
       clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      if (cancelled) {
+        reject(new CancelledError("ffmpeg"));
+        return;
+      }
       if (tooMany) {
         reject(new InvalidInputError(`The window has more than ${options.maxFrames} frames; track a shorter window (start/end).`));
         return;
@@ -86,7 +104,7 @@ export function decodeGray(
       }
       if (code !== 0) {
         const tail = stderr.trim().split("\n").filter((l) => !l.includes("Parsed_showinfo")).slice(-6).join("\n");
-        reject(new Error(`ffmpeg failed after ${frames.length} frames: ${tail || `exit code ${code}`}`));
+        reject(new ToolOutputError(`ffmpeg failed after ${frames.length} frames`, tail, `exit code ${code}`));
         return;
       }
       const times = parseShowinfo(stderr);

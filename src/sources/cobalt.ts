@@ -137,33 +137,59 @@ export function isPrivateAddress(address: string): boolean {
 const LOCAL_NAMES = /(^|\.)(localhost|local|internal|intranet|lan|home\.arpa)$/;
 
 export type Lookup = (host: string) => Promise<string[]>;
-const systemLookup: Lookup = async (host) => (await dnsLookup(host, { all: true })).map((a) => a.address);
+export const systemLookup: Lookup = async (host) => (await dnsLookup(host, { all: true })).map((a) => a.address);
+
+/** A URL's host name, lowercase, without a trailing dot or IPv6 brackets. */
+export const hostOf = (url: URL): string => url.hostname.toLowerCase().replace(/\.+$/, "").replace(/^\[|\]$/g, "");
+
+/** Where a host name goes: an IP as is, local names (localhost, *.local, a name without a dot) to this computer. */
+export async function hostAddresses(host: string, lookup: Lookup = systemLookup): Promise<string[]> {
+  if (isIP(host)) return [host];
+  if (LOCAL_NAMES.test(host) || !host.includes(".")) return ["127.0.0.1"];
+  return lookup(host);
+}
+
+/** Who a rejected hop is blamed on in messages, and what the address is called. */
+export interface HopWording {
+  who: string;
+  what: string;
+}
+const COBALT_WORDING: HopWording = { who: "Your cobalt instance", what: "a media address" };
 
 /**
  * Every address the media download goes to: the instance itself, or an https host on the public internet. A
  * redirect cannot point it at this computer or the local network (a cobalt answer or tunnel is third-party data).
- * Returns the checked address to connect to (undefined for the instance), so a second DNS answer cannot differ.
+ * Returns the checked address to connect to (undefined for the trusted origin), so a second DNS answer cannot differ.
+ * `exact` link downloads use the same check, with the link the user gave as the trusted origin.
  */
-async function checkHop(url: URL, instance: URL, lookup: Lookup): Promise<string | undefined> {
-  if (url.protocol !== "http:" && url.protocol !== "https:") throw new SourceError("download_failed", "Your cobalt instance pointed to a media address that is not http(s); it was not downloaded.");
-  if (url.origin === instance.origin) return undefined;
-  if (url.protocol !== "https:") throw new SourceError("download_failed", "Your cobalt instance pointed to a media address on another host that is not https; it was not downloaded.");
-  if (url.username || url.password) throw new SourceError("download_failed", "Your cobalt instance pointed to a media address with credentials; it was not downloaded.");
-  const host = url.hostname.toLowerCase().replace(/\.+$/, "").replace(/^\[|\]$/g, "");
+export async function checkHop(url: URL, trusted: URL, lookup: Lookup = systemLookup, wording: HopWording = COBALT_WORDING): Promise<string | undefined> {
+  const { who, what } = wording;
+  if (url.protocol !== "http:" && url.protocol !== "https:") throw new SourceError("download_failed", `${who} pointed to ${what} that is not http(s); it was not downloaded.`);
+  // No hop may add a user name or password, not even one to the trusted host.
+  if (url.username || url.password) throw new SourceError("download_failed", `${who} pointed to ${what} with a user name or password; it was not downloaded.`);
+  if (url.origin === trusted.origin) return undefined;
+  if (url.protocol !== "https:") throw new SourceError("download_failed", `${who} pointed to ${what} on another host that is not https; it was not downloaded.`);
+  const host = hostOf(url);
   let addresses: string[];
-  if (isIP(host)) addresses = [host];
-  else if (LOCAL_NAMES.test(host) || !host.includes(".")) addresses = ["127.0.0.1"];
-  else {
-    try {
-      addresses = await lookup(host);
-    } catch {
-      throw new SourceError("download_failed", `Your cobalt instance pointed to ${host}, which does not resolve.`);
-    }
+  try {
+    addresses = await hostAddresses(host, lookup);
+  } catch {
+    throw new SourceError("download_failed", `${who} pointed to ${host}, which does not resolve.`);
   }
   if (!addresses.length || addresses.some(isPrivateAddress)) {
-    throw new SourceError("download_failed", `Your cobalt instance pointed to ${host}, which is on this computer or the local network; it was not downloaded.`);
+    throw new SourceError("download_failed", `${who} pointed to ${host}, which is on this computer or the local network; it was not downloaded.`);
   }
   return addresses[0];
+}
+
+/** A `lookup` for node:http(s) that answers with the address that was checked, never a fresh DNS answer. */
+export function pinnedLookup(address: string): never {
+  const family = isIP(address) === 6 ? 6 : 4;
+  const lookup = (_host: string, options: { all?: boolean }, callback: (error: Error | null, address: string | { address: string; family: number }[], family?: number) => void) => {
+    if (options?.all) callback(null, [{ address, family }]);
+    else callback(null, address, family);
+  };
+  return lookup as never;
 }
 
 /** What the media download needs from an HTTP answer. */
@@ -179,14 +205,9 @@ export interface MediaResponse {
  */
 export function pinnedGet(url: URL, address: string | undefined, signal: AbortSignal): Promise<MediaResponse> {
   return new Promise((resolve, reject) => {
-    const family = address && isIP(address) === 6 ? 6 : 4;
-    const lookup = (_host: string, options: { all?: boolean }, callback: (error: Error | null, address: string | { address: string; family: number }[], family?: number) => void) => {
-      if (options?.all) callback(null, [{ address: address!, family }]);
-      else callback(null, address!, family);
-    };
     const request = (url.protocol === "https:" ? httpsRequest : httpRequest)(
       url,
-      { method: "GET", signal, headers: { accept: "*/*", "user-agent": "framelens" }, ...(address && { lookup: lookup as never }) },
+      { method: "GET", signal, headers: { accept: "*/*", "user-agent": "framelens" }, ...(address && { lookup: pinnedLookup(address) }) },
       (res) => {
         const headers = new Headers();
         for (const [name, value] of Object.entries(res.headers)) if (value !== undefined) headers.set(name, Array.isArray(value) ? value.join(", ") : value);

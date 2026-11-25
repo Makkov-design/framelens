@@ -1,8 +1,7 @@
 import { readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import type { MediaTools } from "../media/exec.js";
 import { estimateTempo, pickPeaks, refineOnset, spectralFlux } from "./dsp.js";
+import { tempPath } from "../media/temp.js";
 
 export interface AudioAnalysis {
   range: { start: number; end: number };
@@ -21,7 +20,7 @@ const SAMPLE_RATE = 11025;
 
 /** Mono PCM of a range as floats. */
 export async function readPcm(source: string, tools: MediaTools, range: { start: number; end: number }): Promise<Float32Array> {
-  const out = join(tmpdir(), `framelens-pcm-${process.pid}-${Date.now()}.f32`);
+  const out = tempPath("framelens-pcm-", ".f32");
   try {
     await tools.exec(tools.ffmpeg, [
       "-hide_banner", "-nostdin", "-v", "error", "-y",

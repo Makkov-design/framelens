@@ -1,6 +1,6 @@
 {
   "name": "framelens",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "mcpName": "io.github.Makkov-design/framelens",
   "description": "Eyes and ears for AI agents: measured analysis of any video or animation (frames, cuts, easing, palette, beats, transcripts) and starter projects for HyperFrames, Remotion, CSS, After Effects and Lottie. MCP server.",
   "type": "module",
@@ -55,7 +55,7 @@
     "url": "https://github.com/Makkov-design/framelens/issues"
   },
   "devDependencies": {
-    "@google/genai": "^2.32.0",
+    "@google/genai": "^3.6.1",
     "@modelcontextprotocol/sdk": "^1.32.2",
     "@types/node": "^26.6.6",
     "esbuild": "^0.28.2",

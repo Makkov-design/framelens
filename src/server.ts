@@ -17,6 +17,7 @@ import {
   transcriptPrompt,
 } from "./prompts.js";
 import { VERSION } from "./version.js";
+import { CancelledError, mcpCallContext, withCall, type ProgressExtra } from "./runtime/call.js";
 import {
   deepLink,
   formatClip,
@@ -122,27 +123,39 @@ export function createServer({ analyzer, logger, engine, now = Date.now }: Serve
   }
 
   /** Shared plumbing: input parsing, logging and turning failures into tool errors. */
+  /**
+   * Runs one Gemini tool call inside the call context, like the local tools: the client's cancel stops the Gemini
+   * request, and a client that sent a progress token gets a heartbeat while Gemini works.
+   */
   async function runTool(
     tool: string,
     args: VideoArgs,
+    extra: ProgressExtra | undefined,
     body: (video: VideoRef, clip: Clip | undefined) => Promise<CallToolResult>,
   ): Promise<CallToolResult> {
     const startedAt = now();
     let videoId: string | undefined;
+    const call = mcpCallContext(tool, extra);
     try {
       const video = parseVideoRef(args.youtube_url);
       videoId = video.videoId;
       const clip = parseClip(args.start, args.end);
-      const result = await body(video, clip);
+      const result = await withCall(call.context, () => body(video, clip));
       logger.info("tool done", { tool, videoId, ms: now() - startedAt });
       return result;
     } catch (error) {
+      if (error instanceof CancelledError) {
+        logger.info("tool cancelled", { tool, videoId, ms: now() - startedAt });
+        return errorResult(`${tool} was cancelled.`);
+      }
       if (error instanceof InvalidInputError || error instanceof AnalyzerError) {
         logger.warn("tool failed", { tool, videoId, ms: now() - startedAt, error: error.message });
         return errorResult(error.message);
       }
       logger.error("tool crashed", { tool, videoId, error });
       return errorResult("Unexpected server error. See the server log for details.");
+    } finally {
+      call.stop();
     }
   }
 
@@ -181,8 +194,8 @@ export function createServer({ analyzer, logger, engine, now = Date.now }: Serve
       },
       annotations: ANALYSIS_ANNOTATIONS,
     },
-    (args) =>
-      runTool("summarize_youtube_video", args, async (video, clip) => {
+    (args, extra) =>
+      runTool("summarize_youtube_video", args, extra, async (video, clip) => {
         const result = await analyze(video, clip, args.detail, summarizePrompt(args.summary_length, clip, args.response_language));
         return textResult(video, clip, result, result.text);
       }),
@@ -207,8 +220,8 @@ export function createServer({ analyzer, logger, engine, now = Date.now }: Serve
       },
       annotations: ANALYSIS_ANNOTATIONS,
     },
-    (args) =>
-      runTool("ask_about_youtube_video", args, async (video, clip) => {
+    (args, extra) =>
+      runTool("ask_about_youtube_video", args, extra, async (video, clip) => {
         const question = args.question?.trim() || undefined;
         const result = await analyze(video, clip, args.detail, askPrompt(question, clip, args.response_language));
         return textResult(video, clip, result, result.text);
@@ -234,8 +247,8 @@ export function createServer({ analyzer, logger, engine, now = Date.now }: Serve
       },
       annotations: ANALYSIS_ANNOTATIONS,
     },
-    (args) =>
-      runTool("extract_key_moments", args, async (video, clip) => {
+    (args, extra) =>
+      runTool("extract_key_moments", args, extra, async (video, clip) => {
         const count = args.number_of_moments;
         const result = await analyze(video, clip, args.detail, keyMomentsPrompt(count, clip, args.response_language), {
           schema: keyMomentsSchema(count),
@@ -288,8 +301,8 @@ export function createServer({ analyzer, logger, engine, now = Date.now }: Serve
       },
       annotations: ANALYSIS_ANNOTATIONS,
     },
-    (args) =>
-      runTool("get_video_transcript", args, async (video, clip) => {
+    (args, extra) =>
+      runTool("get_video_transcript", args, extra, async (video, clip) => {
         const result = await analyze(video, clip, args.detail, transcriptPrompt(args.include_on_screen_text, clip), {
           schema: TRANSCRIPT_SCHEMA,
           validate: (r) => void parseJson(r, geminiTranscript),

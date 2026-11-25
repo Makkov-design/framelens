@@ -1,10 +1,14 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { classifyInput, resolveSource } from "../../src/sources/resolve.js";
 import { run } from "../../src/tools/run.js";
 import { findTool } from "../../src/tools/find.js";
+import { runningChildren } from "../../src/tools/children.js";
+
+/** These tests use no network: the redirect walk before yt-dlp is tested on its own (regressions-2-2-security). */
+const offline = async () => {};
 
 const fake = resolve("test/fixtures/fake-ytdlp.mjs");
 const root = mkdtempSync(join(tmpdir(), "framelens-src-"));
@@ -29,6 +33,11 @@ const calls = () => (existsSync(argLog) ? readFileSync(argLog, "utf8").trim().sp
 const YT = "https://www.youtube.com/watch?v=jNQXAC9IVRw&list=PL123";
 
 describe("classifyInput", () => {
+  // On Windows the same link is a UNC path and is valid.
+  it.skipIf(process.platform === "win32")("answers a file:// link with a host with a source error, not a raw TypeError", () => {
+    expect(() => classifyInput("file://server/share/clip.mp4")).toThrow(expect.objectContaining({ code: "bad_input", message: expect.stringMatching(/must have no host/) }));
+  });
+
   it("recognises YouTube links, IDs and other links", () => {
     expect(classifyInput(YT)).toEqual({ kind: "youtube", id: "yt-jNQXAC9IVRw", url: "https://www.youtube.com/watch?v=jNQXAC9IVRw" });
     expect(classifyInput("https://youtu.be/jNQXAC9IVRw").id).toBe("yt-jNQXAC9IVRw");
@@ -131,7 +140,7 @@ describe("resolveSource: links through yt-dlp", () => {
     expect(download![download!.indexOf("--max-filesize") + 1]).toBe("2048M");
     expect(download![download!.indexOf("-f") + 1]).toContain("height<=1080");
     expect(download![download!.indexOf("--sub-langs") + 1]).toBe("en-orig");
-    expect(download![download!.indexOf("--sub-format") + 1]).toBe("json3/vtt/best");
+    expect(download![download!.indexOf("--sub-format") + 1]).toBe("json3/vtt/srt/best");
   });
 
   it("leaves no empty workspace folder behind when a link cannot be fetched", async () => {
@@ -172,7 +181,7 @@ describe("resolveSource: links through yt-dlp", () => {
   });
 
   it("fetches other links with the generic id and the page's canonical url", async () => {
-    const record = await resolveSource("https://cdn.example.com/clip.mp4", { workspaceRoot: ws, env: env() });
+    const record = await resolveSource("https://cdn.example.com/clip.mp4", { workspaceRoot: ws, checkRedirects: offline, env: env() });
     expect(record.kind).toBe("url");
     expect(record.id).toMatch(/^url-/);
     expect(record.url).toBe("https://example.com/watch/1");
@@ -185,7 +194,7 @@ describe("resolveSource: links through yt-dlp", () => {
     await resolveSource(YT, { workspaceRoot: ws, env: env({ FRAMELENS_COOKIES_FILE: jar }), log: (l) => logs.push(l) });
     expect(calls().some((c) => c.includes("--cookies") && c.includes(jar))).toBe(true);
     expect(logs.join("\n")).not.toContain("secret-cookies");
-    await resolveSource("https://example.org/other", { workspaceRoot: ws, env: env({ FRAMELENS_COOKIES_FROM_BROWSER: "firefox" }) });
+    await resolveSource("https://example.org/other", { workspaceRoot: ws, checkRedirects: offline, env: env({ FRAMELENS_COOKIES_FROM_BROWSER: "firefox" }) });
     expect(calls().some((c) => c.includes("--cookies-from-browser") && c.includes("firefox"))).toBe(true);
   });
 
@@ -212,6 +221,55 @@ describe("resolveSource: links through yt-dlp", () => {
     expect(calls().find((c) => c.includes("--max-filesize"))![calls().find((c) => c.includes("--max-filesize"))!.indexOf("--max-filesize") + 1]).toBe("100M");
   });
 
+  it.each(["stream", "stream-temp-id"])("stops a download of unknown size once it passes the cap (%s)", async (mode) => {
+    process.env.FAKE_YTDLP_MODE = mode;
+    const started = Date.now();
+    const error = await resolveSource(YT, { workspaceRoot: ws, env: env({ FRAMELENS_MAX_DOWNLOAD_MB: "3" }) }).catch((e) => e);
+    expect(error.code).toBe("too_large");
+    expect(error.message).toMatch(/passed the 3 MB limit/);
+    // The fake writes 1 MB every 50 ms for 30 s: stopped within a few seconds, and the partial file is removed.
+    expect(Date.now() - started).toBeLessThan(10_000);
+    const media = join(ws, "yt-jNQXAC9IVRw", "media");
+    const left = existsSync(media) ? readdirSync(media).filter((n) => n.startsWith("source.")) : [];
+    expect(left).toEqual([]);
+    expect(runningChildren()).toBe(0);
+  }, 20_000);
+
+  it("does not count the merger's temporary output, nor the finished file beside its inputs, against the cap", async () => {
+    // 3 MB downloaded; while merging, and after the rename while the inputs remain, 6 MB are on disk. A 4 MB cap must
+    // let it through.
+    process.env.FAKE_YTDLP_MODE = "merge";
+    const record = await resolveSource(YT, { workspaceRoot: ws, env: env({ FRAMELENS_MAX_DOWNLOAD_MB: "4" }) });
+    expect(record.mediaPath).toBe(join(ws, "yt-jNQXAC9IVRw", "media", "source.mp4"));
+  }, 20_000);
+
+  it("removes what a cancelled download wrote, before the error reaches its caller", async () => {
+    const { fetchWithYtDlp } = await import("../../src/sources/ytdlp.js");
+    const media = join(ws, "cancelled-media");
+    const controller = new AbortController();
+    process.env.FAKE_YTDLP_DELAY_MS = "20000";
+    try {
+      const fetching = fetchWithYtDlp({
+        url: YT,
+        mediaDir: media,
+        ytdlp: { name: "yt-dlp", path: fake, source: "env" },
+        ffmpeg: { name: "ffmpeg", path: fake, source: "env" },
+        env: env(),
+        signal: controller.signal,
+        timeoutMs: 60_000,
+      });
+      // The fake writes source.mp4.part as soon as it starts downloading.
+      const started = Date.now();
+      while (!existsSync(join(media, "source.mp4.part")) && Date.now() - started < 10_000) await new Promise((done) => setTimeout(done, 50));
+      expect(existsSync(join(media, "source.mp4.part"))).toBe(true);
+      controller.abort();
+      await expect(fetching).rejects.toThrow();
+      expect(readdirSync(media).filter((n) => n.startsWith("source."))).toEqual([]);
+    } finally {
+      delete process.env.FAKE_YTDLP_DELAY_MS;
+    }
+  }, 30_000);
+
   it("reports a download that produced no file", async () => {
     process.env.FAKE_YTDLP_MODE = "nofile";
     await expect(resolveSource(YT, { workspaceRoot: ws, env: env() })).rejects.toThrow(/no media file/);
@@ -233,17 +291,73 @@ describe("resolveSource: links through yt-dlp", () => {
   ])("maps the %s failure to %s", async (mode, code, message) => {
     process.env.FAKE_YTDLP_MODE = mode;
     const url = mode === "login" ? "https://www.instagram.com/reel/Cx1/" : YT;
-    const error = await resolveSource(url, { workspaceRoot: ws, env: env() }).catch((e) => e);
+    const error = await resolveSource(url, { workspaceRoot: ws, checkRedirects: offline, env: env() }).catch((e) => e);
     expect(error.code).toBe(code);
     expect(error.message).toMatch(message);
   });
 
   it("names the platform and lists the tiers for a login wall", async () => {
     process.env.FAKE_YTDLP_MODE = "login";
-    const error = await resolveSource("https://www.instagram.com/reel/Cx1/", { workspaceRoot: ws, env: env() }).catch((e) => e);
+    const error = await resolveSource("https://www.instagram.com/reel/Cx1/", { workspaceRoot: ws, checkRedirects: offline, env: env() }).catch((e) => e);
     expect(error.message).toContain("Instagram");
     expect(error.message).toContain("FRAMELENS_INBOX");
     expect(error.message).toContain("FRAMELENS_COOKIES_FROM_BROWSER");
     expect(error.message).toContain("FRAMELENS_COOKIES_FILE");
+  });
+});
+
+describe("one download per workspace at a time", () => {
+  const downloads = () => calls().filter((c) => c.includes("-o")).length;
+  afterEach(() => {
+    delete process.env.FAKE_YTDLP_DELAY_MS;
+  });
+
+  it("lets a second call on the same new link wait for the first download instead of deleting its files", async () => {
+    process.env.FAKE_YTDLP_DELAY_MS = "400";
+    const [a, b] = await Promise.all([resolveSource(YT, { workspaceRoot: ws, env: env() }), resolveSource(YT, { workspaceRoot: ws, env: env() })]);
+    expect(downloads()).toBe(1);
+    expect(a.mediaPath).toBe(b.mediaPath);
+    expect(readFileSync(a.mediaPath, "utf8")).toBe("fake-video");
+    expect(existsSync(join(ws, a.id, "source.json"))).toBe(true);
+  });
+
+  it("gives a failing first download's error to the call that waited for it, and leaves no workspace", async () => {
+    process.env.FAKE_YTDLP_DELAY_MS = "300";
+    process.env.FAKE_YTDLP_MODE = "fail-download";
+    const results = await Promise.allSettled([resolveSource(YT, { workspaceRoot: ws, env: env() }), resolveSource(YT, { workspaceRoot: ws, env: env() })]);
+    expect(results.map((r) => r.status)).toEqual(["rejected", "rejected"]);
+    expect(downloads()).toBe(1);
+    expect(existsSync(join(ws, "yt-jNQXAC9IVRw"))).toBe(false);
+  });
+
+  it("lets a waiting call be cancelled on its own, while the download goes on for the call that started it", async () => {
+    process.env.FAKE_YTDLP_DELAY_MS = "800";
+    const leader = resolveSource(YT, { workspaceRoot: ws, env: env() });
+    await new Promise((done) => setTimeout(done, 200));
+    const controller = new AbortController();
+    const waiter = resolveSource(YT, { workspaceRoot: ws, env: env(), signal: controller.signal });
+    const started = Date.now();
+    controller.abort();
+    await expect(waiter).rejects.toThrow(/cancelled/);
+    // At once, not when the download ends.
+    expect(Date.now() - started).toBeLessThan(300);
+    expect(readFileSync((await leader).mediaPath, "utf8")).toBe("fake-video");
+    expect(downloads()).toBe(1);
+  });
+
+  it("stops a cancelled download, leaves nothing a later call takes for complete, and lets the other caller try again", async () => {
+    process.env.FAKE_YTDLP_DELAY_MS = "1500";
+    const controller = new AbortController();
+    const first = resolveSource(YT, { workspaceRoot: ws, env: env(), signal: controller.signal });
+    await new Promise((done) => setTimeout(done, 300));
+    const second = resolveSource(YT, { workspaceRoot: ws, env: env() });
+    controller.abort();
+    await expect(first).rejects.toThrow(/cancelled/);
+    // The cancelled call's yt-dlp is gone, and its new workspace with it.
+    expect(runningChildren()).toBeLessThanOrEqual(1);
+    delete process.env.FAKE_YTDLP_DELAY_MS;
+    const record = await second;
+    expect(readFileSync(record.mediaPath, "utf8")).toBe("fake-video");
+    expect(downloads()).toBe(2);
   });
 });

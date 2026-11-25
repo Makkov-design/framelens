@@ -5,6 +5,10 @@ on:
     branches: [main]
     tags: ["v*"]
   pull_request:
+  # Manual fallback for a maintainer, e.g. on a Dependabot branch after dependabot-bundle.yml committed the rebuilt
+  # bundle and no approvable run appeared. Such a run is not Dependabot-triggered, so regular Actions secrets would be
+  # available to it: this workflow must keep using no secrets and `contents: read`.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -30,14 +34,34 @@ jobs:
       - run: npm test
       - run: npm run bundle
       - name: Committed bundle is up to date
-        run: git diff --exit-code --stat -- dist/framelens.mjs || (echo "Run npm run bundle and commit dist/framelens.mjs" && exit 1)
+        run: git diff --exit-code --stat -- dist/framelens.mjs || (echo "Run npm run bundle and commit dist/framelens.mjs (on a Dependabot npm PR, dependabot-bundle.yml commits it)" && exit 1)
       - run: npm run build:extension
       - name: Committed extension build is up to date
         run: git diff --exit-code --stat -- extension/dist || (echo "Run npm run build:extension and commit extension/dist" && exit 1)
       - run: npm audit --audit-level=high
 
+  unit-other-os:
+    # The same suite on Windows and macOS, for path, process and file handling. The runners have no ffmpeg, so the
+    # media and real-browser tests skip there; they run on Ubuntu above.
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npx vitest run --maxWorkers=2
+
   bundle-runs:
-    # The committed bundle has no dependencies; check it starts on every supported Node version.
+    # The committed bundle has no dependencies; check it starts on every supported Node version and runs a real
+    # local tool (probe on a generated clip), copied alone into a temp folder with no node_modules.
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -49,16 +73,13 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: ${{ matrix.node }}
-      - name: Server starts and lists its tools over stdio
+      - name: Install ffmpeg for the probe call
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+      - name: Server starts, lists its tools and runs probe over stdio
         run: |
-          cp dist/framelens.mjs "$RUNNER_TEMP/"
+          cp dist/framelens.mjs .github/scripts/bundle-runs.mjs "$RUNNER_TEMP/"
           cd "$RUNNER_TEMP"
-          printf '%s\n' \
-            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"0"}}}' \
-            '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
-            '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
-            | GEMINI_API_KEY=ci-dummy timeout 15 node framelens.mjs > out.jsonl
-          node -e 'const l=require("fs").readFileSync("out.jsonl","utf8").trim().split("\n").map(JSON.parse); const t=l.find(m=>m.id===2).result.tools; const n=t.map(x=>x.name); for (const need of ["probe","plan","frames","transcript","summarize_youtube_video"]) if(!n.includes(need)) throw new Error("missing tool "+need); console.log(t.map(x=>x.name).join(", "))'
+          node bundle-runs.mjs framelens.mjs
 
   docker:
     runs-on: ubuntu-latest

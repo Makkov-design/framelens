@@ -1,9 +1,12 @@
 import { mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import { extname, join } from "node:path";
 import { readEnv, run, ToolError, type Env, type ToolLocation } from "../tools/index.js";
+import { anySignal } from "../tools/download.js";
+import { callSignal } from "../runtime/call.js";
 import { cookieArgs, redactArgs } from "./cookies.js";
 import { mayBeAccessControl } from "./access.js";
 import { SourceError } from "./errors.js";
+import { hideCredentials, oneLine } from "../text.js";
 import type { CaptionTrack } from "./types.js";
 
 /** Best video up to 1080p plus best audio; falls back to a single file, then to anything. */
@@ -20,6 +23,66 @@ export function maxDownloadMb(env: Env): number {
     throw new SourceError("bad_input", `FRAMELENS_MAX_DOWNLOAD_MB must be a whole number of megabytes, got "${raw}".`);
   }
   return value;
+}
+
+/**
+ * How often a running download's size on disk is checked against the limit. A fast download can pass the limit by
+ * what it writes in that time before it is stopped, so the limit is approximate for a size not known up front.
+ */
+const SIZE_CHECK_MS = 250;
+
+/**
+ * The output a postprocessor writes next to its inputs: yt-dlp's `prepend_extension(final name, "temp")`, so for
+ * source.mp4 exactly source.temp.mp4 (the merger's, renamed over the inputs once done). Nothing else: a stream is
+ * named source.f<format id>.<ext>, and a site chooses the format id (a DASH Representation@id), dots included.
+ */
+const POSTPROCESSOR_OUTPUT = /^source\.temp\.[A-Za-z0-9]+$/;
+/** The finished file yt-dlp leaves: source.<ext>, one extension and nothing else. */
+const FINISHED_MEDIA = /^source\.[A-Za-z0-9]+$/;
+
+/** Removes every source.* file in the folder: partial downloads, fragments, captions. Windows may hold a file a moment. */
+function removeSourceFiles(dir: string): void {
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    if (!name.startsWith("source.")) continue;
+    try {
+      rmSync(join(dir, name), { force: true, maxRetries: 5, retryDelay: 100 });
+    } catch {
+      // Left for the next download into this folder, which removes leftovers before it starts.
+    }
+  }
+}
+
+/**
+ * Bytes yt-dlp has downloaded so far: the result, its parts and fragments, and captions, all named source.*. A
+ * postprocessor's output is a copy of what was downloaded, not more of it, so it is not counted: a video under the
+ * limit is not stopped while it merges.
+ */
+export function writtenBytes(dir: string): number {
+  let total = 0;
+  try {
+    const names = readdirSync(dir);
+    // After a merge yt-dlp renames its output to source.<ext> before it deletes the inputs (source.f<id>.<ext>): for
+    // that moment the same bytes are on disk twice, so the finished file is not counted while inputs remain.
+    const inputsLeft = names.some((n) => n.startsWith("source.f") && !n.endsWith(".part") && !/\.part-Frag/.test(n));
+    for (const name of names) {
+      if (!name.startsWith("source.") || POSTPROCESSOR_OUTPUT.test(name)) continue;
+      if (inputsLeft && FINISHED_MEDIA.test(name)) continue;
+      try {
+        total += statSync(join(dir, name)).size;
+      } catch {
+        // Renamed or removed between the listing and the stat.
+      }
+    }
+  } catch {
+    // The folder is not there yet.
+  }
+  return total;
 }
 
 /** A readable platform name for a link, for messages. */
@@ -60,7 +123,8 @@ export function mapYtDlpFailure(stderr: string, url: string): SourceError {
   const text = stderr.replace(/\r/g, "");
   const platform = platformName(url);
   const errorLine = [...text.split("\n")].reverse().find((l) => /^ERROR:/i.test(l.trim()))?.trim() ?? text.trim().split("\n").pop() ?? "";
-  const brief = errorLine.replace(/^ERROR:\s*(\[[^\]]+\]\s*[\w-]*:?\s*)?/i, "").slice(0, 300);
+  // The site's words (a page's track names, its error text) are third-party: one line, capped, and marked.
+  const brief = oneLine(hideCredentials(errorLine).replace(/^ERROR:\s*(\[[^\]]+\]\s*[\w-]*:?\s*)?/i, ""), 200);
   // yt-dlp's own words travel with the error: the message below is help text, but the cobalt policy and the login
   // profile decide on what the site actually said (src/sources/access.ts).
   const detail = text.trim().slice(-4000);
@@ -70,20 +134,20 @@ export function mapYtDlpFailure(stderr: string, url: string): SourceError {
     return new SourceError(
       "unsupported_url",
       `Frame Lens cannot read a video from this link (${platform}). Open the page, save the video file yourself and pass its path, or put it in the inbox folder. Detail: ${brief}`,
-      { accessControl, detail },
+      { accessControl, detail, thirdParty: true },
     );
   }
   if (GEO.test(text)) {
-    return new SourceError("geo_blocked", `${platform} blocks this video in your country. Save the file another way and pass its path or use the inbox folder. Detail: ${brief}`, { accessControl: true, detail });
+    return new SourceError("geo_blocked", `${platform} blocks this video in your country. Save the file another way and pass its path or use the inbox folder. Detail: ${brief}`, { accessControl: true, detail, thirdParty: true });
   }
   if (GONE.test(text)) {
-    return new SourceError("unavailable", `${platform} says this video is private, removed or unavailable, so it cannot be fetched. Detail: ${brief}`, { accessControl: true, detail });
+    return new SourceError("unavailable", `${platform} says this video is private, removed or unavailable, so it cannot be fetched. Detail: ${brief}`, { accessControl: true, detail, thirdParty: true });
   }
   if (LOGIN.test(text)) return new SourceError("login_required", LOGIN_TIERS(platform), { accessControl: true, detail });
   if (/http error 429|too many requests/i.test(text)) {
     return new SourceError("download_failed", `${platform} is limiting requests from this connection (HTTP 429). Wait a while and try again, or save the file yourself into the inbox folder.`, { accessControl: true, detail });
   }
-  return new SourceError("download_failed", `yt-dlp could not fetch this link. ${brief || "No error text was reported."}`, { accessControl, detail });
+  return new SourceError("download_failed", `yt-dlp could not fetch this link. ${brief || "No error text was reported."}`, { accessControl, detail, thirdParty: Boolean(brief) });
 }
 
 interface Info {
@@ -97,10 +161,17 @@ interface Info {
   filesize_approx?: number | null;
 }
 
+/**
+ * A caption track's key as a language tag (en, pt-BR, zh-Hans, en-orig). The key comes from the site (a page's
+ * `<track srclang>`), lands in metadata and names a file: anything else is not asked for, and reads as "und".
+ */
+const LANGUAGE_TAG = /^[A-Za-z]{2,3}(-[A-Za-z0-9]{1,8}){0,3}$/;
+export const captionLanguage = (key: string): string => (LANGUAGE_TAG.test(key) ? key : "und");
+
 /** Which caption tracks to download: the video's own language (manual, or automatic) and English if a person wrote it. */
 export function pickCaptionLanguages(info: Info): string[] {
-  const manual = Object.keys(info.subtitles ?? {});
-  const auto = Object.keys(info.automatic_captions ?? {});
+  const manual = Object.keys(info.subtitles ?? {}).filter((k) => LANGUAGE_TAG.test(k));
+  const auto = Object.keys(info.automatic_captions ?? {}).filter((k) => LANGUAGE_TAG.test(k));
   const base = (k: string) => k.split("-")[0]!.toLowerCase();
   const origKey = auto.find((k) => k.endsWith("-orig"));
   const own = (info.language ? base(info.language) : undefined) ?? (origKey ? base(origKey) : undefined);
@@ -152,10 +223,10 @@ export async function fetchWithYtDlp(params: FetchParams): Promise<FetchResult> 
     ...cookies,
   ];
   const runEnv = { PYTHONIOENCODING: "utf-8", NO_COLOR: "1" };
-  const exec = async (args: string[], limit: number) => {
-    log(`yt-dlp ${redactArgs(args).slice(0, 40).join(" ")}`);
+  const exec = async (args: string[], limit: number, stop?: AbortSignal) => {
+    log(hideCredentials(`yt-dlp ${redactArgs(args).slice(0, 40).join(" ")}`));
     try {
-      return await run(ytdlp.path, args, { timeoutMs: limit, signal, env: runEnv, maxOutputBytes: 32 * 1024 * 1024 });
+      return await run(ytdlp.path, args, { timeoutMs: limit, signal: stop ? anySignal(signal ?? callSignal(), stop) : signal, env: runEnv, maxOutputBytes: 32 * 1024 * 1024 });
     } catch (error) {
       if (error instanceof ToolError && error.code === "timeout") {
         throw new SourceError("download_failed", `yt-dlp did not finish in ${Math.round(limit / 60_000)} minutes and was stopped. The video may be too long or the connection too slow.`);
@@ -184,7 +255,7 @@ export async function fetchWithYtDlp(params: FetchParams): Promise<FetchResult> 
 
   // 2. Download. Leftovers from an interrupted run are removed so they cannot be mistaken for the result.
   mkdirSync(mediaDir, { recursive: true });
-  for (const name of readdirSync(mediaDir)) if (name.startsWith("source.")) rmSync(join(mediaDir, name), { force: true });
+  removeSourceFiles(mediaDir);
   const langs = pickCaptionLanguages(info);
   const args = [
     ...common,
@@ -192,12 +263,37 @@ export async function fetchWithYtDlp(params: FetchParams): Promise<FetchResult> 
     "--merge-output-format", "mp4",
     "--max-filesize", `${maxMb}M`,
     "--no-mtime",
-    ...(langs.length ? ["--write-subs", "--write-auto-subs", "--sub-langs", langs.join(","), "--sub-format", "json3/vtt/best"] : []),
+    ...(langs.length ? ["--write-subs", "--write-auto-subs", "--sub-langs", langs.join(","), "--sub-format", "json3/vtt/srt/best"] : []),
     "-o", join(mediaDir, "source.%(ext)s"),
     "--", url,
   ];
-  const result = await exec(args, timeoutMs);
-  if (result.code !== 0) throw mapYtDlpFailure(result.stderr, url);
+  // `--max-filesize` only works when the size is known up front: an HLS or DASH stream that reports none (live, many
+  // playlists) would download without end. The files written so far are watched, and the download is stopped once
+  // they pass the limit.
+  const limitBytes = maxMb * 1024 * 1024;
+  const overLimit = new AbortController();
+  const watch = setInterval(() => {
+    if (writtenBytes(mediaDir) > limitBytes) overLimit.abort();
+  }, SIZE_CHECK_MS);
+  watch.unref();
+  let result: Awaited<ReturnType<typeof exec>>;
+  try {
+    result = await exec(args, timeoutMs, overLimit.signal);
+  } catch (error) {
+    // Stopped for any reason (cancel, time limit, the size watch): what it wrote is incomplete. Removed here, in one
+    // place, so no caller can take a partial file for the result.
+    removeSourceFiles(mediaDir);
+    if (overLimit.signal.aborted && !(signal ?? callSignal())?.aborted) {
+      throw new SourceError("too_large", `The download passed the ${maxMb} MB limit and was stopped (the site did not say its full size up front, so it is checked as it downloads). Raise FRAMELENS_MAX_DOWNLOAD_MB or use a shorter video.`);
+    }
+    throw error;
+  } finally {
+    clearInterval(watch);
+  }
+  if (result.code !== 0) {
+    removeSourceFiles(mediaDir);
+    throw mapYtDlpFailure(result.stderr, url);
+  }
 
   // 3. Find what was written.
   let media: { path: string; size: number } | undefined;
@@ -209,7 +305,7 @@ export async function fetchWithYtDlp(params: FetchParams): Promise<FetchResult> 
     const path = join(mediaDir, name);
     if (SUB_EXTENSIONS.has(ext)) {
       const language = name.slice("source.".length, name.length - ext.length);
-      if (language) captions.push({ path, language, auto: !manual.has(language) });
+      if (language) captions.push({ path, language: captionLanguage(language), auto: !manual.has(language) });
     } else if (![".part", ".ytdl", ".temp", ".tmp"].includes(ext)) {
       const size = statSync(path).size;
       if (!media || size > media.size) media = { path, size };

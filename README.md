@@ -131,7 +131,7 @@ says so. To check your machine ahead of time: `npx -y framelens doctor --prepare
 |---|---|
 | `plan` | Start here for any video. Classifies it (talking head, screen, motion graphics, music video, live action), reads the goal from the request (`listen`, `learn`, `find`, `style`, `sound`, `production`) and lists the steps with an image-token estimate. With automatic captions, `listen` and `learn` add a name check (see below) |
 | `probe` | Fetches the source; duration, size, frame rate (variable or not), HDR, audio, captions, workspace folder |
-| `transcript` | Word-timed transcript from captions (Gemini as a fallback for YouTube) |
+| `transcript` | Word-timed transcript from captions (Gemini as a fallback for YouTube; only `transcript` and `frames` with `around` call it, never frame labels, `plan` or `style`) |
 | `frames` | Frames and contact sheets with time, frame number and the words spoken under each picture: `at`, `every`, `fps`, `every_frame` (every native frame with real timestamps) or `around` a phrase |
 | `boundaries` | Where the picture changes abruptly, scored, plus how dynamic the video is |
 | `style` | Cuts told apart from fast motion and flashes, dissolves, fades, dips through black or white and wipes (derived), shots split at them with palettes, moves with duration and easing family; writes `motion-spec.json`, `STYLE.md`, `TIMELINE.md`, `ANALYSIS.md` |
@@ -178,6 +178,18 @@ access control. A failure that mentions a login, an age or bot check, a challeng
 DRM, a private, members-only or paid post, or HTTP 401, 403, 429 or 451 is never sent to cobalt. Every hop of the
 download must be https to a public address, nothing on your computer or local network, and only video or audio is
 kept. The official cobalt.tools hosts are refused: they are not for other projects. Nothing changes when it is unset.
+
+**Links given to `exact`.** A Lottie, dotLottie or Rive link is downloaded from the host you name, even one on your
+computer or local network (a dev server). Every redirect to another host must be https to a public address, never
+your computer, the local network or a cloud metadata address, and a redirect may not add a user name or password.
+Files sent gzip-, deflate- or br-encoded are decoded; other encodings (zstd, lists of encodings) are refused. At most
+30 MB, after decoding, in 30 s.
+
+**Other links and `web`.** Before yt-dlp fetches a link that is not YouTube, Frame Lens walks the redirects its
+server answers with under the same rule, so a public link cannot send the download to your computer or local network;
+the requests a site extractor makes on its own are not covered (see [SECURITY.md](SECURITY.md)). `web` refuses any
+page or frame on your computer or local network, other than the host you gave, and says when the page was read at
+another address than the one you gave.
 
 Frame Lens never bypasses logins, CAPTCHAs or bot checks and never uses online downloader sites or scraping services.
 Platforms' terms may forbid automated downloading: analyze videos you are allowed to watch and use, for reference.
@@ -236,7 +248,7 @@ agent skill [`skills/framelens/SKILL.md`](skills/framelens/SKILL.md); repository
 ### Install in your client
 
 `npx -y framelens` starts the server on stdio. In the [MCP Registry](https://registry.modelcontextprotocol.io) its name
-is `io.github.Makkov-design/framelens` ([server.json](server.json)). Pin a version (`framelens@2.1.0`) when you want to choose when to
+is `io.github.Makkov-design/framelens` ([server.json](server.json)). Pin a version (`framelens@2.2.0`) when you want to choose when to
 upgrade. On **Windows**, clients that start the server themselves need `cmd /c` in front of `npx` (in JSON:
 `"command": "cmd", "args": ["/c", "npx", "-y", "framelens"]`). Add `GEMINI_API_KEY` only if you want the Gemini tools.
 
@@ -292,8 +304,8 @@ directly, without the Windows `cmd /c` wrapper, because the file is shared with 
 your own Windows computer, add Frame Lens for every project as in the table above (`-- cmd /c npx -y framelens`).
 
 **From GitHub instead of npm.** The same version also runs straight from its release tag, without the npm registry:
-`npx -y github:Makkov-design/framelens#v<version>` (for example `#v2.1.0`; in JSON, `"args": ["-y",
-"github:Makkov-design/framelens#v2.1.0"]`). npm then downloads the tagged commit, a larger download than the
+`npx -y github:Makkov-design/framelens#v<version>` (for example `#v2.2.0`; in JSON, `"args": ["-y",
+"github:Makkov-design/framelens#v2.2.0"]`). npm then downloads the tagged commit, a larger download than the
 package.
 </details>
 
@@ -375,14 +387,14 @@ and grade, and keep facts apart from interpretation.
 <details>
 <summary><b>Automatic setup: versions and sources</b></summary>
 
-| Tool | Version | Windows x64 | macOS arm64 and x64, Linux x64 (glibc) |
+| Tool | Version | Windows x64 | macOS arm64 and x64, Linux x64 and arm64 (glibc) |
 |---|---|---|---|
 | ffmpeg, ffprobe | FFmpeg 9.0.2 | [gyan.dev](https://www.gyan.dev/ffmpeg/builds/) essentials build ([GitHub release](https://github.com/GyanD/codexffmpeg/releases/tag/9.0.2)) | [Martin Riedl's build server](https://ffmpeg.martin-riedl.de/) |
-| yt-dlp | 2026.10.21 | [github.com/yt-dlp/yt-dlp](https://github.com/yt-dlp/yt-dlp/releases/tag/2026.10.21) | same, also checked against the release's SHA2-256SUMS |
+| yt-dlp | 2026.10.21 | [github.com/yt-dlp/yt-dlp](https://github.com/yt-dlp/yt-dlp/releases/tag/2026.10.21) | same, also checked against the release's SHA2-256SUMS (Alpine and other musl Linux: the `musllinux` builds) |
 
 Gyan Doshi's Windows builds are the ones ffmpeg.org's download page links; Martin Riedl's build server publishes
 release builds with a SHA-256 for each file and keeps the old ones, so a pinned address keeps working. Other
-platforms (Alpine and other musl systems, Linux on ARM, Windows on ARM) install ffmpeg from their own packages.
+platforms (Alpine and other musl systems, Windows on ARM) install ffmpeg from their own packages.
 Nothing that fails the check is kept.
 </details>
 
@@ -397,7 +409,7 @@ Nothing that fails the check is kept.
 | `FRAMELENS_AUTO_INSTALL` | on | `0` stops Frame Lens from downloading a missing ffmpeg or yt-dlp |
 | `FRAMELENS_HOME` | `~/.framelens` | Where downloaded ffmpeg and yt-dlp builds and the fallback workspaces live |
 | `FRAMELENS_FFMPEG`, `FRAMELENS_FFPROBE`, `FRAMELENS_YTDLP` | found automatically | Paths to the tools |
-| `FRAMELENS_MAX_DOWNLOAD_MB` | `2048` | Largest download |
+| `FRAMELENS_MAX_DOWNLOAD_MB` | `2048` | Largest download. When a site gives no size up front (HLS, DASH), the download is measured as it runs and stopped once past the limit, so it can overshoot by a few seconds' worth |
 | `FRAMELENS_COOKIES_FROM_BROWSER`, `FRAMELENS_COOKIES_FILE` | — | Opt-in cookies for sites that need your login |
 | `FRAMELENS_BROWSER`, `FRAMELENS_BROWSER_PROFILE` | found automatically, `~/.framelens/browser-profile` | Chrome or Edge for `web` and `login`, and where the login profile lives |
 | `FRAMELENS_COBALT_URL`, `FRAMELENS_COBALT_KEY` | — | Your own cobalt instance and its API key |
@@ -485,7 +497,7 @@ you type yourself in Frame Lens's separate browser profile. It never gets around
 <details>
 <summary><b>Windows, macOS, Linux?</b></summary>
 
-All three. Automatic ffmpeg setup covers Windows x64, macOS (arm64 and x64) and Linux x64 with glibc; elsewhere,
+All three. Automatic ffmpeg setup covers Windows x64, macOS (arm64 and x64) and Linux x64 and arm64 with glibc; elsewhere,
 install ffmpeg from your package manager. On Windows, start the server with `cmd /c npx …` in client configs.
 </details>
 

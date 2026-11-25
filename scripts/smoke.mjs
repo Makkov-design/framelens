@@ -1,6 +1,8 @@
 #!/usr/bin/env node
-// Live end-to-end check: starts the built server over stdio, like an MCP client does, and calls every
-// tool against a real public video. Needs GEMINI_API_KEY and `npm run bundle` first. Uses Gemini quota.
+// Live end-to-end check of the Gemini tools: starts the built server over stdio, like an MCP client does, and calls
+// each Gemini tool against a real public video. Needs GEMINI_API_KEY and `npm run bundle` first. Uses Gemini quota.
+// The local tools are covered by the test suite, and CI runs `probe` through the built bundle
+// (.github/scripts/bundle-runs.mjs).
 //
 //   node scripts/smoke.mjs [youtube-url] [--long <url-of-a-video-over-1-hour>]
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";

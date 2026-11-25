@@ -1,0 +1,152 @@
+name: Dependabot bundle
+
+# Every dependency is a devDependency bundled into the committed dist/framelens.mjs and extension/dist, so CI's
+# "committed bundle is up to date" check fails on every Dependabot npm PR. This workflow rebuilds both on those PRs and
+# commits the result to the PR branch.
+#
+# After that commit, GitHub creates the PR's CI run in an approval-required state (a push made with GITHUB_TOKEN that
+# updates a pull request does that). A maintainer clicks "Approve workflows to run" on the PR, or, if no run appears,
+# runs CI by hand from the Actions tab on that branch (ci.yml keeps workflow_dispatch for this), and merges only when
+# that run is green. See CONTRIBUTING.md, "Dependabot PRs". This path had not run end to end when it was added: the
+# first Dependabot npm PR after it merged is its live test.
+#
+# Security: the bumped packages are untrusted code, and no job that runs them holds a write token.
+#
+# Invariants a future edit must keep:
+# 1. Trigger is `pull_request`, never `pull_request_target`; `build` keeps every condition of its `if:` gate.
+# 2. `build` (runs the packages) stays `contents: read`, `persist-credentials: false`, no secrets, no cache step.
+# 3. `commit` (holds the write token) runs no package code: no npm, no node, no script from the repo or the artifact.
+# 4. The artifact zip is fetched outside the repo and checked before anything is extracted: under 50 MB as a zip,
+#    under 50 MB unpacked by its own listing, and its entries are exactly the names in `allowed` (dist/framelens.mjs
+#    and the files of extension/dist; test/workflows.test.ts keeps the list equal to what is committed), plain files
+#    only. Only those names are extracted, each file capped by `ulimit -f`; what was extracted is then measured
+#    (`du -sk`, under 50 MB in all, since the zip's size fields can lie) and each file checked again to be a plain
+#    file before it is copied in.
+#    After `git add`, every staged entry must be a plain 100644 blob (no gitlinks, no executables, no links).
+# 5. git in `commit` runs with fsmonitor and hooks off, and no `git submodule`, `git status` or other command that
+#    reads config or attributes from the copied files is added.
+# 6. The push is a plain fast-forward to the PR branch (never --force). `commit` gets no other permission than
+#    `actions: read`, which only reads this run's artifact.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions: {}
+
+concurrency:
+  group: dependabot-bundle-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    if: >-
+      github.actor == 'dependabot[bot]' &&
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.event.pull_request.head.ref, 'dependabot/npm_and_yarn/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - run: npm ci --ignore-scripts
+      - run: npm run bundle
+      - run: npm run build:extension
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bundle
+          path: |
+            dist/framelens.mjs
+            extension/dist/
+          if-no-files-found: error
+          retention-days: 1
+
+  commit:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # push the rebuilt files to the Dependabot branch
+      actions: read # read this run's artifact; nothing else
+    env:
+      HEAD_REF: ${{ github.event.pull_request.head.ref }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Check the artifact, then extract and copy in only the expected files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.run_id }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # The exact files the build writes. A new or renamed file under extension/dist goes here too
+          # (test/workflows.test.ts fails until it does).
+          allowed=(
+            dist/framelens.mjs
+            extension/dist/background.js
+            extension/dist/icons/128.png
+            extension/dist/icons/16.png
+            extension/dist/icons/32.png
+            extension/dist/icons/48.png
+            extension/dist/manifest.json
+            extension/dist/offscreen.html
+            extension/dist/offscreen.js
+            extension/dist/popup.html
+            extension/dist/popup.js
+            extension/dist/reader.js
+          )
+          max=52428800 # 50 MB, for the zip and for its unpacked total
+          api="https://api.github.com/repos/$REPO/actions/runs/$RUN_ID/artifacts?name=bundle"
+          meta="$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$api")"
+          test "$(jq '.artifacts | length' <<<"$meta")" = 1
+          size="$(jq '.artifacts[0].size_in_bytes' <<<"$meta")"
+          if [ "$size" -gt "$max" ]; then echo "The artifact is $size bytes, more than 50 MB."; exit 1; fi
+          zip="$RUNNER_TEMP/bundle.zip"
+          curl -fsSL --max-filesize "$max" -H "Authorization: Bearer $GH_TOKEN" -o "$zip" "$(jq -r '.artifacts[0].archive_download_url' <<<"$meta")"
+          # Before extracting: exactly the allowed names (directory entries aside), all plain files, small unpacked.
+          names="$(unzip -Z1 "$zip" | grep -v '/$' | LC_ALL=C sort)"
+          want="$(printf '%s\n' "${allowed[@]}" | LC_ALL=C sort)"
+          if [ "$names" != "$want" ]; then echo "The artifact's files differ from the allowed list:"; diff <(echo "$want") <(echo "$names") || true; exit 1; fi
+          # zipinfo's first column is the entry type: no links, devices, pipes or sockets.
+          if unzip -Z -l "$zip" | grep -E '^[lbcps]'; then echo "The artifact holds entries that are not plain files."; exit 1; fi
+          unpacked="$(unzip -Zt "$zip" | sed -nE 's/^[0-9]+ files?, ([0-9]+) bytes uncompressed.*/\1/p')"
+          if [ -z "$unpacked" ] || [ "$unpacked" -gt "$max" ]; then echo "The artifact unpacks to ${unpacked:-an unknown size}, more than 50 MB."; exit 1; fi
+          src="$RUNNER_TEMP/bundle"
+          mkdir "$src"
+          # Only the allowed names, and no file larger than the cap even if the zip lies about its sizes.
+          (ulimit -f $((max / 1024)); unzip -q "$zip" "${allowed[@]}" -d "$src")
+          # The zip's own size fields can lie: measure what was actually extracted before anything is copied in.
+          extracted="$(du -sk "$src" | cut -f1)"
+          if [ "$extracted" -gt $((max / 1024)) ]; then echo "The artifact unpacked to ${extracted} KB, more than 50 MB."; exit 1; fi
+          rm -rf extension/dist
+          for f in "${allowed[@]}"; do
+            if [ -L "$src/$f" ] || [ ! -f "$src/$f" ]; then echo "$f is not a plain file."; exit 1; fi
+            mkdir -p "$(dirname "$f")"
+            cp "$src/$f" "$f"
+            chmod 644 "$f"
+          done
+      - name: Commit and push the rebuild
+        run: |
+          set -euo pipefail
+          git() { command git -c core.fsmonitor=false -c core.hooksPath=/dev/null "$@"; }
+          git add -A -- dist/framelens.mjs extension/dist
+          # Every staged entry must be a plain file blob: no gitlink (160000), link (120000) or executable (100755).
+          bad="$(git ls-files -s -- dist/framelens.mjs extension/dist | grep -v '^100644 ' || true)"
+          if [ -n "$bad" ]; then echo "Unexpected entry types:"; echo "$bad"; exit 1; fi
+          if git diff --cached --quiet; then
+            echo "The committed bundle is already up to date."
+            exit 0
+          fi
+          git diff --cached --stat
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -q -m "Rebuild dist/framelens.mjs and extension/dist for the dependency update"
+          git push origin "HEAD:refs/heads/$HEAD_REF"
+          echo "Pushed. A maintainer now approves the PR's CI run (see CONTRIBUTING.md, Dependabot PRs)."
