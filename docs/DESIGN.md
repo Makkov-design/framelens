@@ -220,7 +220,29 @@ The same check walks a link's redirects before yt-dlp follows them (`checkLinkRe
 plain GET to the link's own host, no new service) and covers every hop of the login-profile capture's media download
 (`browser/capture.ts`). `web` holds each document request over CDP (`Fetch.requestPaused`, `browser/read.ts`) and
 refuses one whose host resolves to a private address, other than the host the user gave. Subresources, workers and
-WebSockets are not checked (SECURITY.md states the limit).
+WebSockets are not checked yet (SECURITY.md states the limit); the request proxy below is being built to close that.
+
+### `web` request proxy (planned for 2.3.1, in progress)
+
+Checking subresources target by target over CDP failed (it killed dedicated workers and missed sandboxed frames and
+prefetches), so the check moves to one choke point every request of the browser goes through:
+
+- `browser/proxy.ts`: an HTTP proxy inside the Frame Lens process, on 127.0.0.1 and a random port, started for one
+  `web` reading and closed with its browser. Chrome is started with `--proxy-server=http://127.0.0.1:<port>` and
+  `--proxy-bypass-list=<-loopback>`, so loopback goes through it too.
+- Each request (absolute-form GET for http, `CONNECT host:port` for https and WebSockets) names a host. The proxy
+  resolves it once with `hostAddresses`, refuses it when any address is private by `isPrivateAddress` (loopback,
+  private, link-local, CGNAT, metadata, IPv4-mapped and the other non-public ranges), and connects to the address it
+  checked, so a second DNS answer cannot swap it. The host the user gave stays exempt, as for documents now. A
+  refused request gets a 403 from the proxy, and the reading counts what was refused.
+- Only the browser it started may use it: every request must carry a per-run secret as Basic proxy credentials;
+  without them the proxy answers 407 and forwards nothing. Chrome gets the credentials through CDP
+  (`Fetch.enable { handleAuthRequests }` on the browser target answers each `Fetch.authRequired`), and its network
+  service reuses them for every target, workers included. It is never an open proxy, also not to public hosts.
+- What would bypass a proxy is turned off: QUIC (`--disable-quic`) and non-proxied WebRTC UDP
+  (`--force-webrtc-ip-handling-policy=disable_non_proxied_udp`). With a proxy set, Chrome leaves name resolution of
+  proxied requests to the proxy.
+- No new service and no new outside request: the proxy only carries what the page asked for, as the browser would.
 `exact` decodes gzip, deflate and br through `stream.pipeline` (never `pipe`, which left the socket open and let the
 time limit's abort surface as an unhandled error) and refuses other encodings. yt-dlp's `--max-filesize` covers only a
 size known up front, so `sources/ytdlp.ts` also measures the `source.*` files every 250 ms (not the postprocessor's
