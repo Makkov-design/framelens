@@ -2,7 +2,7 @@
 import { createServer, request, type IncomingHttpHeaders, type Server } from "node:http";
 import { connect, type AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { exemptHost, startProxy, type RequestProxy } from "../../src/browser/proxy.js";
+import { exemptHost, skipsProxy, startProxy, upstreamFromEnv, upstreamLabel, type RequestProxy } from "../../src/browser/proxy.js";
 
 const basic = (p: RequestProxy) => `Basic ${Buffer.from(`${p.username}:${p.password}`).toString("base64")}`;
 
@@ -158,6 +158,153 @@ describe("web request proxy", () => {
       });
       expect(closed).toBe(true);
       first.destroy();
+    } finally {
+      await proxy.close();
+    }
+  });
+});
+
+describe("web request proxy behind the network's own proxy", () => {
+  let origin: Server;
+  let originPort: number;
+  let upstream: Server;
+  let upstreamPort: number;
+  const originHits: IncomingHttpHeaders[] = [];
+  /** What the upstream proxy was asked for, and with which credentials. */
+  const asked: { target: string; auth?: string }[] = [];
+
+  beforeAll(async () => {
+    origin = createServer((req, res) => {
+      originHits.push(req.headers);
+      res.writeHead(200, { "content-type": "text/plain" });
+      res.end(`origin ${req.headers.host}`);
+    });
+    await new Promise<void>((r) => origin.listen(0, "127.0.0.1", r));
+    originPort = (origin.address() as AddressInfo).port;
+    // A stand-in for a corporate proxy: every target ends up at the test origin.
+    upstream = createServer((req, res) => {
+      asked.push({ target: req.url ?? "", auth: req.headers["proxy-authorization"] });
+      const { "proxy-authorization": _drop, ...headers } = req.headers;
+      const forward = request({ host: "127.0.0.1", port: originPort, method: req.method, path: new URL(req.url ?? "").pathname, headers }, (answer) => {
+        res.writeHead(answer.statusCode ?? 502, answer.headers);
+        answer.pipe(res);
+      });
+      req.pipe(forward);
+    });
+    upstream.on("connect", (req, client) => {
+      asked.push({ target: req.url ?? "", auth: req.headers["proxy-authorization"] });
+      const socket = connect(originPort, "127.0.0.1", () => {
+        client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+        socket.pipe(client);
+        client.pipe(socket);
+      });
+    });
+    await new Promise<void>((r) => upstream.listen(0, "127.0.0.1", r));
+    upstreamPort = (upstream.address() as AddressInfo).port;
+  });
+  afterAll(async () => {
+    await new Promise<void>((r) => origin.close(() => r()));
+    await new Promise<void>((r) => upstream.close(() => r()));
+  });
+
+  const lookup = async (host: string) => {
+    if (host === "unresolvable.example") throw new Error("ENOTFOUND");
+    if (host === "private.example") return ["10.1.2.3"];
+    return ["93.184.216.34"];
+  };
+  const start = () =>
+    startProxy({
+      lookup,
+      upstream: { https: new URL(`http://corp%20user:p%40ss@127.0.0.1:${upstreamPort}`), http: new URL(`http://corp%20user:p%40ss@127.0.0.1:${upstreamPort}`), noProxy: ["direct.example"] },
+      // A direct connection to a checked public address lands on the test origin.
+      dial: () => ({ host: "127.0.0.1", port: originPort }),
+    });
+  const corpAuth = `Basic ${Buffer.from("corp user:p@ss").toString("base64")}`;
+
+  /** A tunnel through the guard, then one plain request inside it; resolves with the answer's first line and body. */
+  function throughTunnel(p: RequestProxy, authority: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const socket = connect(p.port, p.host, () => {
+        socket.write(`CONNECT ${authority} HTTP/1.1\r\nHost: ${authority}\r\nProxy-Authorization: ${basic(p)}\r\n\r\n`);
+      });
+      let data = "";
+      let sent = false;
+      socket.on("data", (c) => {
+        data += c;
+        if (!sent && data.startsWith("HTTP/1.1 200") && data.includes("\r\n\r\n")) {
+          sent = true;
+          data = "";
+          socket.write(`GET / HTTP/1.1\r\nHost: ${authority}\r\nConnection: close\r\n\r\n`);
+        } else if (!sent && data.includes("\r\n\r\n")) {
+          resolve(data.split("\r\n")[0]!);
+          socket.destroy();
+        }
+      });
+      socket.on("end", () => resolve(data));
+      socket.on("error", reject);
+    });
+  }
+
+  it("reads the upstream proxy from the environment, curl's way, and refuses a kind it cannot use", () => {
+    const up = upstreamFromEnv({ HTTPS_PROXY: "http://u:p@proxy.corp:3128", http_proxy: "proxy.corp:8080", NO_PROXY: "localhost, .corp.example,10.0.0.0/8" })!;
+    expect(up.https!.host).toBe("proxy.corp:3128");
+    expect(up.http!.href).toBe("http://proxy.corp:8080/");
+    expect(up.noProxy).toEqual(["localhost", ".corp.example", "10.0.0.0/8"]);
+    expect(upstreamFromEnv({ ALL_PROXY: "http://all:1" })!.https!.host).toBe("all:1");
+    expect(upstreamFromEnv({})).toBeUndefined();
+    expect(() => upstreamFromEnv({ ALL_PROXY: "socks5://s:1080" })).toThrow(/socks5 proxy; web supports only http and https/);
+    expect(skipsProxy("intranet.corp.example", 443, up.noProxy)).toBe(true);
+    expect(skipsProxy("corp.example", 443, up.noProxy)).toBe(true);
+    expect(skipsProxy("10.4.5.6", 80, up.noProxy)).toBe(true);
+    expect(skipsProxy("example.com", 443, up.noProxy)).toBe(false);
+    expect(skipsProxy("example.com", 443, ["*"])).toBe(true);
+    expect(skipsProxy("example.com", 443, ["example.com:8443"])).toBe(false);
+    expect(upstreamLabel(up.https!)).toBe("http://proxy.corp:3128");
+  });
+
+  it("chains https tunnels and plain http through it with its own credentials, never the per-run ones", async () => {
+    const proxy = await start();
+    try {
+      asked.length = 0;
+      originHits.length = 0;
+      expect(await throughTunnel(proxy, "public.example:443")).toContain("origin public.example:443");
+      const plain = await viaProxy(proxy, "http://public.example/page", { "proxy-authorization": basic(proxy) });
+      expect(plain).toEqual({ status: 200, body: "origin public.example" });
+      expect(asked).toEqual([
+        { target: "public.example:443", auth: corpAuth },
+        { target: "http://public.example/page", auth: corpAuth },
+      ]);
+      // The site never sees a proxy's credentials, ours or the network's.
+      expect(originHits.every((h) => !("proxy-authorization" in h))).toBe(true);
+      expect(proxy.upstream).toBe(`http://127.0.0.1:${upstreamPort}`);
+    } finally {
+      await proxy.close();
+    }
+  });
+
+  it("still refuses local, private and metadata targets before anything reaches the upstream proxy", async () => {
+    const proxy = await start();
+    try {
+      asked.length = 0;
+      for (const target of ["127.0.0.1:80", "10.0.0.1:443", "169.254.169.254:80", "[::1]:443", "localhost:8080", "private.example:443", "intranet:80"]) {
+        expect(await tunnel(proxy, target, basic(proxy)), target).toMatch(/^HTTP\/1\.1 403/);
+      }
+      expect((await viaProxy(proxy, "http://192.168.1.1/admin", { "proxy-authorization": basic(proxy) })).status).toBe(403);
+      expect(asked).toEqual([]);
+    } finally {
+      await proxy.close();
+    }
+  });
+
+  it("honours NO_PROXY, and sends a name it cannot resolve to the upstream proxy by name, saying the pin is gone", async () => {
+    const proxy = await start();
+    try {
+      asked.length = 0;
+      expect(await throughTunnel(proxy, "direct.example:443")).toContain("origin direct.example:443");
+      expect(asked).toEqual([]);
+      expect(await throughTunnel(proxy, "unresolvable.example:443")).toContain("origin unresolvable.example:443");
+      expect(asked.map((a) => a.target)).toEqual(["unresolvable.example:443"]);
+      expect([...proxy.unpinned]).toEqual(["unresolvable.example"]);
     } finally {
       await proxy.close();
     }

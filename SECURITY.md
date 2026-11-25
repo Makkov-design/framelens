@@ -34,8 +34,13 @@ control of the calling assistant beyond what the README's "Privacy and design pr
   (per-run credentials, never forwarded to a site); if it cannot start, the page is not opened. The result names an
   address the page was read at other than the one given, and the hosts that were refused. Not covered: QUIC and
   WebRTC UDP outside the proxy are turned off rather than checked; WebRTC relayed over a public TURN server goes
-  through the proxy like any public host; browser policies set by an administrator could override the proxy setting;
-  and `web` does not use a system or corporate proxy, so behind one it cannot reach public pages.
+  through the proxy like any public host; browser policies set by an administrator could override the proxy setting.
+  Behind the network's own proxy (HTTPS_PROXY, HTTP_PROXY or ALL_PROXY, with NO_PROXY honoured; http and https
+  proxies only, anything else makes `web` refuse), checked requests go on through that proxy, with its own
+  credentials from its URL. Local, private and metadata addresses and local names are still refused before anything
+  is sent, and a name this computer resolves to such an address too. A name that resolves to a public address is sent
+  to that proxy by name, and a name this computer cannot resolve at all also goes to it by name: there the address
+  pin is not available, and that proxy decides what is reachable. The result says when a page was read this way.
 - The login-profile capture downloads the page's media over https only, and every hop must resolve to a public address,
   connected to as checked.
 - Downloads through yt-dlp stop at `FRAMELENS_MAX_DOWNLOAD_MB`, also when the site gives no size up front.

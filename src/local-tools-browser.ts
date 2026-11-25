@@ -48,6 +48,7 @@ export function registerBrowserTools(server: McpServer, engine: Engine, logger: 
         const lines = [
           `> ${oneLine(r.title || r.url || given)} · ${r.viewport.width}×${r.viewport.height} · page ${r.scrollHeight}px tall${savedReading ? ` · read in the user's browser: ${savedReading}` : ""}${moved ? ` · read at ${oneLine(r.url, 300)}, not the address given` : ""}`,
           ...(result.refused?.length ? [`> Not opened: ${result.refused.join(", ")}: the page tried to go to this computer or the local network.`] : []),
+          ...(result.upstream ? [`> Requests went on through this network's proxy (${oneLine(result.upstream.proxy, 120)}) after the local-address check${result.upstream.unpinned ? `; ${result.upstream.unpinned} host${result.upstream.unpinned > 1 ? "s" : ""} could not be resolved here and went to it by name, so that proxy decided what they reached` : ""}.`] : []),
           ...(result.blocked?.length ? [`> Not loaded: requests to ${result.blocked.slice(0, 5).join(", ")}${result.blocked.length > 5 ? `, and ${result.blocked.length - 5} more hosts` : ""}, on this computer or the local network.`] : []),
           `> Workspace: ${ws.dir}`,
           ...(inboxNote ? [`> ${inboxNote}`] : []),

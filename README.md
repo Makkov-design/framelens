@@ -193,7 +193,8 @@ server answers with under the same rule, so a public link cannot send the downlo
 the requests a site extractor makes on its own are not covered (see [SECURITY.md](SECURITY.md)). `web` sends every
 request of its browser (pages, frames, scripts, images, fetches, workers, prefetches, WebSockets) through a check
 inside Frame Lens that refuses your computer and local network, other than a `localhost` or local address you gave
-yourself, and says when the page was read at another address than the one you gave. It does not use a system proxy.
+yourself, and says when the page was read at another address than the one you gave. Behind a network proxy
+(`HTTPS_PROXY`), checked requests go on through it.
 
 Frame Lens never bypasses logins, CAPTCHAs or bot checks and never uses online downloader sites or scraping services.
 Platforms' terms may forbid automated downloading: analyze videos you are allowed to watch and use, for reference.

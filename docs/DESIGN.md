@@ -251,6 +251,12 @@ prefetches), so every request of `web`'s browser goes through one choke point:
   either way); `Fetch.authRequired` gets the credentials only for a challenge from source `Proxy` at the proxy's own
   address, and anything else is cancelled. Proxy-Authorization and the other hop-by-hop headers are never forwarded,
   and a site's own 407 is turned into a 502 so the browser never offers the credentials to a site.
+- Behind the network's own proxy (`upstreamFromEnv`: HTTPS_PROXY for tunnels, HTTP_PROXY for plain http, ALL_PROXY
+  for both, NO_PROXY as curl reads it; http and https proxies only), a request that passed the check goes on through
+  that proxy by name, with the proxy's own credentials from its URL (never logged; the TLS of an https proxy uses
+  Node's CAs, NODE_EXTRA_CA_CERTS included). Local names and addresses are refused before anything is sent, and so is a
+  name that resolves locally to one. A name this computer cannot resolve goes to the upstream proxy by name; there is
+  no address pin then, and the result says how many hosts went that way.
 - Limits: 15 s to connect, 2 minutes idle, 256 connections at once.
 - No new service and no new outside request: the proxy carries only what the page asked for, as the browser would.
 

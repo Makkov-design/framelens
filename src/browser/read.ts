@@ -7,7 +7,7 @@ import { buildSheets, type Sheet } from "../media/sheets.js";
 import { hostAddresses, hostOf, isPrivateAddress, systemLookup, type Lookup } from "../sources/cobalt.js";
 import { oneLine } from "../text.js";
 import { evaluate, findBrowser, launchBrowser, navigate, screenshot, type BrowserSession } from "./cdp.js";
-import { exemptHost, startProxy, type RequestProxy } from "./proxy.js";
+import { exemptHost, startProxy, upstreamFromEnv, type RequestProxy } from "./proxy.js";
 import { cleanReading, mergeReadings, PAGE_SCRIPT, RECORDER_SCRIPT, type PageReading } from "./web.js";
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -21,6 +21,11 @@ export interface PageResult {
   refused?: string[];
   /** Hosts any request of the page (a script, image, fetch, worker, prefetch, WebSocket) tried to reach there, refused. */
   blocked?: string[];
+  /**
+   * The network's own proxy (HTTPS_PROXY and the like, without credentials) that checked requests went on through, and
+   * how many hosts this computer could not resolve and sent to it by name, without an address pin.
+   */
+  upstream?: { proxy: string; unpinned: number };
   /** Screenshots down the page. */
   views: string[];
   /** The opening animations frame by frame (all page animations paused and stepped together). */
@@ -31,7 +36,7 @@ export interface PageResult {
  * Opens a page in a throwaway headless profile, reads its animations at the top and while scrolling, takes views
  * down the page, then pauses every animation and steps it in time to film the opening motion frame by frame.
  */
-export async function readPage(url: string, outDir: string, tools: MediaTools, options: { maxScroll?: number; stepSeconds?: number; lookup?: Lookup } = {}): Promise<PageResult> {
+export async function readPage(url: string, outDir: string, tools: MediaTools, options: { maxScroll?: number; stepSeconds?: number; lookup?: Lookup; env?: NodeJS.ProcessEnv } = {}): Promise<PageResult> {
   if (!/^https?:\/\//i.test(url)) throw new InvalidInputError(`"${url}" is not a web page address (http or https).`);
   const executable = findBrowser();
   if (!executable) throw new InvalidInputError("Reading web pages needs Chrome or Edge on this computer (or FRAMELENS_BROWSER pointing to one).");
@@ -39,7 +44,8 @@ export async function readPage(url: string, outDir: string, tools: MediaTools, o
   // Every request of the browser goes through this proxy. Without it the page is not opened at all.
   let proxy: RequestProxy;
   try {
-    proxy = await startProxy({ exempt: exemptHost(input), ...(options.lookup && { lookup: options.lookup }) });
+    const upstream = upstreamFromEnv(options.env ?? process.env);
+    proxy = await startProxy({ exempt: exemptHost(input), ...(options.lookup && { lookup: options.lookup }), ...(upstream && { upstream }) });
   } catch (error) {
     throw new InvalidInputError(`Could not start the request check for the page (${oneLine((error as Error).message, 120)}); the page was not opened.`);
   }
@@ -113,7 +119,7 @@ export async function readPage(url: string, outDir: string, tools: MediaTools, o
     const sheet = frames.length
       ? (await buildSheets(frames, outDir, "opening", { columns: 4, rows: Math.min(6, Math.ceil(frames.length / 4)), width: 480, label: (f) => `${f.t.toFixed(2)} s` }, tools))[0]
       : undefined;
-    return { reading: mergeReadings(readings), views, ...(sheet && { sheet }), ...(refused.length && { refused: [...new Set(refused)] }), ...(proxy.refused.length && { blocked: [...proxy.refused] }) };
+    return { reading: mergeReadings(readings), views, ...(sheet && { sheet }), ...(refused.length && { refused: [...new Set(refused)] }), ...(proxy.refused.length && { blocked: [...proxy.refused] }), ...(proxy.upstream && { upstream: { proxy: proxy.upstream, unpinned: proxy.unpinned.size } }) };
   } finally {
     await session.close();
     await proxy.close();

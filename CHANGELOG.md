@@ -8,7 +8,13 @@
   every kind, prefetches and WebSockets go through a proxy inside Frame Lens that refuses this computer, the local
   network and metadata addresses, and connects only to the address it checked. The result lists the hosts it refused.
   Only a `localhost` or local IP address you give yourself is exempt; a public name that resolves to a private address
-  is not any more. `web` does not use a system proxy.
+  is not any more.
+
+### Added
+
+- Behind a network proxy (`HTTPS_PROXY`, `HTTP_PROXY` or `ALL_PROXY`, honouring `NO_PROXY`), `web`'s checked
+  requests go on through that proxy with its own credentials; local addresses are still refused first. A name this
+  computer cannot resolve goes to that proxy by name, and the result says so.
 
 ## 2.3.0 — 2026-11-25
 
