@@ -10,6 +10,13 @@
 - A weekly check compares the version on npm with the MCP Registry and the catalogues that copy from it, and opens
   an issue naming the ones that fell behind.
 
+### Changed
+
+- Install instructions (README, website, `llms.txt`, AGENTS.md, the skill) lead with the npm routes:
+  `claude mcp add … -- npx -y framelens`, the Claude Code plugin, any client's `npx -y framelens`, then
+  `framelens init`; building from a clone comes last. The website states that ffmpeg and yt-dlp are set up on first
+  use, lists `track` in the style plan, and says what 2.2.0 changed. CONTRIBUTING.md describes the tag-driven release.
+
 ## 2.2.0 — 2026-11-23
 
 Frame Lens now follows the client: a cancelled call stops the yt-dlp, ffmpeg or browser it started, long calls send

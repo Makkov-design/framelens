@@ -3,9 +3,10 @@
 Please report vulnerabilities privately through GitHub's "Report a vulnerability" button on the repository's Security
 tab, not in a public issue. You should get a reply within a week.
 
-In scope: anything that could leak the Gemini API key, make the server request something other than a YouTube video,
-write to stdout outside the MCP protocol, or let video content take control of the calling assistant beyond what is
-described in the README's Security section.
+In scope: anything that could leak the Gemini API key or another key or cookie Frame Lens is given, make the server
+request something other than what the user pointed it at (or break the network rules below), write to stdout outside
+the MCP protocol, write or delete files outside the places named below, or let video, page or file content take
+control of the calling assistant beyond what the README's "Privacy and design principles" describe.
 
 ## Network rules a report can hold us to
 

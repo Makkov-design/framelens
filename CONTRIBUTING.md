@@ -130,9 +130,26 @@ The single word check that decides this lives in `src/sources/access.ts`; widen 
 - Add a line to `CHANGELOG.md` under "Unreleased" for anything a user would notice.
 - Do not bump versions; that happens at release time (`package.json`, `src/version.ts`,
   `.claude-plugin/plugin.json` and `server.json` move together, and a test checks it).
-- A release is a tag on `main`: after the bump is merged, pushing `v<version>` on the merged commit runs
-  `release.yml`, which publishes to npm (trusted publishing, with provenance), then to the MCP Registry, and creates
-  the GitHub release from the changelog. A tag on a commit that is not on `main` is refused.
+- A release is a tag on `main`; see [Releasing](#releasing).
+
+## Releasing
+
+For maintainers. Nothing is published by hand any more:
+
+1. In one PR, bump the version in `package.json`, `src/version.ts`, `.claude-plugin/plugin.json` and both versions
+   in `server.json` (`test/regressions.test.ts` fails when they differ), rename `## Unreleased` in `CHANGELOG.md` to
+   `## <version> — <date>`, run `npm run bundle` and commit the bundle. Merge it.
+2. Tag the merged commit on `main` and push the tag: `git tag v<version> <commit> && git push origin v<version>`.
+3. `.github/workflows/release.yml` checks that the commit is on `main` and that the tag, `package.json`,
+   `server.json` and the changelog agree, runs typecheck, tests and the bundle, checks the committed bundle is the
+   one it built, and publishes to npm through trusted publishing (GitHub OIDC, no token). It then publishes
+   `server.json` to the MCP Registry (`publish-mcp-registry.yml`) and creates the GitHub release from that version's
+   changelog section. Each step skips what is already done, so a failed run can be re-run.
+
+npm provenance starts with the first version released this way, the one after 2.2.0: 2.2.0 and earlier were
+published by hand and carry no provenance statement. The one-time setup (npm trusted publisher, the `npm-release`
+environment, the tag ruleset) is in [docs/launch/listings.md](docs/launch/listings.md). `listings-check.yml` checks
+every week that npm, the MCP Registry and the catalogues show the same version and opens an issue when one lags.
 
 ## CI notes
 

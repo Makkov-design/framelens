@@ -21,7 +21,7 @@ plugin, with `icon.png`), `skills/framelens/SKILL.md` (skills.sh).
   case-sensitively. A lowercase `io.github.makkov-design/...` would be refused.
 - The registry checks ownership by reading `mcpName` from the npm package of the same version, so the version in
   `server.json` must already be on npm with that `mcpName`. framelens 2.0.0 on npm has none: the first version that
-  can be listed is 2.1.0.
+  can be listed is 2.1.0. `release.yml` publishes to the registry only after npm serves the version.
 - `server.json` follows schema `2025-12-11`; it was checked with ajv against
   https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json and with the registry's own
   `POST /v0.1/validate` (result `{"valid":true,"issues":[]}`). Description: 98 of 100 characters.
@@ -89,7 +89,7 @@ approve. Then:
 & "$env:TEMP\mcp-publisher\mcp-publisher.exe" publish
 ```
 
-Expected: `✓ Server io.github.Makkov-design/framelens version 2.1.0`. Each later release: bump, merge, push the tag
+Expected: `✓ Server io.github.Makkov-design/framelens version <version>` (for example 2.2.0). Each later release: bump, merge, push the tag
 `v<version>`; `release.yml` does the rest.
 
 ## 2. PulseMCP (pulsemcp.com)

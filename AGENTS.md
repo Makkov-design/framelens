@@ -13,11 +13,11 @@ shots, palette, moves with their exact easing, beats and word-timed transcripts.
 
 | Where | Command |
 |---|---|
-| One project (also Claude Code cloud sessions) | `npx -y framelens init` (pins `framelens@<version>` from npm), then commit `.mcp.json` and `.claude/skills/framelens/` |
 | Claude Code, every project | `claude mcp add framelens --scope user -- npx -y framelens` (Windows: `-- cmd /c npx -y framelens`) |
 | Claude Code plugin (server and skill) | `/plugin marketplace add Makkov-design/framelens`, then `/plugin install framelens@framelens` |
 | Any MCP client | `{"mcpServers": {"framelens": {"command": "npx", "args": ["-y", "framelens"]}}}` (Windows: `"command": "cmd", "args": ["/c", "npx", "-y", "framelens"]`) |
 | Codex (`~/.codex/config.toml`) | `[mcp_servers.framelens]` with `command = "npx"` and `args = ["-y", "framelens"]` |
+| One project (also Claude Code cloud sessions) | `npx -y framelens init` (pins `framelens@<version>` from npm), then commit `.mcp.json` and `.claude/skills/framelens/` |
 
 Needs Node 20+ (Node 22+ and Chrome or Edge for `web`). A missing ffmpeg or yt-dlp is downloaded on first use,
 pinned and SHA-256-verified; `npx -y framelens doctor --prepare` checks the machine and fetches them ahead of time.
@@ -72,6 +72,8 @@ node scripts/smoke.mjs                    # live end-to-end run of the bundle; u
 - Always pass `--maxWorkers=2` to vitest and run one heavy command (tests, typecheck, bundle, a headless browser) at a
   time: this repository is often worked on by several agents on one machine.
 - Browser tests run in CI, and locally only with `FRAMELENS_BROWSER_TESTS=1` (they start Chrome or Edge).
+- Releases: a `v<version>` tag on a commit on `main` runs `.github/workflows/release.yml` (npm with provenance from
+  the version after 2.2.0, MCP Registry, GitHub release); see CONTRIBUTING.md, Releasing. Never publish by hand.
 - CI (`.github/workflows/ci.yml`) runs typecheck, tests, the bundle and extension builds and fails when the committed
   `dist/framelens.mjs` or `extension/dist` is stale, then checks the bundle starts on Node 20, 22 and 24 and the
   Docker image builds.

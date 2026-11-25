@@ -12,10 +12,11 @@ the owner's accounts is written out with the exact command or text.
 
 ## Order
 
-1. Release 2.1.0 to npm (with `mcpName` in `package.json`, already in the repo).
+1. Release to npm: push the tag `v<version>` on the merged bump commit; `release.yml` publishes to npm (with
+   provenance from the next version on), the MCP Registry and a GitHub release (see CONTRIBUTING.md, Releasing).
 2. Apply [repo-settings.md](repo-settings.md) and check the site is live.
-3. Publish to the official MCP Registry ([listings.md](listings.md), section 1). PulseMCP and other aggregators
-   read from it.
+3. Check the official MCP Registry entry ([listings.md](listings.md), section 1); `release.yml` publishes it.
+   PulseMCP and other aggregators read from it.
 4. Glama claim and mcp.so form.
 5. Posts: Show HN first (a weekday morning, US Eastern time), Reddit and X/Bluesky the same day, LinkedIn and
    Product Hunt later in the week.
@@ -33,10 +34,11 @@ Only numbers from [docs/ACCURACY.md](../ACCURACY.md) and the site. Check them ag
   damping within 0.2 % on average.
 - Limits stated in the benchmark: a sharp square without motion blur on a static background. Real footage reports
   its own fit error.
-- The site demo: the Big Buck Bunny trailer read as 12 shots and 11 cuts at 25 fps; a move at 26.04 s measured as
-  23 frames on `cubic-bezier(0.7, 0, 0.84, 0)`; a live website read as 328 animations, mostly 500 ms on
+- The site demo: the Big Buck Bunny trailer read as 20 shots, 11 cuts and 10 fades and dissolves at 25 fps; a move
+  at 26.04 s measured as 15 frames on `cubic-bezier(0.7, 0, 0.84, 0)` (`docs/assets/bbb/reading.js`); a live website read as 328 animations, mostly 500 ms on
   `cubic-bezier(0.16, 1, 0.3, 1)`.
-- Free, local, MIT, zero runtime dependencies, Node 20 and ffmpeg. Works in Claude Code, Codex, Cursor and any MCP
+- Free, local, MIT, zero runtime dependencies, Node 20; ffmpeg and yt-dlp are downloaded on first use (pinned,
+  SHA-256-checked) when missing. Works in Claude Code, Codex, Cursor and any MCP
   client. Gemini tools are optional and need the user's own key.
 
 ## Links
