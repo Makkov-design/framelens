@@ -130,8 +130,9 @@ The single word check that decides this lives in `src/sources/access.ts`; widen 
 - Add a line to `CHANGELOG.md` under "Unreleased" for anything a user would notice.
 - Do not bump versions; that happens at release time (`package.json`, `src/version.ts`,
   `.claude-plugin/plugin.json` and `server.json` move together, and a test checks it).
-- A release is a tag: after the bump is merged, pushing `v<version>` runs `release.yml`, which publishes to npm
-  (trusted publishing, with provenance), then to the MCP Registry, and creates the GitHub release from the changelog.
+- A release is a tag on `main`: after the bump is merged, pushing `v<version>` on the merged commit runs
+  `release.yml`, which publishes to npm (trusted publishing, with provenance), then to the MCP Registry, and creates
+  the GitHub release from the changelog. A tag on a commit that is not on `main` is refused.
 
 ## CI notes
 

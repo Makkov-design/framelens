@@ -19,7 +19,7 @@ jobs:
     env:
       MCP_PUBLISHER_VERSION: v1.8.8
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
 
@@ -37,10 +37,25 @@ jobs:
           fi
           echo "Publishing $name $version"
 
+      # Makes a second run harmless: the Registry refuses a version it already has.
+      - name: Is this version already in the Registry?
+        id: registry
+        run: |
+          set -euo pipefail
+          version=$(node -p 'require("./server.json").version')
+          if node scripts/check-listings.mjs --registry-has "$version"; then
+            echo "listed=true" >> "$GITHUB_OUTPUT"
+            echo "The Registry already lists $version; nothing to publish."
+          else
+            echo "listed=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Install cosign
+        if: steps.registry.outputs.listed == 'false'
         uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
 
       - name: Download and verify mcp-publisher
+        if: steps.registry.outputs.listed == 'false'
         run: |
           set -euo pipefail
           archive="mcp-publisher_linux_amd64.tar.gz"
@@ -56,10 +71,13 @@ jobs:
           rm -f "$archive" "$archive.sigstore.json"
 
       - name: Validate server.json
+        if: steps.registry.outputs.listed == 'false'
         run: ./mcp-publisher validate
 
       - name: Log in to the MCP Registry
+        if: steps.registry.outputs.listed == 'false'
         run: ./mcp-publisher login github-oidc
 
       - name: Publish
+        if: steps.registry.outputs.listed == 'false'
         run: ./mcp-publisher publish

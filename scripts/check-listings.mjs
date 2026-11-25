@@ -3,6 +3,8 @@
 // Prints a Markdown report. Exit code 0: everything readable is current; 2: at least one listing is behind or
 // still has an old project name in its title; 1: npm itself could not be read.
 // A catalogue that cannot be read (bot check, timeout) is reported as "not readable" and never counted as behind.
+// `--registry-has <version>` only asks the Registry: exit 0 when it lists that version, 1 otherwise.
+// A version read from npm or the Registry is used only when it is plain digits (1.2.3): it goes into the issue text.
 // FRAMELENS_LISTINGS_FIXTURE=<file.json> ({ "<url>": "<body>" }) replaces the network, for tests.
 import { readFileSync } from "node:fs";
 
@@ -40,13 +42,33 @@ const cmp = (a, b) => {
   const [x, y] = [a, b].map((v) => v.split(".").map(Number));
   return x[0] - y[0] || x[1] - y[1] || x[2] - y[2];
 };
+const isVersion = (v) => typeof v === "string" && /^\d+\.\d+\.\d+$/.test(v);
 const hasVersion = (text, v) => new RegExp(`(^|[^0-9.])${v.replaceAll(".", "\\.")}([^0-9.]|$)`).test(text);
+
+async function registryVersions() {
+  const versions = JSON.parse(await read(REGISTRY))
+    .servers.map((s) => s.server)
+    .filter((s) => s.name === NAME)
+    .map((s) => s.version);
+  if (versions.length === 0 || !versions.every(isVersion)) throw new Error("not readable");
+  return versions.sort(cmp);
+}
+
+if (process.argv[2] === "--registry-has") {
+  const wanted = process.argv[3];
+  let listed = false;
+  try {
+    listed = isVersion(wanted) && (await registryVersions()).includes(wanted);
+  } catch {}
+  process.exit(listed ? 0 : 1);
+}
 
 const npmBody = await read(NPM);
 let latest, older;
 try {
   const doc = JSON.parse(npmBody);
   latest = doc["dist-tags"].latest;
+  if (!isVersion(latest)) throw new Error("not a version");
   older = Object.keys(doc.versions).filter((v) => /^\d+\.\d+\.\d+$/.test(v) && cmp(v, latest) < 0);
 } catch {
   console.log("npm could not be read; nothing was compared.");
@@ -56,15 +78,8 @@ try {
 const rows = [];
 let behind = false;
 
-const regBody = await read(REGISTRY);
 try {
-  const versions = JSON.parse(regBody)
-    .servers.map((s) => s.server)
-    .filter((s) => s.name === NAME)
-    .map((s) => s.version)
-    .sort(cmp);
-  const top = versions.at(-1);
-  if (!top) throw new Error("absent");
+  const top = (await registryVersions()).at(-1);
   const ok = top === latest;
   behind ||= !ok;
   rows.push(["MCP Registry", ok ? "current" : `behind: ${top}`, REGISTRY]);

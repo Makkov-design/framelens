@@ -1,14 +1,17 @@
 name: Release
 
-# Pushing a version tag (v2.3.0) releases that commit everywhere, in order:
+# Pushing a version tag (v2.3.0) on a commit that is on main releases that commit everywhere, in order:
 #   1. npm, through trusted publishing (GitHub OIDC): no token or secret, and npm attaches a signed provenance
 #      statement that ties the package to this repository, workflow and commit;
 #   2. the official MCP Registry (publish-mcp-registry.yml), which catalogues read from;
 #   3. a GitHub release with that version's section of CHANGELOG.md.
-# A step that is already done (version on npm, release exists) is skipped, so a failed run can be started again
-# from the Actions tab (Run workflow, with the tag selected).
-# One-time setup on npmjs.com: package framelens > Settings > Trusted publisher > GitHub Actions,
-# repository Makkov-design/framelens, workflow release.yml.
+# A tag on a commit that is not on main is refused before anything is built.
+# Every step skips what is already done (version on npm, version in the Registry, release exists), so a failed
+# run can be started again: "Re-run failed jobs", or Run workflow with the tag selected.
+# One-time setup, see docs/launch/listings.md:
+#   - npmjs.com: package framelens > Settings > Trusted publisher > GitHub Actions, repository
+#     Makkov-design/framelens, workflow release.yml, environment npm-release;
+#   - GitHub: environment npm-release limited to v* tags, and a tag ruleset for v*.
 on:
   push:
     tags: ["v*"]
@@ -24,20 +27,32 @@ concurrency:
 jobs:
   npm:
     runs-on: ubuntu-latest
+    # The npm trusted publisher names this environment, so only a job that runs in it can publish.
+    environment: npm-release
     permissions:
       contents: read
       id-token: write # GitHub OIDC for npm trusted publishing and provenance
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+          fetch-depth: 0 # the whole history, to check that the tagged commit is on main
+      # No dependency cache in the job that can publish.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
-          cache: npm
+
+      - name: The tagged commit is on main
+        run: |
+          set -euo pipefail
+          git fetch --quiet origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "Commit $GITHUB_SHA is not on main. Tag the merged commit on main, not a branch commit."
+            exit 1
+          fi
 
       - name: The tag, package.json, server.json and CHANGELOG.md agree
         id: version
@@ -111,7 +126,7 @@ jobs:
     permissions:
       contents: write # create the release
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
       - name: Create the release from CHANGELOG.md

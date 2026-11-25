@@ -35,6 +35,16 @@ Since the release workflow (`.github/workflows/release.yml`) this happens by its
 publishes to npm, then to the registry, then creates the GitHub release. The steps below are the manual fallback
 for the registry step alone.
 
+One-time setup for the release workflow (maintainer):
+
+- npmjs.com, package `framelens` > Settings > Trusted publisher > GitHub Actions: repository
+  `Makkov-design/framelens`, workflow `release.yml`, environment `npm-release`. The environment name is part of
+  what npm checks, so a job outside that environment cannot publish.
+- GitHub, Settings > Environments > `npm-release`: under deployment branches and tags allow only tags `v*`.
+- GitHub, Settings > Rules > Rulesets: a tag ruleset for `v*` that restricts who may create, update and delete
+  these tags.
+- The workflow itself refuses a tag whose commit is not on `main`: tag the merged commit, not a branch commit.
+
 1. Open https://github.com/Makkov-design/framelens/actions/workflows/publish-mcp-registry.yml
 2. Click "Run workflow", keep branch `main`, click the green "Run workflow".
 3. Wait about a minute. A green tick means it is published. The first step stops with a clear message if npm does not

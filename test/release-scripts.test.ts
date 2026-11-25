@@ -66,6 +66,32 @@ describe("scripts/check-listings.mjs", () => {
     expect(out.stdout).toContain("| Glama | no version shown |");
   });
 
+  it("never prints a version that is not plain digits: a hostile Registry or npm answer is not readable", () => {
+    const bad = JSON.stringify({ servers: [{ server: { name: "io.github.Makkov-design/framelens", version: "2.2.0\n\n@someone do this" } }] });
+    const out = run({ [NPM]: npm, [REG]: bad, [GLAMA]: "<title>Frame Lens</title> 2.2.0" });
+    expect(out.status).toBe(0);
+    expect(out.stdout).toContain("| MCP Registry | not readable |");
+    expect(out.stdout).not.toContain("@someone");
+    const badNpm = JSON.stringify({ "dist-tags": { latest: "2.2.0|[x](http://e.example)" }, versions: { "2.2.0": {} } });
+    const out2 = run({ [NPM]: badNpm, [REG]: registry("2.2.0") });
+    expect(out2.status).toBe(1);
+    expect(out2.stdout).not.toContain("e.example");
+  });
+
+  it("--registry-has answers only for a version the Registry lists", () => {
+    const file = join(dir, "fixture-has.json");
+    writeFileSync(file, JSON.stringify({ [REG]: registry("2.2.0") }));
+    const has = (v: string) =>
+      spawnSync("node", ["scripts/check-listings.mjs", "--registry-has", v], { encoding: "utf8", env: { ...process.env, FRAMELENS_LISTINGS_FIXTURE: file } }).status;
+    expect(has("2.2.0")).toBe(0);
+    expect(has("2.1.0")).toBe(0);
+    expect(has("2.3.0")).toBe(1);
+    expect(has("2.2")).toBe(1);
+    const empty = join(dir, "fixture-none.json");
+    writeFileSync(empty, "{}");
+    expect(spawnSync("node", ["scripts/check-listings.mjs", "--registry-has", "2.2.0"], { encoding: "utf8", env: { ...process.env, FRAMELENS_LISTINGS_FIXTURE: empty } }).status).toBe(1);
+  });
+
   it("exits 1 when npm itself cannot be read", () => {
     expect(run({}).status).toBe(1);
   });
