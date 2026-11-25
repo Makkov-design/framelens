@@ -1,26 +1,12 @@
 # Changelog
 
-## Unreleased
-
-### Fixed
-
-- `web` checks every request its browser makes, not only the page and its frames: scripts, images, fetch, workers of
-  every kind, prefetches and WebSockets go through a proxy inside Frame Lens that refuses this computer, the local
-  network and metadata addresses, and connects only to the address it checked. The result lists the hosts it refused.
-  Only a `localhost` or local IP address you give yourself is exempt; a public name that resolves to a private address
-  is not any more.
-
-### Added
-
-- Behind a network proxy (`HTTPS_PROXY`, `HTTP_PROXY` or `ALL_PROXY`, honouring `NO_PROXY`), `web`'s checked
-  requests go on through that proxy with its own credentials; local addresses are still refused first. A name this
-  computer cannot resolve goes to that proxy by name, and the result says so.
-
 ## 2.3.0 — 2026-11-25
 
 Frame Lens now reads names from the screen where automatic captions misspell them: `plan` for `listen` and `learn`
-adds a name check and writes `NAMES.md`. A web page's spec labels each number by how it was obtained, and exports
-hide a token in a link's path. This is the first version released by the release workflow, with npm provenance.
+adds a name check and writes `NAMES.md`. `web` checks every request of the page it reads, its workers and
+WebSockets included, at a proxy inside Frame Lens that refuses this computer and the local network. A web page's spec
+labels each number by how it was obtained, and exports hide a token in a link's path. This is the first version
+released by the release workflow, with npm provenance.
 
 ### Added
 
@@ -39,15 +25,16 @@ hide a token in a link's path. This is the first version released by the release
 - A weekly check compares the version on npm with the MCP Registry and the catalogues that copy from it, and opens
   an issue naming the ones that fell behind.
 
+- Behind a network proxy (`HTTPS_PROXY`, `HTTP_PROXY` or `ALL_PROXY`, honouring `NO_PROXY`), `web`'s checked
+  requests go on through that proxy with its own credentials; local addresses are still refused first. A name this
+  computer cannot resolve goes to that proxy by name, and the result says so.
+
 ### Changed
 
 - Install instructions (README, website, `llms.txt`, AGENTS.md, the skill) lead with the npm routes:
   `claude mcp add … -- npx -y framelens`, the Claude Code plugin, any client's `npx -y framelens`, then
   `framelens init`; building from a clone comes last. The website states that ffmpeg and yt-dlp are set up on first
   use, lists `track` in the style plan, and says what 2.3.0 changed. CONTRIBUTING.md describes the tag-driven release.
-- SECURITY.md states the limit of `web` plainly: only the page and its redirects, script navigations and frames are
-  checked; the page's own scripts, images, fetches, workers, prefetches and WebSockets can reach this computer or the
-  local network, as in your browser. Open only pages you would open there.
 - A web page's `motion-spec.json` labels each move per field: times and repeats `measured`, frame counts at Frame
   Lens's 60 fps `inferred`, and where the move is fastest `derived` from the page's cubic-bezier (`inferred` for
   steps and other eases); it was all `measured`, with a placeholder peak. Its palette carries each colour's real
@@ -55,6 +42,11 @@ hide a token in a link's path. This is the first version released by the release
 
 ### Fixed
 
+- `web` checks every request its browser makes, not only the page and its frames: scripts, images, fetch, workers of
+  every kind, prefetches and WebSockets go through a proxy inside Frame Lens that refuses this computer, the local
+  network and metadata addresses, and connects only to the address it checked. The result lists the hosts it refused.
+  Only a `localhost` or local IP address you give yourself is exempt; a public name that resolves to a private address
+  is not any more.
 - Exports also leave out a token in the source link's path: path parameters (`;jsessionid=…`, also `%3B`), the
   segment after one named like `token`, `key` or `sig`, and the value of a segment such as `auth=…`, shown as `…`.
   Ids that are the address itself (Figma, Drive, Loom) are kept.

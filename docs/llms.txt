@@ -16,7 +16,7 @@
 ## Tools
 
 - Local, measured: `plan`, `probe`, `transcript`, `frames`, `boundaries`, `style`, `track`, `audio`, `export`, `compare`
-- Read exactly: `web` (live page or a reading saved by the browser extension), `exact` (Lottie, dotLottie, Rive `.riv`, Figma)
+- Read exactly: `web` (live page or a reading saved by the browser extension; every request of the page, workers and WebSockets included, goes through a check inside Frame Lens that refuses this computer and the local network, and on through `HTTPS_PROXY` when one is set; limits in SECURITY.md), `exact` (Lottie, dotLottie, Rive `.riv`, Figma)
 - Gemini (YouTube links, work in cloud sessions): `summarize_youtube_video`, `ask_about_youtube_video`, `extract_key_moments`, `get_video_transcript`, `list_supported_models`
 - Export targets: `hyperframes`, `remotion`, `css`, `after-effects`, `lottie`, `hypit`
 
