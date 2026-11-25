@@ -16,6 +16,23 @@
   `claude mcp add … -- npx -y framelens`, the Claude Code plugin, any client's `npx -y framelens`, then
   `framelens init`; building from a clone comes last. The website states that ffmpeg and yt-dlp are set up on first
   use, lists `track` in the style plan, and says what 2.2.0 changed. CONTRIBUTING.md describes the tag-driven release.
+- A web page's `motion-spec.json` labels each move per field: times and repeats `measured`, frame counts at Frame
+  Lens's 60 fps `inferred`, and where the move is fastest `derived` from the page's cubic-bezier (`inferred` for
+  steps and other eases); it was all `measured`, with a placeholder peak. Its palette carries each colour's real
+  OKLab lightness and chroma instead of zeros.
+
+### Fixed
+
+- `web` no longer loads a page's scripts, styles, images, fetch or XHR requests from this computer, the local network
+  or a cloud metadata address (other than the host you gave); the result says how many were not loaded. WebSockets
+  are not covered.
+- Exports also leave out a token in the source link's path: path parameters (`;jsessionid=…`), and a segment after one
+  named like `token`, `key` or `sig`, or one that looks like a token, shown as `…`.
+- A workspace file that is a hard link (possible in a `.framelens/` folder unpacked from an archive) is neither read
+  nor written.
+- Third-party text on one line keeps the zero-width non-joiner and joiner between letters (Persian and several Indic
+  scripts spell words with them) and the joiner inside an emoji, and drops variation selectors without leaving a
+  space; it used to put a space in their place.
 
 ## 2.2.0 — 2026-11-23
 

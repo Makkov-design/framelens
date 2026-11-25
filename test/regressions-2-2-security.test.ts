@@ -599,8 +599,23 @@ describe("audit lows (second re-check)", () => {
   });
 
   it("N5: oneLine also drops blank fillers, variation selectors and musical format marks", () => {
+    // Variation selectors go without a space (N7): they only pick a glyph's form.
     const text = oneLine("a\u034fb\u115fc\u1160d\u3164e\u2800f\ufe00g\ufe0fh\u{1d173}i\u{1d17a}j");
-    expect(text).toBe("a b c d e f g h i j");
+    expect(text).toBe("a b c d e fgh i j");
+  });
+
+  it("N7: oneLine keeps the zero-width non-joiner and joiner inside words and joined emoji, and nowhere else", () => {
+    // Persian "mikhāham" and Hindi "kṣa" need U+200C / U+200D between letters; a space would misspell them.
+    expect(oneLine("\u0645\u06cc\u200c\u062e\u0648\u0627\u0647\u0645")).toBe("\u0645\u06cc\u200c\u062e\u0648\u0627\u0647\u0645");
+    expect(oneLine("\u0915\u094d\u200d\u0937")).toBe("\u0915\u094d\u200d\u0937");
+    // A family emoji stays one emoji; a red heart loses only its colour selector.
+    expect(oneLine("\u{1f468}\u200d\u{1f469}\u200d\u{1f467}")).toBe("\u{1f468}\u200d\u{1f469}\u200d\u{1f467}");
+    expect(oneLine("I \u2764\ufe0f it")).toBe("I \u2764 it");
+    // Elsewhere they still go: at the ends, next to a space or a digit, in a run, and the non-joiner between emoji.
+    for (const text of ["\u200cab", "ab\u200d", "a \u200c b", "1\u200d2", "a\u200c\u200db", "\u{1f468}\u200c\u{1f469}"]) {
+      expect(oneLine(text)).not.toMatch(/[\u200c\u200d]/);
+    }
+    expect(oneLine("a\u200c\u200db")).toBe("a b");
   });
 
   it.skipIf(!tools)("N6: a probe.json from another file is not reused", async () => {

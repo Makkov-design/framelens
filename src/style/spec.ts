@@ -27,6 +27,14 @@ export type Evidence = "measured" | "derived" | "inferred";
 
 const EVIDENCE = new Set<unknown>(["measured", "derived", "inferred"]);
 
+/** An evidence label for text: one label as it is, labels per field as "start, end measured; frames inferred". */
+export function evidenceText(evidence: Evidence | Partial<Record<string, Evidence>> | undefined): string {
+  if (typeof evidence === "string") return evidence;
+  const groups = new Map<string, string[]>();
+  for (const [field, label] of Object.entries(evidence ?? {})) if (label) groups.set(label, [...(groups.get(label) ?? []), field]);
+  return [...groups].map(([label, fields]) => `${fields.join(", ")} ${label}`).join("; ");
+}
+
 /**
  * The evidence rule of motion-spec.json: every number is a field of an object that carries `evidence`, or an element
  * of an array that such an object holds. `evidence` is one label for all the object's numbers, or an object mapping
@@ -113,7 +121,8 @@ export interface MotionSpec {
   events: (MotionEvent & {
     kind: "move";
     anchor?: string;
-    evidence: Evidence;
+    /** One label, or one per field where they differ (a web page's times are read, its frame counts are not). */
+    evidence: Evidence | Partial<Record<string, Evidence>>;
     /** The `track` that measured this move's exact curve, and that curve as CSS. */
     track?: string;
     curve?: string;

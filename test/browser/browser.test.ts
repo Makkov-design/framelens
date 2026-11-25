@@ -62,7 +62,8 @@ describe("web animation data", () => {
     expect(merged.animations[1]!.scrollTriggered).toBe(true);
     const spec = specFromPage(merged, "test");
     expect(spec.source.kind).toBe("web");
-    expect(spec.events[0]).toMatchObject({ start: 0.2, end: 0.8, frames: 36, easing: "ease-out", suggestion: "cubic-bezier(0.16, 1, 0.3, 1)", evidence: "measured" });
+    expect(spec.events[0]).toMatchObject({ start: 0.2, end: 0.8, frames: 36, easing: "ease-out", suggestion: "cubic-bezier(0.16, 1, 0.3, 1)" });
+    expect(spec.events[0]!.evidence).toMatchObject({ start: "measured", end: "measured", frames: "inferred", peakAt: "derived" });
     expect(spec.palette[0]).toMatchObject({ hex: "#0E0F1A", share: 0.9, evidence: "measured" });
     expect(spec.typography[0]).toMatchObject({ family_guess: "Inter, sans-serif", weight: 800, evidence: "measured" });
     // Every object with numbers carries a label: the viewport is read, 60 fps is Frame Lens's own choice.
@@ -152,6 +153,7 @@ describe.skipIf(!canRun)("with a real browser", () => {
   let dir: string;
   let server: Server;
   let base: string;
+  const internalHits: string[] = [];
 
   beforeAll(async () => {
     dir = tempDir();
@@ -192,6 +194,15 @@ setTimeout(() => document.getElementById("late").classList.add("on"), 300);
       } else if (req.url === "/bounce") {
         res.writeHead(302, { location: `http://localhost:${(server.address() as AddressInfo).port}/admin` });
         res.end();
+      } else if (req.url === "/sub") {
+        // A public page pulling an internal script, image and fetch from another name for this machine (L2).
+        const port = (server.address() as AddressInfo).port;
+        res.writeHead(200, { "content-type": "text/html" });
+        res.end(`<!doctype html><title>Sub</title><script src="http://localhost:${port}/internal.js"></script><img src="http://localhost:${port}/internal.png"><script>fetch("http://localhost:${port}/internal-api").catch(() => {});</script>`);
+      } else if (req.url?.startsWith("/internal")) {
+        internalHits.push(req.url);
+        res.writeHead(200, { "content-type": "text/javascript" });
+        res.end(`document.title = "SECRET-JS";`);
       } else if (req.url === "/same") {
         res.writeHead(200, { "content-type": "text/html" });
         res.end(`<!doctype html><title>Same</title><script>location.replace("/admin");</script>`);
@@ -250,6 +261,15 @@ setTimeout(() => document.getElementById("late").classList.add("on"), 300);
     expect(same.reading.title).toBe("Admin secrets");
     expect(same.reading.url).toBe(`${base}/admin`);
     expect(same.refused).toBeUndefined();
+  }, 120_000);
+
+  it("does not load a page's scripts, images or fetches from another host on this computer (audit L2)", async () => {
+    internalHits.length = 0;
+    const result = await readPage(`${base}/sub`, dir, tools!, { maxScroll: 0 });
+    expect(result.reading.title).toBe("Sub");
+    expect(internalHits).toEqual([]);
+    expect(result.blocked?.some((u) => /localhost:\d+\/internal\.js/.test(u))).toBe(true);
+    expect(result.refused).toBeUndefined();
   }, 120_000);
 
   it("gives up on a page that makes the reading script loop, instead of hanging", async () => {
