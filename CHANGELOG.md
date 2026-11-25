@@ -11,7 +11,8 @@
   fill in, time, evidence `seen` or `said`). `NAMES.md` is written once, so a later `plan` keeps what the agent wrote.
   Caption names are third-party text: escaped and quoted in the plan step, marked as such at the top of `NAMES.md`,
   and the plan result carries the third-party notice. `NAMES.md` is never written through a link, and a `NAMES.md`
-  that is a link or a hard link is neither written nor pointed to.
+  that is a link or a hard link is neither written nor pointed to. When `NAMES.md` cannot be written (a full
+  disk, a read-only folder), `plan` still returns its steps and says so.
 - Releases are automatic: pushing a version tag publishes to npm through trusted publishing (so the package carries a
   signed provenance statement tying it to this repository and commit), then to the MCP Registry, and creates the
   GitHub release from that version's changelog section.

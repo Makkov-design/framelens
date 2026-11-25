@@ -18,7 +18,12 @@ export interface PlanStep {
    * changes `boundaries` finds) or on something only the agent can see (the box around an element).
    */
   then?: string;
+  /** The check a step belongs to: `names` for the name check (frames where likely names in automatic captions are said). */
+  check?: "names";
 }
+
+/** Whether a plan has the name check step. */
+export const hasNameCheck = (steps: readonly PlanStep[]): boolean => steps.some((s) => s.check === "names");
 
 /** Frame width of the name check: names in a logo or URL bar are small, and 320 px blurs them. */
 export const NAME_WIDTH = 640;
@@ -443,6 +448,7 @@ export function buildPlan(input: {
     steps.push({
       tool: "frames",
       args: { at: at.slice(0, MAX_AT), width: NAME_WIDTH, columns: 2, rows: 3 },
+      check: "names",
       why: `name check: automatic captions spell names by ear, so ${list.length} likely names (${shown}) are read on screen ${NAME_LAG_SECONDS} s after they are said, wide enough to read a logo or URL bar`,
     });
     addSheets(Math.min(MAX_AT, at.length), 2, 3, NAME_WIDTH);

@@ -227,7 +227,7 @@ describe("name check", () => {
     for (const goal of ["listen", "learn"] as const) {
       const plan = buildPlan({ goal, probe: probe(266), boundaries: bounds(5, 0.03), hasSpeech: true, names });
       const step = plan.steps.at(-1)!;
-      expect(step).toMatchObject({ tool: "frames", args: { at: names.at, width: NAME_WIDTH, columns: 2, rows: 3 } });
+      expect(step).toMatchObject({ tool: "frames", args: { at: names.at, width: NAME_WIDTH, columns: 2, rows: 3 }, check: "names" });
       expect(step.why).toMatch(/name check: .*3 likely names \("Sonner", "Val", "Rare UI"\)/);
       expect(step.then).toBeUndefined();
       expect(z.object(shapes.frames!).strict().safeParse({ source: "clip.mp4", ...step.args }).success).toBe(true);
@@ -250,9 +250,9 @@ describe("name check", () => {
 
   it("leaves it out of the other goals and of sources without a picture", () => {
     for (const goal of ["find", "style", "sound", "production"] as const) {
-      expect(buildPlan({ goal, probe: probe(266), boundaries: bounds(5, 0.03), hasSpeech: true, names }).steps.some((s) => s.args.width === NAME_WIDTH)).toBe(false);
+      expect(buildPlan({ goal, probe: probe(266), boundaries: bounds(5, 0.03), hasSpeech: true, names }).steps.some((s) => s.check === "names")).toBe(false);
     }
     const audio = buildPlan({ goal: "listen", probe: { ...probe(266), hasVideo: false }, hasSpeech: true, names });
-    expect(audio.steps.some((s) => s.args.width === NAME_WIDTH)).toBe(false);
+    expect(audio.steps.some((s) => s.check === "names")).toBe(false);
   });
 });

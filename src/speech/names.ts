@@ -61,7 +61,22 @@ interface Token {
  */
 function tokens(transcript: Transcript): Token[] {
   const split = (text: string, t: number) => text.split(/\s+/).filter(Boolean).map((word) => ({ text: word, t }));
-  const untimed = transcript.segments.filter((s) => !transcript.words.some((w) => w.t >= s.start && w.t < s.end));
+  // A segment is untimed when no timed word starts inside it: one binary search per segment over the sorted times.
+  const times = transcript.words.map((w) => w.t).sort((a, b) => a - b);
+  const firstAtOrAfter = (t: number) => {
+    let lo = 0;
+    let hi = times.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (times[mid]! < t) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo;
+  };
+  const untimed = transcript.segments.filter((s) => {
+    const i = firstAtOrAfter(s.start);
+    return !(i < times.length && times[i]! < s.end);
+  });
   const raw = [...transcript.words.flatMap((w) => split(w.text, w.t)), ...untimed.flatMap((s) => split(s.text, s.start))]
     // Stable: words of one segment keep their order.
     .sort((a, b) => a.t - b.t);
