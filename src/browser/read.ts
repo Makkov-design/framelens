@@ -106,6 +106,7 @@ export async function readPage(url: string, outDir: string, tools: MediaTools, o
  * scripts start, its frames) and subresources (scripts, styles, images, fetch and XHR). One on this computer or the
  * local network is refused, unless it is the host the user gave. A page cannot send the reading, its text and
  * screenshots, to an admin page or a cloud metadata address, nor pull an internal script's text into the reading.
+ * Workers (service, shared and dedicated) and out-of-process frames get the same check in their own targets.
  * Returns the lists the refused documents and blocked subresources are added to. WebSockets are not requests the
  * browser lets us hold (SECURITY.md).
  */
@@ -123,8 +124,10 @@ async function guardRequests(session: BrowserSession, input: URL, lookup: Lookup
     }
     return verdict;
   };
+  // The tab and every worker or frame it starts in a target of its own: each gets the same check.
+  const guarded = new Set<string>([session.sessionId]);
   session.cdp.on("Fetch.requestPaused", (params, sid) => {
-    if (sid !== session.sessionId) return;
+    if (!sid || !guarded.has(sid)) return;
     const requestId = params.requestId as string;
     const target = String((params.request as { url?: unknown } | undefined)?.url ?? "");
     const isDocument = params.resourceType === "Document";
@@ -140,11 +143,40 @@ async function guardRequests(session: BrowserSession, input: URL, lookup: Lookup
       }
       if (refuse) {
         (isDocument ? refused : blocked).push(oneLine(target, 120));
-        await session.cdp.send("Fetch.failRequest", { requestId, errorReason: "BlockedByClient" }, session.sessionId);
-      } else await session.cdp.send("Fetch.continueRequest", { requestId }, session.sessionId);
+        await session.cdp.send("Fetch.failRequest", { requestId, errorReason: "BlockedByClient" }, sid);
+      } else await session.cdp.send("Fetch.continueRequest", { requestId }, sid);
     })().catch(() => undefined);
   });
-  await session.cdp.send("Fetch.enable", { patterns: [{ urlPattern: "*", requestStage: "Request" }] }, session.sessionId);
+  const fetchAll = { patterns: [{ urlPattern: "*", requestStage: "Request" }] };
+  // Service workers, shared workers, dedicated workers and out-of-process frames make their requests in targets of
+  // their own, which the tab's interception does not see. Each is attached paused, guarded, then let run: one that
+  // cannot be guarded is closed instead (fail closed).
+  session.cdp.on("Target.attachedToTarget", (params) => {
+    const child = params.sessionId as string | undefined;
+    const info = params.targetInfo as { type?: string; targetId?: string } | undefined;
+    if (!child) return;
+    void (async () => {
+      try {
+        if (info?.type !== "page") {
+          await session.cdp.send("Fetch.enable", fetchAll, child);
+          guarded.add(child);
+          await session.cdp.send("Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }, child).catch(() => undefined);
+        }
+        await session.cdp.send("Runtime.runIfWaitingForDebugger", {}, child);
+      } catch {
+        if (info?.targetId) await session.cdp.send("Target.closeTarget", { targetId: info.targetId }).catch(() => undefined);
+      }
+    })();
+  });
+  await session.cdp.send("Fetch.enable", fetchAll, session.sessionId);
+  // Workers and frames of the tab, and the service and shared workers its pages register (those belong to the browser).
+  await session.cdp.send("Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }, session.sessionId);
+  await session.cdp.send("Target.setAutoAttach", {
+    autoAttach: true,
+    waitForDebuggerOnStart: true,
+    flatten: true,
+    filter: [{ type: "service_worker", exclude: false }, { type: "shared_worker", exclude: false }, { exclude: true }],
+  });
   return { refused, blocked };
 }
 

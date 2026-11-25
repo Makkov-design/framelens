@@ -203,7 +203,11 @@ export class Workspace {
     // A link inside the workspace folder (one that came with a project's .framelens) cannot lead a write out of it.
     if (!writableInside(target, dirname(this.dir))) throw new Error(`Path leads out of the workspace through a link: ${parts.join("/")}`);
     // So can a hard link: the file's other name may be anywhere on the disk. Frame Lens never makes one.
-    if (hardLinked(target)) throw new Error(`Path leads out of the workspace through a hard link: ${parts.join("/")}`);
+    if (hardLinked(target)) {
+      throw new Error(
+        `Path leads out of the workspace through a hard link: ${parts.join("/")} has another name on this disk. A workspace copied with hard links (cp -al, some backup tools) is refused too: copy it without hard links, or delete it to start over.`,
+      );
+    }
     return target;
   }
 

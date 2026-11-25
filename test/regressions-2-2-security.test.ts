@@ -616,6 +616,14 @@ describe("audit lows (second re-check)", () => {
       expect(oneLine(text)).not.toMatch(/[\u200c\u200d]/);
     }
     expect(oneLine("a\u200c\u200db")).toBe("a b");
+    // A joiner whose neighbour is an invisible mark that is stripped (the combining grapheme joiner) goes too.
+    expect(oneLine("a\u034f\u200cb")).toBe("a b");
+    expect(oneLine("a\u200c\u034fb")).toBe("a b");
+  });
+
+  it("M1: oneLine drops the supplement's variation selectors without a space, and shorthand format controls with one", () => {
+    expect(oneLine("a\u{e0100}b\u{e01ef}c")).toBe("abc");
+    expect(oneLine("a\u{1bca0}b\u{1bca3}c")).toBe("a b c");
   });
 
   it.skipIf(!tools)("N6: a probe.json from another file is not reused", async () => {

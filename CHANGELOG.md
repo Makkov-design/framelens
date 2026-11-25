@@ -32,15 +32,17 @@
 ### Fixed
 
 - `web` no longer loads a page's scripts, styles, images, fetch or XHR requests from this computer, the local network
-  or a cloud metadata address (other than the host you gave); the result says how many were not loaded. WebSockets
-  are not covered.
-- Exports also leave out a token in the source link's path: path parameters (`;jsessionid=…`), and a segment after one
-  named like `token`, `key` or `sig`, or one that looks like a token, shown as `…`.
-- A workspace file that is a hard link (possible in a `.framelens/` folder unpacked from an archive) is neither read
-  nor written.
+  or a cloud metadata address (other than the host you gave), nor lets the page's service workers, shared workers or
+  workers reach them; the result says how many were not loaded. WebSockets are not covered.
+- Exports also leave out a token in the source link's path: path parameters (`;jsessionid=…`, also `%3B`), the
+  segment after one named like `token`, `key` or `sig`, and the value of a segment such as `auth=…`, shown as `…`.
+  Ids that are the address itself (Figma, Drive, Loom) are kept.
+- A workspace file that is a hard link (possible in a `.framelens/` folder unpacked from an archive, or a workspace
+  copied with `cp -al`) is neither read nor written; the error says to copy it without hard links or delete it.
 - Third-party text on one line keeps the zero-width non-joiner and joiner between letters (Persian and several Indic
-  scripts spell words with them) and the joiner inside an emoji, and drops variation selectors without leaving a
-  space; it used to put a space in their place.
+  scripts spell words with them) and the joiner inside an emoji, and drops variation selectors (also U+E0100–E01EF)
+  without leaving a space; it used to put a space in their place. Shorthand format controls (U+1BCA0–1BCA3) become a
+  space.
 
 ## 2.2.0 — 2026-11-23
 

@@ -199,6 +199,24 @@ setTimeout(() => document.getElementById("late").classList.add("on"), 300);
         const port = (server.address() as AddressInfo).port;
         res.writeHead(200, { "content-type": "text/html" });
         res.end(`<!doctype html><title>Sub</title><script src="http://localhost:${port}/internal.js"></script><img src="http://localhost:${port}/internal.png"><script>fetch("http://localhost:${port}/internal-api").catch(() => {});</script>`);
+      } else if (req.url === "/workers") {
+        // Workers of the page's own host fetch from another name for this machine (audit H1).
+        res.writeHead(200, { "content-type": "text/html" });
+        res.end(`<!doctype html><title>Workers</title><script>
+navigator.serviceWorker.register("/sw.js").then(() => navigator.serviceWorker.ready).then((r) => r.active.postMessage("go")).catch(() => {});
+try { const w = new SharedWorker("/shared.js"); w.port.start(); } catch (e) {}
+try { new Worker("/dedicated.js"); } catch (e) {}
+</script>`);
+      } else if (req.url === "/sw.js" || req.url === "/shared.js" || req.url === "/dedicated.js") {
+        const port = (server.address() as AddressInfo).port;
+        const name = req.url.slice(1, -3);
+        const fetchInternal = (when: string) => `fetch("http://localhost:${port}/internal-${name}-${when}").catch(() => {});`;
+        res.writeHead(200, { "content-type": "text/javascript" });
+        res.end(
+          name === "sw"
+            ? `self.addEventListener("install", (e) => { ${fetchInternal("install")} self.skipWaiting(); }); self.addEventListener("activate", (e) => e.waitUntil(clients.claim())); self.addEventListener("message", () => { ${fetchInternal("message")} });`
+            : `${fetchInternal("start")} self.onconnect = () => { ${fetchInternal("connect")} };`,
+        );
       } else if (req.url?.startsWith("/internal")) {
         internalHits.push(req.url);
         res.writeHead(200, { "content-type": "text/javascript" });
@@ -270,6 +288,16 @@ setTimeout(() => document.getElementById("late").classList.add("on"), 300);
     expect(internalHits).toEqual([]);
     expect(result.blocked?.some((u) => /localhost:\d+\/internal\.js/.test(u))).toBe(true);
     expect(result.refused).toBeUndefined();
+  }, 120_000);
+
+  it("does not let a service worker, shared worker or worker reach another host on this computer (audit H1)", async () => {
+    internalHits.length = 0;
+    const result = await readPage(`${base}/workers`, dir, tools!, { maxScroll: 0 });
+    expect(result.reading.title).toBe("Workers");
+    // Give a late worker fetch time to arrive before checking.
+    await new Promise((r) => setTimeout(r, 500));
+    expect(internalHits).toEqual([]);
+    expect(result.blocked?.some((u) => /internal-sw-install/.test(u))).toBe(true);
   }, 120_000);
 
   it("gives up on a page that makes the reading script loop, instead of hanging", async () => {

@@ -15,14 +15,23 @@ describe("N3: shareable links hide a token in the path", () => {
     expect(shareableLink("https://cdn.example.com/sig/x1;y=2/v.mp4")).toBe("https://cdn.example.com/sig/…/v.mp4");
   });
 
-  it("hides a segment that looks like a token, and keeps slugs, ids and file names", () => {
-    expect(shareableLink("https://x.example/files/eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2lnbmF0dXJl/clip.mp4")).toBe("https://x.example/files/…/clip.mp4");
-    expect(shareableLink("https://x.example/v/1a2b3c4d5e6f7a8b9c0d/play")).toBe("https://x.example/v/…/play");
+  it("hides encoded path parameters and the value of a name=value segment named like a credential", () => {
+    expect(shareableLink("https://cdn.example.com/a/v.mp4%3Bjsessionid=ABC123DEF")).toBe("https://cdn.example.com/a/v.mp4");
+    expect(shareableLink("https://cdn.example.com/auth=SECRET123/v.mp4")).toBe("https://cdn.example.com/auth=…/v.mp4");
+    expect(shareableLink("https://cdn.example.com/Token=SECRET123/v.mp4")).toBe("https://cdn.example.com/Token=…/v.mp4");
+  });
+
+  it("keeps ids that are the address itself: Figma keys, Drive ids, Loom ids, slugs, file names (audit low 1)", () => {
     for (const link of [
+      "https://www.figma.com/proto/AbC123xyz456DEF789ghi0/Landing-page",
+      "https://drive.google.com/file/d/1AbCdEfGhIjKlMnOpQrStUvWxYz012345/view",
+      "https://www.loom.com/share/0123456789abcdef0123456789abcdef",
+      "https://x.example/v/1a2b3c4d5e6f7a8b9c0d/play",
       "https://example.com/blog/how-to-animate-a-landing-page-in-2024",
       "https://vimeo.com/123456789",
       "https://cdn.example.com/b/0f8e2a9c4d1b7e6a5f3c2b1a0d9e8f7c.mp4",
       "https://www.tiktok.com/@someone/video/7312345678901234567",
+      "https://example.com/keynote/slides",
     ]) {
       expect(shareableLink(link)).toBe(link);
     }
@@ -43,6 +52,8 @@ describe("N4: hard links inside a planted workspace", () => {
       const ws = new Workspace(wsRoot, "yt-abc");
       expect(() => ws.writeJson("probe.json", { planted: false })).toThrow(/through a hard link/);
       expect(() => ws.readJson("probe.json")).toThrow(/through a hard link/);
+      // The message says what to do with a workspace copied with hard links.
+      expect(() => ws.readJson("probe.json")).toThrow(/cp -al.*copy it without hard links, or delete it/);
       expect(readFileSync(outside, "utf8")).toBe("mine");
       // A file of its own is fine.
       ws.writeText("ok.txt", "fine");

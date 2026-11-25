@@ -1,6 +1,6 @@
 // src/text.ts
 function oneLine(text2, max = 200) {
-  return String(text2 ?? "").replace(/[\ufe00-\ufe0f]+/g, "").replace(/[\u200c\u200d]/g, (joiner, at, all) => keepJoiner(joiner, all.slice(Math.max(0, at - 2), at), all.slice(at + 1, at + 3)) ? joiner : " ").replace(/[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u180e\u200b\u200e\u200f\u2028-\u202e\u2060-\u206f\u034f\u115f\u1160\u3164\u2800\ufeff\ufff9-\ufffb`]+|[\u{1d173}-\u{1d17a}\u{e0000}-\u{e007f}]+/gu, " ").replace(/\s+/g, " ").trim().slice(0, max);
+  return String(text2 ?? "").replace(/[\ufe00-\ufe0f\u{e0100}-\u{e01ef}]+/gu, "").replace(/[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u180e\u200b\u200e\u200f\u2028-\u202e\u2060-\u206f\u034f\u115f\u1160\u3164\u2800\ufeff\ufff9-\ufffb`]+|[\u{1bca0}-\u{1bca3}\u{1d173}-\u{1d17a}\u{e0000}-\u{e007f}]+/gu, " ").replace(/[\u200c\u200d]/g, (joiner, at, all) => keepJoiner(joiner, all.slice(Math.max(0, at - 2), at), all.slice(at + 1, at + 3)) ? joiner : " ").replace(/\s+/g, " ").trim().slice(0, max);
 }
 function keepJoiner(joiner, before, after) {
   if (/[\p{L}\p{M}]$/u.test(before) && new RegExp("^\\p{L}", "u").test(after)) return true;
