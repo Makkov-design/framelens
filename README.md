@@ -117,7 +117,7 @@ says so. To check your machine ahead of time: `npx -y framelens doctor --prepare
 
 | You want | Say something like | Frame Lens does |
 |---|---|---|
-| **Listen**: a podcast, lecture, interview | "Summarize this 3-hour podcast and find where they talk about pricing" | Word-timed transcript and one overview sheet; no wasted frames. With automatic captions, a name check (in the next release, after 2.2.0): product and proper names read from the screen where they are said |
+| **Listen**: a podcast, lecture, interview | "Summarize this 3-hour podcast and find where they talk about pricing" | Word-timed transcript and one overview sheet; no wasted frames. With automatic captions, a name check (2.3.0 and later): product and proper names read from the screen where they are said |
 | **Learn**: a tutorial into steps | "Turn this tutorial into a step-by-step guide" | Finds every screen change, frames with the words spoken there, text read from the screen |
 | **Find** a moment | "Where does he set up DNS?" | Frames around the phrase in the transcript |
 | **Style**: replicate the motion | "Use this as a reference for my product promo" | Cuts to the frame, shots, palette, every move with its duration and easing; the exact curve of the moves that matter; a starter project; a check of your render |
@@ -132,7 +132,7 @@ says so. To check your machine ahead of time: `npx -y framelens doctor --prepare
 
 | Tool | What it does |
 |---|---|
-| `plan` | Start here for any video. Classifies it (talking head, screen, motion graphics, music video, live action), reads the goal from the request (`listen`, `learn`, `find`, `style`, `sound`, `production`) and lists the steps with an image-token estimate. With automatic captions, `listen` and `learn` add a name check (see below; in the next release, after 2.2.0) |
+| `plan` | Start here for any video. Classifies it (talking head, screen, motion graphics, music video, live action), reads the goal from the request (`listen`, `learn`, `find`, `style`, `sound`, `production`) and lists the steps with an image-token estimate. With automatic captions, `listen` and `learn` add a name check (see below; 2.3.0 and later) |
 | `probe` | Fetches the source; duration, size, frame rate (variable or not), HDR, audio, captions, workspace folder |
 | `transcript` | Word-timed transcript from captions (Gemini as a fallback for YouTube; only `transcript` and `frames` with `around` call it, never frame labels, `plan` or `style`) |
 | `frames` | Frames and contact sheets with time, frame number and the words spoken under each picture: `at`, `every`, `fps`, `every_frame` (every native frame with real timestamps) or `around` a phrase |
@@ -251,7 +251,7 @@ agent skill [`skills/framelens/SKILL.md`](skills/framelens/SKILL.md); repository
 ### Install in your client
 
 `npx -y framelens` starts the server on stdio. In the [MCP Registry](https://registry.modelcontextprotocol.io) its name
-is `io.github.Makkov-design/framelens` ([server.json](server.json)). Pin a version (`framelens@2.2.0`) when you want to choose when to
+is `io.github.Makkov-design/framelens` ([server.json](server.json)). Pin a version (`framelens@2.3.0`) when you want to choose when to
 upgrade. On **Windows**, clients that start the server themselves need `cmd /c` in front of `npx` (in JSON:
 `"command": "cmd", "args": ["/c", "npx", "-y", "framelens"]`). Add `GEMINI_API_KEY` only if you want the Gemini tools.
 
@@ -307,8 +307,8 @@ directly, without the Windows `cmd /c` wrapper, because the file is shared with 
 your own Windows computer, add Frame Lens for every project as in the table above (`-- cmd /c npx -y framelens`).
 
 **From GitHub instead of npm.** The same version also runs straight from its release tag, without the npm registry:
-`npx -y github:Makkov-design/framelens#v<version>` (for example `#v2.2.0`; in JSON, `"args": ["-y",
-"github:Makkov-design/framelens#v2.2.0"]`). npm then downloads the tagged commit, a larger download than the
+`npx -y github:Makkov-design/framelens#v<version>` (for example `#v2.3.0`; in JSON, `"args": ["-y",
+"github:Makkov-design/framelens#v2.3.0"]`). npm then downloads the tagged commit, a larger download than the
 package.
 </details>
 
@@ -340,7 +340,7 @@ Any other client takes `node` with the absolute path of `dist/framelens.mjs` as 
    or a box) → `frames` with `every_frame` ±0.5 s around them → `export` to the user's renderer → render → `compare`
    with the reference, fix what it names.
 4. **Speech:** `transcript` (captions first). **Sound:** `audio`. **A moment:** `frames` with `around: "<phrase>"`.
-   **Names in automatic captions** (in the next release, after 2.2.0; not in `framelens@2.2.0`): captions spell product and proper names by ear ("Rare UI" for RareUI, "Val" for
+   **Names in automatic captions** (2.3.0 and later): captions spell product and proper names by ear ("Rare UI" for RareUI, "Val" for
    Vaul). When the words come from automatic captions, `plan` for `listen` and `learn` adds a name check: it picks the
    likely names (capitalised words, words after "called", "by", "use", web addresses), adds a `frames` step 640 px
    wide a second after each is said, and writes `NAMES.md`. Read the sheets, fill in the spelling the screen shows with
@@ -471,7 +471,7 @@ unpacked: [extension/README.md](extension/README.md).
   projects for your own content.
 - **Safe by default.** External programs run without a shell, with timeouts; pinned binaries are verified before use;
   cookies are opt-in and never logged; the Gemini key is removed from every error and log line; every result is
-  labelled as third-party content. Since 2.2.0: a link that redirects to this computer, the local network or a cloud
+  labelled as third-party content. Since 2.2.0, a link that redirects to this computer, the local network or a cloud
   metadata address is refused; ffmpeg, yt-dlp and the browser do not inherit the Gemini, Figma or cobalt keys or the
   cookie settings; and a `.framelens/` folder that came with a project is not trusted blindly (a stored download is
   reused only for the same link and only from that workspace's own `media` folder). See [SECURITY.md](SECURITY.md) to report a vulnerability, and

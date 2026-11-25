@@ -55,6 +55,22 @@ describe("name picker", () => {
     expect(found).not.toContain("drawer");
   });
 
+  it("ignores a word time that is not a number, so a timed segment is not read twice", () => {
+    // A NaN in the middle of the times would stop the search for the segment's words, which then counted twice.
+    const words = [1, 2, Number.NaN, 3.5, 8].map((t, i) => ({ t, end: t + 0.1, text: t === 3.5 ? "Sonner" : `w${i}` }));
+    const picked = pickNames({ source: "auto-captions", words, segments: [{ start: 3, end: 5, text: "we use Sonner" }] });
+    expect(picked.map((n) => n.name)).toContain("Sonner");
+    expect(picked.find((n) => n.name === "Sonner")!.said).toEqual([3.5]);
+    expect(picked.some((n) => /Sonner Sonner/.test(n.name))).toBe(false);
+  });
+
+  it("counts a word that starts exactly at a segment's end as the next segment's, not this one's", () => {
+    // The first segment has no timed word inside it (the word at 5 starts where it ends), so its own words count.
+    const picked = pickNames({ source: "auto-captions", words: [{ t: 5, end: 6, text: "Figma" }], segments: [{ start: 3, end: 5, text: "we use Rive." }, { start: 5, end: 7, text: "Figma" }] });
+    expect(picked.find((n) => n.name === "Rive")?.said).toEqual([3]);
+    expect(picked.find((n) => n.name === "Figma")?.said).toEqual([5]);
+  });
+
   it("falls back to segment times when the captions have no word times", () => {
     const t: Transcript = {
       source: "auto-captions",

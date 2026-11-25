@@ -146,7 +146,7 @@ For maintainers. Nothing is published by hand any more:
    `server.json` to the MCP Registry (`publish-mcp-registry.yml`) and creates the GitHub release from that version's
    changelog section. Each step skips what is already done, so a failed run can be re-run.
 
-npm provenance starts with the first version released this way, the one after 2.2.0: 2.2.0 and earlier were
+npm provenance starts with the first version released this way, 2.3.0: 2.2.0 and earlier were
 published by hand and carry no provenance statement. The one-time setup (npm trusted publisher, the `npm-release`
 environment, the tag ruleset) is in [docs/launch/listings.md](docs/launch/listings.md). `listings-check.yml` checks
 every week that npm, the MCP Registry and the catalogues show the same version and opens an issue when one lags.

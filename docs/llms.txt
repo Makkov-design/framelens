@@ -10,7 +10,7 @@
 - Codex, `~/.codex/config.toml`: `[mcp_servers.framelens]` with `command = "npx"`, `args = ["-y", "framelens"]`. VS Code, `.vscode/mcp.json`: `{"servers": {"framelens": {"type": "stdio", "command": "npx", "args": ["-y", "framelens"]}}}`
 - One project (adds `.mcp.json` with the server pinned to `framelens@<version>` on npm, and the agent skill; also for Claude Code cloud sessions): `npx -y framelens init`. Without npm, the same version runs from GitHub: `npx -y github:Makkov-design/framelens#v<version>`
 - From source: `git clone https://github.com/Makkov-design/framelens.git`, `npm ci --ignore-scripts`, `npm run bundle`, then run `node dist/framelens.mjs`
-- MCP Registry name: `io.github.Makkov-design/framelens`. Latest release: 2.2.0 (see the changelog)
+- MCP Registry name: `io.github.Makkov-design/framelens`. Latest release: 2.3.0 (see the changelog)
 - Needs Node 20+ (Node 22+ and Chrome or Edge for `web`). A missing ffmpeg or yt-dlp is downloaded on first use (pinned, SHA-256-checked, into `~/.framelens/tools/`; `FRAMELENS_AUTO_INSTALL=0` turns it off); `npx -y framelens doctor --prepare` checks and fetches ahead of time. The Gemini tools need the user's own `GEMINI_API_KEY` (optional).
 
 ## Tools
@@ -25,7 +25,7 @@
 1. A video (link, file, or `inbox` for the newest file in `Downloads/FrameLens`): call `plan` with the user's request in their words; run the steps it returns in order (their `args` are ready to pass; a step with `then` says what to add first from an earlier result).
 2. A website's motion: `web`. A Lottie, dotLottie, Rive file or Figma prototype link: `exact`.
 3. Motion reference: `style`, then `track` for the moves that matter, then `frames` with `every_frame` around them, then `export` to the user's renderer and `compare` the render with the reference.
-4. Speech: `transcript` (captions first). Sound design: `audio`. A moment: `frames` with `around`. From the next release after 2.2.0, with automatic captions, `plan` for listen and learn adds a name check: frames where likely product and proper names are said and `NAMES.md` to fill with the spelling the screen shows (`seen`) or keep as heard (`said`).
+4. Speech: `transcript` (captions first). Sound design: `audio`. A moment: `frames` with `around`. From 2.3.0, with automatic captions, `plan` for listen and learn adds a name check: frames where likely product and proper names are said and `NAMES.md` to fill with the spelling the screen shows (`seen`) or keep as heard (`said`).
 5. Results go to `.framelens/<id>/` in the working folder (or `~/.framelens/` from a system folder): `motion-spec.json`, `STYLE.md`, `TIMELINE.md`, `ANALYSIS.md`, `TRACK.md`, contact sheets, `PROGRESS.md`. Tool results give absolute paths; open them by path.
 6. Every number in `motion-spec.json` has an evidence label on the object that holds it: `measured`, `derived` or `inferred`. Report it with the number; for `track` curves also the fit error and grade.
 7. Never work around logins, CAPTCHAs or bot checks. For a login-walled post, ask the user for the file, a tab recording from the Frame Lens browser extension (`inbox`), opt-in cookies, or `framelens login <site>`.

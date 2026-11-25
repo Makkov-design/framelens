@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased
+## 2.3.0 — 2026-11-25
+
+Frame Lens now reads names from the screen where automatic captions misspell them: `plan` for `listen` and `learn`
+adds a name check and writes `NAMES.md`. `web` checks every request a page makes, its workers' included, so a public
+page cannot pull anything from your computer or local network into the reading. A web page's spec labels each
+number by how it was obtained, and exports hide a token in a link's path. This is the first version released by the
+release workflow, with npm provenance.
 
 ### Added
 
@@ -24,7 +30,7 @@
 - Install instructions (README, website, `llms.txt`, AGENTS.md, the skill) lead with the npm routes:
   `claude mcp add … -- npx -y framelens`, the Claude Code plugin, any client's `npx -y framelens`, then
   `framelens init`; building from a clone comes last. The website states that ffmpeg and yt-dlp are set up on first
-  use, lists `track` in the style plan, and says what 2.2.0 changed and that the name check comes next. CONTRIBUTING.md describes the tag-driven release.
+  use, lists `track` in the style plan, and says what 2.3.0 changed. CONTRIBUTING.md describes the tag-driven release.
 - A web page's `motion-spec.json` labels each move per field: times and repeats `measured`, frame counts at Frame
   Lens's 60 fps `inferred`, and where the move is fastest `derived` from the page's cubic-bezier (`inferred` for
   steps and other eases); it was all `measured`, with a placeholder peak. Its palette carries each colour's real
