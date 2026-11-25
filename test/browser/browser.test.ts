@@ -62,7 +62,8 @@ describe("web animation data", () => {
     expect(merged.animations[1]!.scrollTriggered).toBe(true);
     const spec = specFromPage(merged, "test");
     expect(spec.source.kind).toBe("web");
-    expect(spec.events[0]).toMatchObject({ start: 0.2, end: 0.8, frames: 36, easing: "ease-out", suggestion: "cubic-bezier(0.16, 1, 0.3, 1)", evidence: "measured" });
+    expect(spec.events[0]).toMatchObject({ start: 0.2, end: 0.8, frames: 36, easing: "ease-out", suggestion: "cubic-bezier(0.16, 1, 0.3, 1)" });
+    expect(spec.events[0]!.evidence).toMatchObject({ start: "measured", end: "measured", frames: "inferred", peakAt: "derived" });
     expect(spec.palette[0]).toMatchObject({ hex: "#0E0F1A", share: 0.9, evidence: "measured" });
     expect(spec.typography[0]).toMatchObject({ family_guess: "Inter, sans-serif", weight: 800, evidence: "measured" });
     // Every object with numbers carries a label: the viewport is read, 60 fps is Frame Lens's own choice.
@@ -192,6 +193,13 @@ setTimeout(() => document.getElementById("late").classList.add("on"), 300);
       } else if (req.url === "/bounce") {
         res.writeHead(302, { location: `http://localhost:${(server.address() as AddressInfo).port}/admin` });
         res.end();
+      } else if (req.url === "/worker-page") {
+        // A page whose title comes from a dedicated worker: workers must run as in a normal browser.
+        res.writeHead(200, { "content-type": "text/html" });
+        res.end(`<!doctype html><title>Waiting</title><script>new Worker("/worker.js").onmessage = (e) => { document.title = e.data; };</script>`);
+      } else if (req.url === "/worker.js") {
+        res.writeHead(200, { "content-type": "text/javascript" });
+        res.end(`postMessage("Worker ran");`);
       } else if (req.url === "/same") {
         res.writeHead(200, { "content-type": "text/html" });
         res.end(`<!doctype html><title>Same</title><script>location.replace("/admin");</script>`);
@@ -250,6 +258,11 @@ setTimeout(() => document.getElementById("late").classList.add("on"), 300);
     expect(same.reading.title).toBe("Admin secrets");
     expect(same.reading.url).toBe(`${base}/admin`);
     expect(same.refused).toBeUndefined();
+  }, 120_000);
+
+  it("lets a page's dedicated worker run", async () => {
+    const result = await readPage(`${base}/worker-page`, dir, tools!, { maxScroll: 0 });
+    expect(result.reading.title).toBe("Worker ran");
   }, 120_000);
 
   it("gives up on a page that makes the reading script loop, instead of hanging", async () => {

@@ -3,9 +3,10 @@
 Please report vulnerabilities privately through GitHub's "Report a vulnerability" button on the repository's Security
 tab, not in a public issue. You should get a reply within a week.
 
-In scope: anything that could leak the Gemini API key, make the server request something other than a YouTube video,
-write to stdout outside the MCP protocol, or let video content take control of the calling assistant beyond what is
-described in the README's Security section.
+In scope: anything that could leak the Gemini API key or another key or cookie Frame Lens is given, make the server
+request something other than what the user pointed it at (or break the network rules below), write to stdout outside
+the MCP protocol, write or delete files outside the places named below, or let video, page or file content take
+control of the calling assistant beyond what the README's "Privacy and design principles" describe.
 
 ## Network rules a report can hold us to
 
@@ -25,20 +26,30 @@ described in the README's Security section.
 - `web`: every document the page loads (its redirects, the navigations its scripts start, its frames) is held until
   its host is checked; one that resolves to this computer, the local network or a cloud metadata address is refused.
   Exempt: the host name the user gave, on any port and over http or https (a dev server's other ports). Not exempt:
-  another name for the same machine (the user gave `localhost`, the page goes to `127.0.0.1`). The result names an address it was read at other than the one given. Images,
-  scripts and other subresources are not checked, and the browser resolves names itself (no pinned address).
+  another name for the same machine (the user gave `localhost`, the page goes to `127.0.0.1`). The result names an
+  address it was read at other than the one given. **Limit:** only those documents are checked. A page that `web`
+  opens can make its own requests, as it can in your browser: scripts, styles, images, fetch and XHR, workers of
+  every kind, prefetches and WebSockets, also to this computer or the local network, and what they return can end up
+  in the reading. The browser resolves names itself (no pinned address). Open only pages you would open in your own
+  browser.
 - The login-profile capture downloads the page's media over https only, and every hop must resolve to a public address,
   connected to as checked.
 - Downloads through yt-dlp stop at `FRAMELENS_MAX_DOWNLOAD_MB`, also when the site gives no size up front.
 - ffmpeg, ffprobe, yt-dlp and the browser get no `GEMINI_API_KEY`, `GOOGLE_API_KEY`, `FIGMA_TOKEN`,
   `FRAMELENS_COBALT_KEY` or `FRAMELENS_COOKIES_*` in their environment.
 - A workspace record (`.framelens/<id>/source.json`) is reused only for the same link, and only for files whose real
-  path is inside that workspace's own `media` folder. No workspace write follows a link out of the workspace folder.
+  path is inside that workspace's own `media` folder. No workspace write follows a link out of the workspace folder, and no workspace file with a second name (a hard link)
+  is read or written. That includes a workspace the user copied with hard links (`cp -al`, some backup tools): the tool
+  fails and says to copy it without hard links or delete it.
 - `framelens logout` deletes only a folder that `framelens login` made, recorded in this user's own
   `~/.framelens/browser-profiles.json` by its real path, and that still has its marker file; or the default
   `~/.framelens/browser-profile` when neither it nor `~/.framelens` is a link. A marker alone (one that came with a
   repository) is not enough, and a custom profile from 2.1 is refused: delete it by hand.
-- Exports name the source link without its query, fragment or user name. A user name and password in a link the user
+- Exports name the source link without its query, fragment, user name or path parameters (`;jsessionid=…`, also
+  written `%3B`), and with `…` for a path segment after one named `token`, `access_token`, `auth`, `key`, `api_key`,
+  `sig`, `signature`, `secret`, `session`, `sid`, `jwt`, `hmac`, `password` or `credential(s)`, and for the value of
+  a `name=value` segment with such a name (`/auth=…/`). Other ids in the path (a Figma file key, a Drive file id, a
+  Loom id) are the address itself and are kept. A user name and password in a link the user
   gave are left out of tool results, error messages, progress lines, the log, motion-spec.json and every file but the
   workspace's source.json.
 - Error results that quote ffmpeg's or yt-dlp's output keep it to one line of at most 200 characters and carry the

@@ -87,15 +87,18 @@ Real Frame Lens readings from the [website](https://makkov-design.github.io/fram
 
 ## Quick start
 
-**1. Install.** In your project folder (needs [Node.js 20+](https://nodejs.org)):
+**1. Install.** Needs [Node.js 20+](https://nodejs.org). The server is the npm package `framelens`; pick the
+fastest line for your client:
 
-```bash
-npx -y framelens init
-```
+| You use | Run |
+|---|---|
+| Claude Code, every project | `claude mcp add framelens --scope user -- npx -y framelens` (Windows: `-- cmd /c npx -y framelens`) |
+| Claude Code, as a plugin (server and skill) | `/plugin marketplace add Makkov-design/framelens`, then `/plugin install framelens@framelens` |
+| Any other MCP client (Codex, Cursor, Claude Desktop, VS Code, Windsurf) | Server command `npx -y framelens` (Windows: `cmd /c npx -y framelens`); [snippets for each client](#install-in-your-client) |
+| One project, shared through the repository (also Claude Code cloud sessions) | `npx -y framelens init` in the project root, then commit `.mcp.json` and `.claude/skills/framelens/` |
 
-This adds `.mcp.json` (the Frame Lens server, pinned to `framelens@<version>` on npm) and the agent skill to the
-project. For Claude Code in every project, Codex, Cursor and other clients, see
-[Install in your client](#install-in-your-client).
+`init` pins the server to `framelens@<version>` on npm and adds the agent skill. To run from a clone instead, see
+[From source](#from-source).
 
 **2. Ask your agent in plain words.** Start a new session and paste a link or a file path:
 
@@ -114,7 +117,7 @@ says so. To check your machine ahead of time: `npx -y framelens doctor --prepare
 
 | You want | Say something like | Frame Lens does |
 |---|---|---|
-| **Listen**: a podcast, lecture, interview | "Summarize this 3-hour podcast and find where they talk about pricing" | Word-timed transcript and one overview sheet; no wasted frames. With automatic captions, a name check: product and proper names read from the screen where they are said |
+| **Listen**: a podcast, lecture, interview | "Summarize this 3-hour podcast and find where they talk about pricing" | Word-timed transcript and one overview sheet; no wasted frames. With automatic captions, a name check (2.3.0 and later): product and proper names read from the screen where they are said |
 | **Learn**: a tutorial into steps | "Turn this tutorial into a step-by-step guide" | Finds every screen change, frames with the words spoken there, text read from the screen |
 | **Find** a moment | "Where does he set up DNS?" | Frames around the phrase in the transcript |
 | **Style**: replicate the motion | "Use this as a reference for my product promo" | Cuts to the frame, shots, palette, every move with its duration and easing; the exact curve of the moves that matter; a starter project; a check of your render |
@@ -129,7 +132,7 @@ says so. To check your machine ahead of time: `npx -y framelens doctor --prepare
 
 | Tool | What it does |
 |---|---|
-| `plan` | Start here for any video. Classifies it (talking head, screen, motion graphics, music video, live action), reads the goal from the request (`listen`, `learn`, `find`, `style`, `sound`, `production`) and lists the steps with an image-token estimate. With automatic captions, `listen` and `learn` add a name check (see below) |
+| `plan` | Start here for any video. Classifies it (talking head, screen, motion graphics, music video, live action), reads the goal from the request (`listen`, `learn`, `find`, `style`, `sound`, `production`) and lists the steps with an image-token estimate. With automatic captions, `listen` and `learn` add a name check (see below; 2.3.0 and later) |
 | `probe` | Fetches the source; duration, size, frame rate (variable or not), HDR, audio, captions, workspace folder |
 | `transcript` | Word-timed transcript from captions (Gemini as a fallback for YouTube; only `transcript` and `frames` with `around` call it, never frame labels, `plan` or `style`) |
 | `frames` | Frames and contact sheets with time, frame number and the words spoken under each picture: `at`, `every`, `fps`, `every_frame` (every native frame with real timestamps) or `around` a phrase |
@@ -189,7 +192,8 @@ Files sent gzip-, deflate- or br-encoded are decoded; other encodings (zstd, lis
 server answers with under the same rule, so a public link cannot send the download to your computer or local network;
 the requests a site extractor makes on its own are not covered (see [SECURITY.md](SECURITY.md)). `web` refuses any
 page or frame on your computer or local network, other than the host you gave, and says when the page was read at
-another address than the one you gave.
+another address than the one you gave. The page's own scripts, images, fetches and workers are not checked: open only
+pages you would open in your own browser.
 
 Frame Lens never bypasses logins, CAPTCHAs or bot checks and never uses online downloader sites or scraping services.
 Platforms' terms may forbid automated downloading: analyze videos you are allowed to watch and use, for reference.
@@ -248,14 +252,14 @@ agent skill [`skills/framelens/SKILL.md`](skills/framelens/SKILL.md); repository
 ### Install in your client
 
 `npx -y framelens` starts the server on stdio. In the [MCP Registry](https://registry.modelcontextprotocol.io) its name
-is `io.github.Makkov-design/framelens` ([server.json](server.json)). Pin a version (`framelens@2.2.0`) when you want to choose when to
+is `io.github.Makkov-design/framelens` ([server.json](server.json)). Pin a version (`framelens@2.3.0`) when you want to choose when to
 upgrade. On **Windows**, clients that start the server themselves need `cmd /c` in front of `npx` (in JSON:
 `"command": "cmd", "args": ["/c", "npx", "-y", "framelens"]`). Add `GEMINI_API_KEY` only if you want the Gemini tools.
 
 | Client | Install |
 |---|---|
-| Claude Code, plugin (server and skill) | `/plugin marketplace add Makkov-design/framelens`, then `/plugin install framelens@framelens` |
 | Claude Code, every project | `claude mcp add framelens --scope user -- npx -y framelens` (Windows: `-- cmd /c npx -y framelens`) |
+| Claude Code, plugin (server and skill) | `/plugin marketplace add Makkov-design/framelens`, then `/plugin install framelens@framelens` |
 | One project, including Claude Code cloud sessions | `npx -y framelens init` in the project root, then commit `.mcp.json` and `.claude/skills/framelens/` |
 | Codex | `~/.codex/config.toml`, below |
 | Cursor | `~/.cursor/mcp.json` (or `.cursor/mcp.json` in a project), generic JSON below |
@@ -304,10 +308,26 @@ directly, without the Windows `cmd /c` wrapper, because the file is shared with 
 your own Windows computer, add Frame Lens for every project as in the table above (`-- cmd /c npx -y framelens`).
 
 **From GitHub instead of npm.** The same version also runs straight from its release tag, without the npm registry:
-`npx -y github:Makkov-design/framelens#v<version>` (for example `#v2.2.0`; in JSON, `"args": ["-y",
-"github:Makkov-design/framelens#v2.2.0"]`). npm then downloads the tagged commit, a larger download than the
+`npx -y github:Makkov-design/framelens#v<version>` (for example `#v2.3.0`; in JSON, `"args": ["-y",
+"github:Makkov-design/framelens#v2.3.0"]`). npm then downloads the tagged commit, a larger download than the
 package.
 </details>
+
+### From source
+
+The slowest route, for trying a change or working without npm. Needs git and Node 20+:
+
+```bash
+git clone https://github.com/Makkov-design/framelens.git
+cd framelens
+npm ci --ignore-scripts
+npm run bundle                       # writes dist/framelens.mjs
+node dist/framelens.mjs doctor       # checks ffmpeg, yt-dlp and the workspace folder
+claude mcp add framelens-dev -- node "$PWD/dist/framelens.mjs"
+```
+
+Any other client takes `node` with the absolute path of `dist/framelens.mjs` as its command. Development rules are in
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ### Workflow
 
@@ -321,7 +341,7 @@ package.
    or a box) → `frames` with `every_frame` ±0.5 s around them → `export` to the user's renderer → render → `compare`
    with the reference, fix what it names.
 4. **Speech:** `transcript` (captions first). **Sound:** `audio`. **A moment:** `frames` with `around: "<phrase>"`.
-   **Names in automatic captions:** captions spell product and proper names by ear ("Rare UI" for RareUI, "Val" for
+   **Names in automatic captions** (2.3.0 and later): captions spell product and proper names by ear ("Rare UI" for RareUI, "Val" for
    Vaul). When the words come from automatic captions, `plan` for `listen` and `learn` adds a name check: it picks the
    likely names (capitalised words, words after "called", "by", "use", web addresses), adds a `frames` step 640 px
    wide a second after each is said, and writes `NAMES.md`. Read the sheets, fill in the spelling the screen shows with
@@ -452,7 +472,10 @@ unpacked: [extension/README.md](extension/README.md).
   projects for your own content.
 - **Safe by default.** External programs run without a shell, with timeouts; pinned binaries are verified before use;
   cookies are opt-in and never logged; the Gemini key is removed from every error and log line; every result is
-  labelled as third-party content. See [SECURITY.md](SECURITY.md) to report a vulnerability, and
+  labelled as third-party content. Since 2.2.0, a link that redirects to this computer, the local network or a cloud
+  metadata address is refused; ffmpeg, yt-dlp and the browser do not inherit the Gemini, Figma or cobalt keys or the
+  cookie settings; and a `.framelens/` folder that came with a project is not trusted blindly (a stored download is
+  reused only for the same link and only from that workspace's own `media` folder). See [SECURITY.md](SECURITY.md) to report a vulnerability, and
   [docs/DESIGN.md](docs/DESIGN.md) for how each measurement works.
 
 ## FAQ

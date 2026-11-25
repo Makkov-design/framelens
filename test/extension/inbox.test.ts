@@ -67,7 +67,7 @@ describe("Frame Lens reads what the extension saved", () => {
     expect(r.savedReading).toBe(resolve(newer));
     expect(r.result.reading.title).not.toContain("\n");
     expect(r.spec.palette.map((p) => p.hex)).toEqual(["#0E0F1A"]);
-    expect(r.spec.events[0]).toMatchObject({ start: 0.2, end: 0.8, easing: "ease-out", suggestion: "cubic-bezier(0.16, 1, 0.3, 1)", evidence: "measured" });
+    expect(r.spec.events[0]).toMatchObject({ start: 0.2, end: 0.8, easing: "ease-out", suggestion: "cubic-bezier(0.16, 1, 0.3, 1)", evidence: { start: "measured", end: "measured", frames: "inferred" } });
     expect(r.spec.events[1]).toMatchObject({ scroll: { triggeredAtY: 900 } });
     expect(existsSync(r.files.style!)).toBe(true);
     expect(JSON.parse(readFileSync(r.ws.path("source.json"), "utf8"))).toMatchObject({ url: reading.url, readFrom: resolve(newer), readAt: reading.capturedAt });

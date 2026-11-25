@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 2.3.0 — 2026-11-25
+
+Frame Lens now reads names from the screen where automatic captions misspell them: `plan` for `listen` and `learn`
+adds a name check and writes `NAMES.md`. A web page's spec labels each number by how it was obtained, and exports
+hide a token in a link's path. This is the first version released by the release workflow, with npm provenance.
 
 ### Added
 
@@ -18,6 +22,32 @@
   GitHub release from that version's changelog section.
 - A weekly check compares the version on npm with the MCP Registry and the catalogues that copy from it, and opens
   an issue naming the ones that fell behind.
+
+### Changed
+
+- Install instructions (README, website, `llms.txt`, AGENTS.md, the skill) lead with the npm routes:
+  `claude mcp add … -- npx -y framelens`, the Claude Code plugin, any client's `npx -y framelens`, then
+  `framelens init`; building from a clone comes last. The website states that ffmpeg and yt-dlp are set up on first
+  use, lists `track` in the style plan, and says what 2.3.0 changed. CONTRIBUTING.md describes the tag-driven release.
+- SECURITY.md states the limit of `web` plainly: only the page and its redirects, script navigations and frames are
+  checked; the page's own scripts, images, fetches, workers, prefetches and WebSockets can reach this computer or the
+  local network, as in your browser. Open only pages you would open there.
+- A web page's `motion-spec.json` labels each move per field: times and repeats `measured`, frame counts at Frame
+  Lens's 60 fps `inferred`, and where the move is fastest `derived` from the page's cubic-bezier (`inferred` for
+  steps and other eases); it was all `measured`, with a placeholder peak. Its palette carries each colour's real
+  OKLab lightness and chroma instead of zeros.
+
+### Fixed
+
+- Exports also leave out a token in the source link's path: path parameters (`;jsessionid=…`, also `%3B`), the
+  segment after one named like `token`, `key` or `sig`, and the value of a segment such as `auth=…`, shown as `…`.
+  Ids that are the address itself (Figma, Drive, Loom) are kept.
+- A workspace file that is a hard link (possible in a `.framelens/` folder unpacked from an archive, or a workspace
+  copied with `cp -al`) is neither read nor written; the error says to copy it without hard links or delete it.
+- Third-party text on one line keeps the zero-width non-joiner and joiner between letters (Persian and several Indic
+  scripts spell words with them) and the joiner inside an emoji, and drops variation selectors (also U+E0100–E01EF)
+  without leaving a space; it used to put a space in their place. Shorthand format controls (U+1BCA0–1BCA3) become a
+  space.
 
 ## 2.2.0 — 2026-11-23
 

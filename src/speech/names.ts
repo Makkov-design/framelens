@@ -62,7 +62,9 @@ interface Token {
 function tokens(transcript: Transcript): Token[] {
   const split = (text: string, t: number) => text.split(/\s+/).filter(Boolean).map((word) => ({ text: word, t }));
   // A segment is untimed when no timed word starts inside it: one binary search per segment over the sorted times.
-  const times = transcript.words.map((w) => w.t).sort((a, b) => a - b);
+  // Only finite times: a NaN compares as neither smaller nor larger, so it would break the order the search needs.
+  const timed = transcript.words.filter((w) => Number.isFinite(w.t));
+  const times = timed.map((w) => w.t).sort((a, b) => a - b);
   const firstAtOrAfter = (t: number) => {
     let lo = 0;
     let hi = times.length;
@@ -77,7 +79,7 @@ function tokens(transcript: Transcript): Token[] {
     const i = firstAtOrAfter(s.start);
     return !(i < times.length && times[i]! < s.end);
   });
-  const raw = [...transcript.words.flatMap((w) => split(w.text, w.t)), ...untimed.flatMap((s) => split(s.text, s.start))]
+  const raw = [...timed.flatMap((w) => split(w.text, w.t)), ...untimed.flatMap((s) => split(s.text, s.start))]
     // Stable: words of one segment keep their order.
     .sort((a, b) => a.t - b.t);
   const out: Token[] = [];

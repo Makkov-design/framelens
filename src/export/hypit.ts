@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Transcript } from "../speech/transcript.js";
-import { transitionName, type MotionSpec } from "../style/spec.js";
+import { evidenceText, transitionName, type MotionSpec } from "../style/spec.js";
 import { oneLine, trackName, write } from "./exporters.js";
 import { safeHex } from "../text.js";
 import { curveLabel, safeCurve, type Curve } from "../track/curve.js";
@@ -165,7 +165,7 @@ export function hypitTimeline(spec: MotionSpec, workspace?: string): string {
       ...(cut ? [`- Entered by a cut at ${s2(cut.t)} s (score ${cut.score}, ${cut.evidence}).`] : []),
       ...(into ? [`- Entered by a ${transitionName(into)} from ${s2(into.start)} s to ${s2(into.end)} s (${into.frames} frames, ${into.evidence}).`] : []),
       ...(out ? [`- Left by a ${transitionName(out)} from ${s2(out.start)} s to ${s2(out.end)} s (${out.frames} frames, ${out.evidence}).`] : []),
-      ...moves.map((m) => `- Move at ${s2(m.start)} s to ${s2(m.end)} s (${m.frames} frames, ${m.easing}${m.curve ? `, tracked curve ${oneLine(m.curve, 400)}` : m.suggestion ? `, starting curve ${oneLine(m.suggestion, 120)}` : ""}, fastest at ${Math.round(m.peakAt * 100)}% of the move; ${m.evidence}).`),
+      ...moves.map((m) => `- Move at ${s2(m.start)} s to ${s2(m.end)} s (${m.frames} frames, ${m.easing}${m.curve ? `, tracked curve ${oneLine(m.curve, 400)}` : m.suggestion ? `, starting curve ${oneLine(m.suggestion, 120)}` : ""}, fastest at ${Math.round(m.peakAt * 100)}% of the move; ${evidenceText(m.evidence)}).`),
       ...tracks.map(trackedLine),
       ...(words.length ? [`- Words: ${words.slice(0, 40).map((w) => `“${oneLine(w.text, 60)}” ${s2(w.t)}–${s2(w.end)}`).join(", ")}${words.length > 40 ? `, … ${words.length - 40} more` : ""}.`] : []),
       ...(beats.length ? [`- Beats at ${beats.map((b) => s2(b.t)).join(", ")} s.`] : []),

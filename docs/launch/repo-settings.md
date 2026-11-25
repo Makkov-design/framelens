@@ -75,8 +75,8 @@ gh repo view Makkov-design/framelens --json description,homepageUrl,repositoryTo
 
 ## Optional
 
-- Releases: publish the 2.1.0 GitHub release from the tag with the CHANGELOG section as notes; directories and
-  aggregators show the latest release.
+- Releases: `release.yml` creates the GitHub release from the tag with the CHANGELOG section as notes; directories
+  and aggregators show the latest release.
 - Discussions (`gh repo edit Makkov-design/framelens --enable-discussions`): only if you plan to answer them;
   issue forms cover bugs, wrong measurements and feature requests.
 - Pin the repository on the `Makkov-design` profile (Profile > Customize your pins).

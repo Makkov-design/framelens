@@ -171,6 +171,16 @@ function writableInside(target: string, root: string): boolean {
   }
 }
 
+/** A file with more than one name (a hard link), whose other name can be outside the workspace. */
+function hardLinked(path: string): boolean {
+  try {
+    const stat = lstatSync(path);
+    return stat.isFile() && stat.nlink > 1;
+  } catch {
+    return false;
+  }
+}
+
 /** The folder that holds every source's workspace (see chooseWorkspaceRoot). */
 export function workspaceRoot(env: Env = process.env, cwd = process.cwd()): string {
   return chooseWorkspaceRoot(env, cwd).root;
@@ -192,6 +202,12 @@ export class Workspace {
     if (rel.startsWith("..") || isAbsolute(rel)) throw new Error(`Path escapes the workspace: ${parts.join("/")}`);
     // A link inside the workspace folder (one that came with a project's .framelens) cannot lead a write out of it.
     if (!writableInside(target, dirname(this.dir))) throw new Error(`Path leads out of the workspace through a link: ${parts.join("/")}`);
+    // So can a hard link: the file's other name may be anywhere on the disk. Frame Lens never makes one.
+    if (hardLinked(target)) {
+      throw new Error(
+        `Path leads out of the workspace through a hard link: ${parts.join("/")} has another name on this disk. A workspace copied with hard links (cp -al, some backup tools) is refused too: copy it without hard links, or delete it to start over.`,
+      );
+    }
     return target;
   }
 

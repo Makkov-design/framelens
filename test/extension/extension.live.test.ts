@@ -130,7 +130,7 @@ describe.skipIf(!canRun)("the browser extension in a real browser", () => {
     const fromInbox = await engine.web("inbox", "test", { FRAMELENS_DOWNLOADS: downloads });
     expect(fromInbox.savedReading).toBe(resolve(file));
     expect(fromFile.spec.events.length).toBe(live.reading.animations.filter((a) => a.duration > 0 && a.duration < 60_000).length);
-    expect(fromFile.spec.events.find((e) => (e as { name?: string }).name === "rise")).toMatchObject({ start: 0.2, end: 0.8, easing: "ease-out", evidence: "measured" });
+    expect(fromFile.spec.events.find((e) => (e as { name?: string }).name === "rise")).toMatchObject({ start: 0.2, end: 0.8, easing: "ease-out", evidence: { start: "measured", end: "measured", frames: "inferred" } });
     const exported = await engine.export(file, "css", "test");
     expect(exported.files.some((f) => f.endsWith("motion.css"))).toBe(true);
   }, 120_000);

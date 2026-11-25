@@ -1,8 +1,8 @@
 import type { EasingFamily } from "../style/motion.js";
 import { EASING_SUGGESTIONS } from "../style/motion.js";
-import { bezierFamily, type Bezier } from "../exact/easing.js";
-import type { Swatch } from "../style/palette.js";
-import type { MotionSpec } from "../style/spec.js";
+import { bezierFamily, bezierPeak, type Bezier } from "../exact/easing.js";
+import { rgbToOklab, type Swatch } from "../style/palette.js";
+import type { Evidence, MotionSpec } from "../style/spec.js";
 import type { PageAnimation, PageReading } from "./page-script.js";
 
 export { cleanReading, mergeReadings, PAGE_SCRIPT, RECORDER_SCRIPT, type PageAnimation, type PageReading } from "./page-script.js";
@@ -26,10 +26,17 @@ export function easingFamily(easing: string): EasingFamily {
     const side = (gsap[2] ?? "out").replace("ease", "");
     return side === "inout" ? "ease-in-out" : side === "in" ? "ease-in" : "ease-out";
   }
-  const bezier = KEYWORDS[e] ?? (/^cubic-bezier\(([^)]+)\)$/.exec(e)?.[1]?.split(",").map(Number) as Bezier | undefined);
-  if (!bezier || bezier.length !== 4 || bezier.some((n) => !Number.isFinite(n))) return "unclear";
+  const bezier = cssBezier(e);
+  if (!bezier) return "unclear";
   // The same reading as exact Lottie and Figma curves, including control points on an end (ease-in is 0.42, 0, 1, 1).
   return bezierFamily(bezier);
+}
+
+/** The control points of a CSS `cubic-bezier()` or easing keyword; undefined for steps, `linear()` and GSAP eases. */
+function cssBezier(easing: string): Bezier | undefined {
+  const e = String(easing).trim().toLowerCase();
+  const bezier = KEYWORDS[e] ?? (/^cubic-bezier\(([^)]+)\)$/.exec(e)?.[1]?.split(",").map(Number) as Bezier | undefined);
+  return bezier && bezier.length === 4 && bezier.every((n) => Number.isFinite(n)) ? bezier : undefined;
 }
 
 /** The curve that shapes an animation: a CSS animation's first keyframe easing wins over the effect's timing easing. */
@@ -44,32 +51,45 @@ export function effectiveEasing(a: PageAnimation): string {
 const FPS = 60;
 const r3 = (n: number) => Math.round(n * 1000) / 1000;
 
-/** The page's animations as a motion spec: exact durations, delays and curves (`measured`). */
+/**
+ * The page's animations as a motion spec: exact durations, delays and curves (`measured`); frame counts at Frame
+ * Lens's 60 fps (`inferred`), and where each move is fastest (`derived` from a cubic-bezier, else `inferred`).
+ */
 export function specFromPage(reading: PageReading, version: string): MotionSpec {
   const total = reading.colors.reduce((s, c) => s + c.area, 0) || 1;
-  const palette: (Swatch & { evidence: "measured" })[] = reading.colors.slice(0, 8).map((c) => ({
-    hex: c.hex,
-    share: Math.round((c.area / total) * 1000) / 1000,
-    lightness: 0,
-    chroma: 0,
-    evidence: "measured" as const,
-  }));
+  // The page's own colours and the share of the page they cover; lightness and chroma are the same colours in OKLab.
+  const palette: (Swatch & { evidence: "measured" })[] = reading.colors.slice(0, 8).map((c) => {
+    const n = (i: number) => parseInt(c.hex.slice(i, i + 2), 16) || 0;
+    const [L, a, b] = rgbToOklab(n(1), n(3), n(5));
+    return {
+      hex: c.hex,
+      share: Math.round((c.area / total) * 1000) / 1000,
+      lightness: Math.round(L * 1000) / 1000,
+      chroma: Math.round(Math.hypot(a, b) * 1000) / 1000,
+      evidence: "measured" as const,
+    };
+  });
   const finite = reading.animations.filter((a) => a.duration > 0 && a.duration < 60_000);
   const end = Math.max(1, ...finite.map((a) => (a.delay + a.duration * (a.iterations === "infinite" ? 1 : Math.min(a.iterations, 4))) / 1000));
   const events = finite.map((a) => {
     const easing = effectiveEasing(a);
     const family = easingFamily(easing);
     const start = r3(Math.max(0, a.delay) / 1000);
+    // Where the move is fastest follows from the page's own curve when it is a cubic-bezier (derived); for steps,
+    // `linear()` and GSAP eases it is the family's usual place (inferred), and the peak speed is not known.
+    const bezier = cssBezier(easing);
+    const shape = bezier ? bezierPeak(bezier) : { peak: 0, peakAt: family === "ease-out" ? 0.2 : family === "ease-in" ? 0.8 : 0.5 };
+    // Times and repeats are the page's own; frames count them at the 60 fps Frame Lens picks for a page.
+    const evidence: Partial<Record<string, Evidence>> = { start: "measured", end: "measured", iterations: "measured", frames: "inferred", peak: bezier ? "derived" : "inferred", peakAt: bezier ? "derived" : "inferred" };
     return {
       start,
       end: r3(start + a.duration / 1000),
       frames: Math.round((a.duration / 1000) * FPS),
-      peak: 0,
-      peakAt: family === "ease-out" ? 0.2 : family === "ease-in" ? 0.8 : 0.5,
+      ...shape,
       easing: family,
       suggestion: easing || EASING_SUGGESTIONS[family],
       kind: "move" as const,
-      evidence: "measured" as const,
+      evidence,
       target: a.target,
       name: a.name,
       properties: a.properties,
