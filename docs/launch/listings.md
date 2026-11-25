@@ -31,7 +31,19 @@ plugin, with `icon.png`), `skills/framelens/SKILL.md` (skills.sh).
 
 ### Publish (recommended: GitHub Actions, no download)
 
-After `npm publish` of 2.1.0:
+Since the release workflow (`.github/workflows/release.yml`) this happens by itself: pushing the tag `v<version>`
+publishes to npm, then to the registry, then creates the GitHub release. The steps below are the manual fallback
+for the registry step alone.
+
+One-time setup for the release workflow (maintainer):
+
+- npmjs.com, package `framelens` > Settings > Trusted publisher > GitHub Actions: repository
+  `Makkov-design/framelens`, workflow `release.yml`, environment `npm-release`. The environment name is part of
+  what npm checks, so a job outside that environment cannot publish.
+- GitHub, Settings > Environments > `npm-release`: under deployment branches and tags allow only tags `v*`.
+- GitHub, Settings > Rules > Rulesets: a tag ruleset for `v*` that restricts who may create, update and delete
+  these tags.
+- The workflow itself refuses a tag whose commit is not on `main`: tag the merged commit, not a branch commit.
 
 1. Open https://github.com/Makkov-design/framelens/actions/workflows/publish-mcp-registry.yml
 2. Click "Run workflow", keep branch `main`, click the green "Run workflow".
@@ -77,8 +89,8 @@ approve. Then:
 & "$env:TEMP\mcp-publisher\mcp-publisher.exe" publish
 ```
 
-Expected: `✓ Server io.github.Makkov-design/framelens version 2.1.0`. Each later release: bump, `npm publish`, run
-the workflow again.
+Expected: `✓ Server io.github.Makkov-design/framelens version 2.1.0`. Each later release: bump, merge, push the tag
+`v<version>`; `release.yml` does the rest.
 
 ## 2. PulseMCP (pulsemcp.com)
 

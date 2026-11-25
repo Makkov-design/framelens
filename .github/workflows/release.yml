@@ -1,0 +1,143 @@
+name: Release
+
+# Pushing a version tag (v2.3.0) on a commit that is on main releases that commit everywhere, in order:
+#   1. npm, through trusted publishing (GitHub OIDC): no token or secret, and npm attaches a signed provenance
+#      statement that ties the package to this repository, workflow and commit;
+#   2. the official MCP Registry (publish-mcp-registry.yml), which catalogues read from;
+#   3. a GitHub release with that version's section of CHANGELOG.md.
+# A tag on a commit that is not on main is refused before anything is built.
+# Every step skips what is already done (version on npm, version in the Registry, release exists), so a failed
+# run can be started again: "Re-run failed jobs", or Run workflow with the tag selected.
+# One-time setup, see docs/launch/listings.md:
+#   - npmjs.com: package framelens > Settings > Trusted publisher > GitHub Actions, repository
+#     Makkov-design/framelens, workflow release.yml, environment npm-release;
+#   - GitHub: environment npm-release limited to v* tags, and a tag ruleset for v*.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  npm:
+    runs-on: ubuntu-latest
+    # The npm trusted publisher names this environment, so only a job that runs in it can publish.
+    environment: npm-release
+    permissions:
+      contents: read
+      id-token: write # GitHub OIDC for npm trusted publishing and provenance
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0 # the whole history, to check that the tagged commit is on main
+      # No dependency cache in the job that can publish.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: The tagged commit is on main
+        run: |
+          set -euo pipefail
+          git fetch --quiet origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "Commit $GITHUB_SHA is not on main. Tag the merged commit on main, not a branch commit."
+            exit 1
+          fi
+
+      - name: The tag, package.json, server.json and CHANGELOG.md agree
+        id: version
+        run: |
+          set -euo pipefail
+          version=$(node -p 'require("./package.json").version')
+          if [ "$GITHUB_REF_TYPE" != "tag" ] || [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "Run this on the tag v$version (got $GITHUB_REF_TYPE $GITHUB_REF_NAME)."
+            exit 1
+          fi
+          test "$version" = "$(node -p 'require("./server.json").version')"
+          test "$version" = "$(node -p 'require("./server.json").packages[0].version')"
+          node scripts/changelog-section.mjs "$version" > /dev/null
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if npm view "framelens@$version" version >/dev/null 2>&1; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+            echo "framelens@$version is already on npm; skipping the upload."
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: npm supports trusted publishing
+        if: steps.version.outputs.published == 'false'
+        run: |
+          set -euo pipefail
+          # Trusted publishing needs npm 11.5.1 or newer.
+          node -e 'const [a,b,c]=process.argv[1].split(".").map(Number); if (a<11||(a===11&&(b<5||(b===5&&c<1)))) { console.error("npm "+process.argv[1]+" is too old for trusted publishing"); process.exit(1) }' "$(npm --version)"
+
+      - name: Install ffmpeg for the media tests
+        if: steps.version.outputs.published == 'false'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg fonts-dejavu-core
+      - if: steps.version.outputs.published == 'false'
+        run: npm ci --ignore-scripts
+
+      # A published version can never be replaced, so everything is checked before the upload: the same checks
+      # prepublishOnly runs, and that the bundle built here is byte for byte the committed one.
+      - name: Typecheck, tests and bundle
+        if: steps.version.outputs.published == 'false'
+        run: npm run check
+      - name: Committed bundle is the one that will be published
+        if: steps.version.outputs.published == 'false'
+        run: git diff --exit-code --stat -- dist/framelens.mjs || (echo "The tag's dist/framelens.mjs is stale. Nothing was published; fix main and tag a new version." && exit 1)
+
+      # --ignore-scripts: the checks above already ran, and a second build must not touch the bundle now.
+      - name: Publish
+        if: steps.version.outputs.published == 'false'
+        run: npm publish --provenance --access public --ignore-scripts
+
+      - name: Wait until npm serves the version
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 30); do
+            if npm view "framelens@$VERSION" version >/dev/null 2>&1; then exit 0; fi
+            sleep 10
+          done
+          echo "framelens@$VERSION did not appear on npm within 5 minutes."
+          exit 1
+
+  mcp-registry:
+    needs: npm
+    permissions:
+      contents: read
+      id-token: write # GitHub OIDC login to the registry
+    uses: ./.github/workflows/publish-mcp-registry.yml
+
+  github-release:
+    needs: npm
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the release
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Create the release from CHANGELOG.md
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.npm.outputs.version }}
+        run: |
+          set -euo pipefail
+          if gh release view "v$VERSION" >/dev/null 2>&1; then
+            echo "Release v$VERSION already exists."
+            exit 0
+          fi
+          node scripts/changelog-section.mjs "$VERSION" > notes.md
+          gh release create "v$VERSION" --verify-tag --title "Frame Lens $VERSION" --notes-file notes.md
