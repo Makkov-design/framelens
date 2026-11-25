@@ -8,7 +8,7 @@ import { AnalyzerError, InvalidInputError, quotesThirdParty } from "./errors.js"
 import type { Logger } from "./logger.js";
 import { hideCredentials, oneLine } from "./text.js";
 import { EXPORT_TARGETS } from "./export/exporters.js";
-import { GOALS, NAME_WIDTH } from "./router/plan.js";
+import { GOALS, hasNameCheck } from "./router/plan.js";
 import { collectSetupNotes, setupNotesOf } from "./tools/setup.js";
 import { ToolError } from "./tools/errors.js";
 import { CancelledError, mcpCallContext, withCall, type ProgressExtra } from "./runtime/call.js";
@@ -161,7 +161,7 @@ export function registerLocalTools(server: McpServer, engine: Engine, logger: Lo
         });
         // The name check quotes names from the captions in its step and lists them in NAMES.md, so the result carries
         // the third-party notice even for a local file.
-        const nameCheck = plan.steps.some((s) => s.args.width === NAME_WIDTH);
+        const nameCheck = hasNameCheck(plan.steps);
         const names = nameCheck ? namesFile : undefined;
         const lines = [
           nameCheck ? sourceLine(source, true) : sourceLine(source),
