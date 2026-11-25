@@ -23,15 +23,19 @@ control of the calling assistant beyond what the README's "Privacy and design pr
   any redirect that adds or changes a user name or password, or carries one to another origin. Not covered: a server that answers yt-dlp differently from that GET, the requests a site
   extractor makes on its own (API and media addresses it builds), and a link this computer cannot reach directly (for
   example only through a proxy), where the walk is skipped and yt-dlp's own result stands.
-- `web`: every document the page loads (its redirects, the navigations its scripts start, its frames) is held until
-  its host is checked; one that resolves to this computer, the local network or a cloud metadata address is refused.
-  Exempt: the host name the user gave, on any port and over http or https (a dev server's other ports). Not exempt:
-  another name for the same machine (the user gave `localhost`, the page goes to `127.0.0.1`). The result names an
-  address it was read at other than the one given. **Limit:** only those documents are checked. A page that `web`
-  opens can make its own requests, as it can in your browser: scripts, styles, images, fetch and XHR, workers of
-  every kind, prefetches and WebSockets, also to this computer or the local network, and what they return can end up
-  in the reading. The browser resolves names itself (no pinned address). Open only pages you would open in your own
-  browser.
+- `web`: every request of its browser goes through a proxy inside Frame Lens: the page and its redirects, frames of any
+  kind (sandboxed and `srcdoc` ones too), scripts, styles, images, fetch and XHR, dedicated, nested, blob, shared and
+  service workers (also at install time), speculation-rules prefetches and WebSockets. A host is resolved once; one
+  with any address on this computer, the local network, a cloud metadata address or another non-public range
+  (IPv4-mapped and other IPv6 forms included) is refused, and the connection goes to the address that was checked.
+  Exempt: only the user's own input when it is literally `localhost` or a loopback or private IP, and only that host:
+  a page on the user's own local host can then reach other ports of that same host. A public name that resolves to a
+  private address is never exempt. The proxy listens on 127.0.0.1 and serves only the browser Frame Lens started
+  (per-run credentials, never forwarded to a site); if it cannot start, the page is not opened. The result names an
+  address the page was read at other than the one given, and the hosts that were refused. Not covered: QUIC and
+  WebRTC UDP outside the proxy are turned off rather than checked; WebRTC relayed over a public TURN server goes
+  through the proxy like any public host; browser policies set by an administrator could override the proxy setting;
+  and `web` does not use a system or corporate proxy, so behind one it cannot reach public pages.
 - The login-profile capture downloads the page's media over https only, and every hop must resolve to a public address,
   connected to as checked.
 - Downloads through yt-dlp stop at `FRAMELENS_MAX_DOWNLOAD_MB`, also when the site gives no size up front.

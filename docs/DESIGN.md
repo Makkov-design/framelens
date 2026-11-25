@@ -218,36 +218,41 @@ password; every hop to another host must be https and resolve only to public add
 address that was checked.
 The same check walks a link's redirects before yt-dlp follows them (`checkLinkRedirects` in `sources/resolve.ts`; one
 plain GET to the link's own host, no new service) and covers every hop of the login-profile capture's media download
-(`browser/capture.ts`). `web` holds each document request over CDP (`Fetch.requestPaused`, `browser/read.ts`) and
-refuses one whose host resolves to a private address, other than the host the user gave. Subresources, workers and
-WebSockets are not checked yet (SECURITY.md states the limit); the request proxy below is being built to close that.
+(`browser/capture.ts`). `web` sends every request of its browser through `browser/proxy.ts` (below), and also holds each document request over
+CDP (`Fetch.requestPaused`, `browser/read.ts`) to say clearly when a page redirects to a refused address.
 
-### `web` request proxy (planned for 2.3.1, in progress)
-
-Checking subresources target by target over CDP failed (it killed dedicated workers and missed sandboxed frames and
-prefetches), so the check moves to one choke point every request of the browser goes through:
-
-- `browser/proxy.ts`: an HTTP proxy inside the Frame Lens process, on 127.0.0.1 and a random port, started for one
-  `web` reading and closed with its browser. Chrome is started with `--proxy-server=http://127.0.0.1:<port>` and
-  `--proxy-bypass-list=<-loopback>`, so loopback goes through it too.
-- Each request (absolute-form GET for http, `CONNECT host:port` for https and WebSockets) names a host. The proxy
-  resolves it once with `hostAddresses`, refuses it when any address is private by `isPrivateAddress` (loopback,
-  private, link-local, CGNAT, metadata, IPv4-mapped and the other non-public ranges), and connects to the address it
-  checked, so a second DNS answer cannot swap it. The host the user gave stays exempt, as for documents now. A
-  refused request gets a 403 from the proxy, and the reading counts what was refused.
-- Only the browser it started may use it: every request must carry a per-run secret as Basic proxy credentials;
-  without them the proxy answers 407 and forwards nothing. Chrome gets the credentials through CDP
-  (`Fetch.enable { handleAuthRequests }` on the browser target answers each `Fetch.authRequired`), and its network
-  service reuses them for every target, workers included. It is never an open proxy, also not to public hosts.
-- What would bypass a proxy is turned off: QUIC (`--disable-quic`) and non-proxied WebRTC UDP
-  (`--force-webrtc-ip-handling-policy=disable_non_proxied_udp`). With a proxy set, Chrome leaves name resolution of
-  proxied requests to the proxy.
-- No new service and no new outside request: the proxy only carries what the page asked for, as the browser would.
 `exact` decodes gzip, deflate and br through `stream.pipeline` (never `pipe`, which left the socket open and let the
 time limit's abort surface as an unhandled error) and refuses other encodings. yt-dlp's `--max-filesize` covers only a
 size known up front, so `sources/ytdlp.ts` also measures the `source.*` files every 250 ms (not the postprocessor's
 `source.temp.<ext>`, nor the finished `source.<ext>` while the merge's inputs are still beside it) and stops the
 download past the limit. Whatever a stopped, cancelled or failed download wrote is removed in `fetchWithYtDlp`.
+
+### `web` request proxy (2.3.1)
+
+Checking subresources target by target over CDP failed (it killed dedicated workers and missed sandboxed frames and
+prefetches), so every request of `web`'s browser goes through one choke point:
+
+- `browser/proxy.ts` is an HTTP proxy inside the Frame Lens process, on 127.0.0.1 and a random port, started for one
+  reading and closed with its browser; if it cannot start, or Chrome cannot be given its credentials, the page is not
+  opened. Chrome is started with `--proxy-server=http://127.0.0.1:<port>` and `--proxy-bypass-list=<-loopback>` (so
+  loopback goes through it too), `--disable-quic`, WebRTC limited to proxied traffic
+  (`--force-webrtc-ip-handling-policy=disable_non_proxied_udp`), secure DNS off, and no proxy variables in its
+  environment.
+- Each request names a host: an absolute-form request for http (the URL's host is checked and connected to; a
+  different Host header is replaced by it), `CONNECT host:port` for https and WebSockets. The proxy resolves the host
+  once per reading with `hostAddresses` and refuses it (403) when any address fails `isPrivateAddress`; otherwise it
+  connects to the address it checked, so a second DNS answer cannot swap it. TLS and its server name stay between the
+  browser and the site.
+- Exempt: only the user's own input when it is literally `localhost` (or `*.localhost`) or a loopback or private IP,
+  that exact host on any port. A public name that resolves to a private address is never exempt.
+- Only the browser it started may use it: a per-run random user name and password as Basic proxy credentials, or a 407
+  and nothing forwarded. Chrome reports a challenge only for a request it intercepts, so the browser target intercepts
+  every request at the request stage and lets it go at once (no measurable cost: about 2.0 s for a page with 40 images
+  either way); `Fetch.authRequired` gets the credentials only for a challenge from source `Proxy` at the proxy's own
+  address, and anything else is cancelled. Proxy-Authorization and the other hop-by-hop headers are never forwarded,
+  and a site's own 407 is turned into a 502 so the browser never offers the credentials to a site.
+- Limits: 15 s to connect, 2 minutes idle, 256 connections at once.
+- No new service and no new outside request: the proxy carries only what the page asked for, as the browser would.
 
 ## Engineering rules
 

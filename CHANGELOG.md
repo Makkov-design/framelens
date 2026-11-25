@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- `web` checks every request its browser makes, not only the page and its frames: scripts, images, fetch, workers of
+  every kind, prefetches and WebSockets go through a proxy inside Frame Lens that refuses this computer, the local
+  network and metadata addresses, and connects only to the address it checked. The result lists the hosts it refused.
+  Only a `localhost` or local IP address you give yourself is exempt; a public name that resolves to a private address
+  is not any more. `web` does not use a system proxy.
+
 ## 2.3.0 — 2026-11-25
 
 Frame Lens now reads names from the screen where automatic captions misspell them: `plan` for `listen` and `learn`

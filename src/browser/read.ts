@@ -7,6 +7,7 @@ import { buildSheets, type Sheet } from "../media/sheets.js";
 import { hostAddresses, hostOf, isPrivateAddress, systemLookup, type Lookup } from "../sources/cobalt.js";
 import { oneLine } from "../text.js";
 import { evaluate, findBrowser, launchBrowser, navigate, screenshot, type BrowserSession } from "./cdp.js";
+import { exemptHost, startProxy, type RequestProxy } from "./proxy.js";
 import { cleanReading, mergeReadings, PAGE_SCRIPT, RECORDER_SCRIPT, type PageReading } from "./web.js";
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -18,6 +19,8 @@ export interface PageResult {
   reading: PageReading;
   /** Pages and frames the page tried to open on this computer or the local network, which were refused. */
   refused?: string[];
+  /** Hosts any request of the page (a script, image, fetch, worker, prefetch, WebSocket) tried to reach there, refused. */
+  blocked?: string[];
   /** Screenshots down the page. */
   views: string[];
   /** The opening animations frame by frame (all page animations paused and stepped together). */
@@ -32,14 +35,32 @@ export async function readPage(url: string, outDir: string, tools: MediaTools, o
   if (!/^https?:\/\//i.test(url)) throw new InvalidInputError(`"${url}" is not a web page address (http or https).`);
   const executable = findBrowser();
   if (!executable) throw new InvalidInputError("Reading web pages needs Chrome or Edge on this computer (or FRAMELENS_BROWSER pointing to one).");
-  const profile = mkdtempSync(join(tmpdir(), "framelens-page-"));
-  const session = await launchBrowser({ executable, profile, headless: true, width: 1440, height: 900, maxLifetimeMs: 3 * 60_000 });
+  const input = new URL(url);
+  // Every request of the browser goes through this proxy. Without it the page is not opened at all.
+  let proxy: RequestProxy;
   try {
+    proxy = await startProxy({ exempt: exemptHost(input), ...(options.lookup && { lookup: options.lookup }) });
+  } catch (error) {
+    throw new InvalidInputError(`Could not start the request check for the page (${oneLine((error as Error).message, 120)}); the page was not opened.`);
+  }
+  const profile = mkdtempSync(join(tmpdir(), "framelens-page-"));
+  let session: BrowserSession;
+  try {
+    session = await launchBrowser({ executable, profile, headless: true, width: 1440, height: 900, maxLifetimeMs: 3 * 60_000, proxy: proxy.url });
+  } catch (error) {
+    await proxy.close();
+    removeProfile(profile);
+    throw error;
+  }
+  try {
+    await answerProxyAuth(session, proxy).catch((error: unknown) => {
+      throw new InvalidInputError(`Could not set up the request check for the page (${oneLine((error as Error).message, 120)}); the page was not opened.`);
+    });
     await session.cdp.send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false }, session.sessionId);
     // The recorder runs before the page's own scripts, so motion that ends before the page is read still counts.
     await session.cdp.send("Page.enable", {}, session.sessionId);
     await session.cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: RECORDER_SCRIPT }, session.sessionId);
-    const refused = await guardNavigations(session, new URL(url), options.lookup);
+    const refused = await guardNavigations(session, input, options.lookup);
     await navigate(session, url).catch((error: unknown) => {
       if (refused.length) throw new InvalidInputError(`${oneLine(url, 300)} redirected to ${refused[0]}, on this computer or the local network; it was not opened.`);
       throw error;
@@ -92,22 +113,51 @@ export async function readPage(url: string, outDir: string, tools: MediaTools, o
     const sheet = frames.length
       ? (await buildSheets(frames, outDir, "opening", { columns: 4, rows: Math.min(6, Math.ceil(frames.length / 4)), width: 480, label: (f) => `${f.t.toFixed(2)} s` }, tools))[0]
       : undefined;
-    return { reading: mergeReadings(readings), views, ...(sheet && { sheet }), ...(refused.length && { refused: [...new Set(refused)] }) };
+    return { reading: mergeReadings(readings), views, ...(sheet && { sheet }), ...(refused.length && { refused: [...new Set(refused)] }), ...(proxy.refused.length && { blocked: [...proxy.refused] }) };
   } finally {
     await session.close();
+    await proxy.close();
     removeProfile(profile);
   }
 }
 
 /**
+ * Gives Chrome the proxy's per-run credentials. Requests are paused on the browser target only so their auth challenges
+ * reach us (Chrome reports a challenge only for a request it intercepts) and are let go at once. Only the proxy's own
+ * 407 gets the credentials; a page's 401 or a 407 from anywhere else is cancelled, so they never reach a site.
+ */
+async function answerProxyAuth(session: BrowserSession, proxy: RequestProxy): Promise<void> {
+  const origin = `${proxy.host}:${proxy.port}`;
+  session.cdp.on("Fetch.requestPaused", (params, sid) => {
+    if (sid) return;
+    void session.cdp.send("Fetch.continueRequest", { requestId: params.requestId as string }).catch(() => undefined);
+  });
+  session.cdp.on("Fetch.authRequired", (params, sid) => {
+    if (sid) return;
+    const challenge = params.authChallenge as { source?: string; origin?: string } | undefined;
+    const ours = challenge?.source === "Proxy" && /^(?:https?:\/\/)?([^/]+)\/?$/.exec(String(challenge.origin ?? ""))?.[1] === origin;
+    void session.cdp
+      .send("Fetch.continueWithAuth", {
+        requestId: params.requestId as string,
+        authChallengeResponse: ours ? { response: "ProvideCredentials", username: proxy.username, password: proxy.password } : { response: "CancelAuth" },
+      })
+      .catch(() => undefined);
+  });
+  await session.cdp.send("Fetch.enable", { handleAuthRequests: true, patterns: [{ urlPattern: "*", requestStage: "Request" }] });
+}
+
+/**
  * Holds every document request of the tab (the page, its redirects, the navigations its scripts start, its frames)
  * until its host is checked: one on this computer or the local network is refused, unless it is the host the user
- * gave. A page cannot send the reading, its text and screenshots, to an admin page or a cloud metadata address.
+ * gave and that host is literally local. The proxy enforces the same for every request; this check gives the clear
+ * message for a page that redirects. A page cannot send the reading, its text and screenshots, to an admin page or a cloud metadata address.
  * Returns the list the refused addresses are added to.
  */
 async function guardNavigations(session: BrowserSession, input: URL, lookup: Lookup = systemLookup): Promise<string[]> {
   const refused: string[] = [];
-  const own = hostOf(input);
+  // Exempt only when the user's own input is literally local (`localhost`, a loopback or private IP): a public name
+  // that resolves to a private address is refused like any other.
+  const own = exemptHost(input);
   session.cdp.on("Fetch.requestPaused", (params, sid) => {
     if (sid !== session.sessionId) return;
     const requestId = params.requestId as string;
