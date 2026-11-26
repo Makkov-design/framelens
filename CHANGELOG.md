@@ -3,8 +3,8 @@
 ## 2.3.0 — 2026-11-26
 
 Frame Lens now reads names from the screen where automatic captions misspell them: `plan` for `listen` and `learn`
-adds a name check and writes `NAMES.md`. `web` checks every request of the page it reads, its workers and
-WebSockets included, at a proxy inside Frame Lens that refuses this computer and the local network. A web page's spec
+adds a name check and writes `NAMES.md`. `web` checks the requests of the page it reads, its frames, workers and
+WebSockets included, at a proxy inside Frame Lens that refuses this computer and the local network, and turns WebRTC off. A web page's spec
 labels each number by how it was obtained, and exports hide a token in a link's path. This is the first version
 released by the release workflow, with npm provenance.
 
@@ -42,9 +42,11 @@ released by the release workflow, with npm provenance.
 
 ### Fixed
 
-- `web` checks every request its browser makes, not only the page and its frames: scripts, images, fetch, workers of
+- `web` checks the requests its browser makes, not only the page and its frames: scripts, images, fetch, workers of
   every kind, prefetches and WebSockets go through a proxy inside Frame Lens that refuses this computer, the local
-  network and metadata addresses, and connects only to the address it checked. The result lists the hosts it refused.
+  network and metadata addresses, and connects only to the address it checked. WebRTC is turned off in pages and
+  their frames (Chrome would connect its TCP to this computer around the proxy), and the browser's DevTools port is
+  refused for page requests. The result lists the hosts it refused.
   Only a `localhost` or local IP address you give yourself is exempt; a public name that resolves to a private address
   is not any more.
 - Exports also leave out a token in the source link's path: path parameters (`;jsessionid=…`, also `%3B`), the

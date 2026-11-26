@@ -23,24 +23,29 @@ control of the calling assistant beyond what the README's "Privacy and design pr
   any redirect that adds or changes a user name or password, or carries one to another origin. Not covered: a server that answers yt-dlp differently from that GET, the requests a site
   extractor makes on its own (API and media addresses it builds), and a link this computer cannot reach directly (for
   example only through a proxy), where the walk is skipped and yt-dlp's own result stands.
-- `web`: every request of its browser goes through a proxy inside Frame Lens: the page and its redirects, frames of any
-  kind (sandboxed and `srcdoc` ones too), scripts, styles, images, fetch and XHR, dedicated, nested, blob, shared and
-  service workers (also at install time), speculation-rules prefetches and WebSockets. A host is resolved once; one
+- `web`: the requests of its browser go through a proxy inside Frame Lens. Tested: the page and its redirects, plain,
+  sandboxed `srcdoc` and cross-site frames, scripts, images, fetch, dedicated, nested, blob, shared and service workers
+  (also at install time), speculation-rules prefetches and WebSockets. WebRTC is turned off: its constructors are
+  removed before any page script runs, in the tab, in new about:blank, sandboxed and cross-site frames (tested) and in
+  popups (same mechanism, not tested), because Chrome opens WebRTC's TCP connections to this computer's own address
+  directly, around the proxy. A host is resolved once; one
   with any address on this computer, the local network, a cloud metadata address or another non-public range
   (IPv4-mapped and other IPv6 forms included) is refused, and the connection goes to the address that was checked.
   Exempt: only the user's own input when it is literally `localhost` or a loopback or private IP, and only that host:
   a page on the user's own local host can then reach other ports of that same host. A public name that resolves to a
   private address is never exempt. The proxy listens on 127.0.0.1 and serves only the browser Frame Lens started
   (per-run credentials, never forwarded to a site); if it cannot start, the page is not opened. The result names an
-  address the page was read at other than the one given, and the hosts that were refused. Not covered: QUIC and
-  WebRTC UDP outside the proxy are turned off rather than checked; WebRTC relayed over a public TURN server goes
-  through the proxy like any public host; browser policies set by an administrator could override the proxy setting.
+  address the page was read at other than the one given, and the hosts that were refused. The browser's own DevTools
+  port on 127.0.0.1 is refused for page requests, also from an exempt local page. Not covered: QUIC is turned off
+  rather than checked; a kind of request no test above covers is not claimed; browser policies set by an
+  administrator could override the proxy setting.
   Behind the network's own proxy (HTTPS_PROXY, HTTP_PROXY or ALL_PROXY, with NO_PROXY honoured; http and https
   proxies only, anything else makes `web` refuse), checked requests go on through that proxy, with its own
   credentials from its URL. Local, private and metadata addresses and local names are still refused before anything
-  is sent, and a name this computer resolves to such an address too. A name that resolves to a public address is sent
-  to that proxy by name, and a name this computer cannot resolve at all also goes to it by name: there the address
-  pin is not available, and that proxy decides what is reachable. The result says when a page was read this way.
+  is sent, and a name this computer resolves to such an address too. Every request goes to that proxy by name, and it
+  resolves the name again itself: behind an upstream proxy the address pin is not available (DNS rebinding is then
+  up to that proxy), also for names checked here, and a name this computer cannot resolve at all goes there too. The
+  result says how many hosts went that way.
 - The login-profile capture downloads the page's media over https only, and every hop must resolve to a public address,
   connected to as checked.
 - Downloads through yt-dlp stop at `FRAMELENS_MAX_DOWNLOAD_MB`, also when the site gives no size up front.

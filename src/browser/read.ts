@@ -7,7 +7,7 @@ import { buildSheets, type Sheet } from "../media/sheets.js";
 import { hostAddresses, hostOf, isPrivateAddress, systemLookup, type Lookup } from "../sources/cobalt.js";
 import { oneLine } from "../text.js";
 import { evaluate, findBrowser, launchBrowser, navigate, screenshot, type BrowserSession } from "./cdp.js";
-import { exemptHost, startProxy, upstreamFromEnv, type RequestProxy } from "./proxy.js";
+import { exemptHost, startProxy, upstreamFromEnv, type ProxyOptions, type RequestProxy } from "./proxy.js";
 import { cleanReading, mergeReadings, PAGE_SCRIPT, RECORDER_SCRIPT, type PageReading } from "./web.js";
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -22,10 +22,11 @@ export interface PageResult {
   /** Hosts any request of the page (a script, image, fetch, worker, prefetch, WebSocket) tried to reach there, refused. */
   blocked?: string[];
   /**
-   * The network's own proxy (HTTPS_PROXY and the like, without credentials) that checked requests went on through, and
-   * how many hosts this computer could not resolve and sent to it by name, without an address pin.
+   * The network's own proxy (HTTPS_PROXY and the like, without credentials) that checked requests went on through, how
+   * many hosts went to it (by name: it resolves them again, so none is pinned), and how many of them this computer
+   * could not resolve at all.
    */
-  upstream?: { proxy: string; unpinned: number };
+  upstream?: { proxy: string; hosts: number; unresolved: number };
   /** Screenshots down the page. */
   views: string[];
   /** The opening animations frame by frame (all page animations paused and stepped together). */
@@ -36,7 +37,7 @@ export interface PageResult {
  * Opens a page in a throwaway headless profile, reads its animations at the top and while scrolling, takes views
  * down the page, then pauses every animation and steps it in time to film the opening motion frame by frame.
  */
-export async function readPage(url: string, outDir: string, tools: MediaTools, options: { maxScroll?: number; stepSeconds?: number; lookup?: Lookup; env?: NodeJS.ProcessEnv } = {}): Promise<PageResult> {
+export async function readPage(url: string, outDir: string, tools: MediaTools, options: { maxScroll?: number; stepSeconds?: number; lookup?: Lookup; env?: NodeJS.ProcessEnv; dial?: ProxyOptions["dial"] } = {}): Promise<PageResult> {
   if (!/^https?:\/\//i.test(url)) throw new InvalidInputError(`"${url}" is not a web page address (http or https).`);
   const executable = findBrowser();
   if (!executable) throw new InvalidInputError("Reading web pages needs Chrome or Edge on this computer (or FRAMELENS_BROWSER pointing to one).");
@@ -45,7 +46,7 @@ export async function readPage(url: string, outDir: string, tools: MediaTools, o
   let proxy: RequestProxy;
   try {
     const upstream = upstreamFromEnv(options.env ?? process.env);
-    proxy = await startProxy({ exempt: exemptHost(input), ...(options.lookup && { lookup: options.lookup }), ...(upstream && { upstream }) });
+    proxy = await startProxy({ exempt: exemptHost(input), ...(options.lookup && { lookup: options.lookup }), ...(options.dial && { dial: options.dial }), ...(upstream && { upstream }) });
   } catch (error) {
     throw new InvalidInputError(`Could not start the request check for the page (${oneLine((error as Error).message, 120)}); the page was not opened.`);
   }
@@ -58,9 +59,14 @@ export async function readPage(url: string, outDir: string, tools: MediaTools, o
     removeProfile(profile);
     throw error;
   }
+  // The browser's own DevTools port is on this computer: no page request may reach it, also from an exempt local page.
+  if (session.debugPort) proxy.blockLocalPort(session.debugPort);
   try {
     await answerProxyAuth(session, proxy).catch((error: unknown) => {
       throw new InvalidInputError(`Could not set up the request check for the page (${oneLine((error as Error).message, 120)}); the page was not opened.`);
+    });
+    await withoutWebRtc(session).catch((error: unknown) => {
+      throw new InvalidInputError(`Could not turn WebRTC off for the page (${oneLine((error as Error).message, 120)}); the page was not opened.`);
     });
     await session.cdp.send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false }, session.sessionId);
     // The recorder runs before the page's own scripts, so motion that ends before the page is read still counts.
@@ -119,12 +125,48 @@ export async function readPage(url: string, outDir: string, tools: MediaTools, o
     const sheet = frames.length
       ? (await buildSheets(frames, outDir, "opening", { columns: 4, rows: Math.min(6, Math.ceil(frames.length / 4)), width: 480, label: (f) => `${f.t.toFixed(2)} s` }, tools))[0]
       : undefined;
-    return { reading: mergeReadings(readings), views, ...(sheet && { sheet }), ...(refused.length && { refused: [...new Set(refused)] }), ...(proxy.refused.length && { blocked: [...proxy.refused] }), ...(proxy.upstream && { upstream: { proxy: proxy.upstream, unpinned: proxy.unpinned.size } }) };
+    return { reading: mergeReadings(readings), views, ...(sheet && { sheet }), ...(refused.length && { refused: [...new Set(refused)] }), ...(proxy.refused.length && { blocked: [...proxy.refused] }), ...(proxy.upstream && { upstream: { proxy: proxy.upstream, hosts: proxy.viaUpstream.size, unresolved: proxy.unresolved.size } }) };
   } finally {
     await session.close();
     await proxy.close();
     removeProfile(profile);
   }
+}
+
+/**
+ * WebRTC's TCP connections to this computer's own address skip the proxy (Chrome connects them directly), and `web`
+ * has no use for WebRTC, so its constructors are removed before any page script runs: in the tab, in every frame of it
+ * (also a new about:blank or sandboxed one), in out-of-process frames and in popups, which are attached paused, given
+ * the same script and let run. Workers have no RTCPeerConnection; they are only let run. Nothing is intercepted or
+ * closed here.
+ */
+export const NO_WEBRTC_SCRIPT = `(() => { for (const name of ["RTCPeerConnection", "webkitRTCPeerConnection", "RTCIceTransport", "RTCDataChannel", "RTCSessionDescription", "RTCIceCandidate"]) { try { Object.defineProperty(globalThis, name, { value: undefined, configurable: false, writable: false, enumerable: false }); } catch (e) {} } })();`;
+
+async function withoutWebRtc(session: BrowserSession): Promise<void> {
+  const attach = { autoAttach: true, waitForDebuggerOnStart: true, flatten: true };
+  session.cdp.on("Target.attachedToTarget", (params) => {
+    const child = params.sessionId as string | undefined;
+    const type = (params.targetInfo as { type?: string } | undefined)?.type;
+    if (!child) return;
+    void (async () => {
+      try {
+        if (type === "page" || type === "iframe") {
+          await session.cdp.send("Page.enable", {}, child);
+          await session.cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: NO_WEBRTC_SCRIPT, runImmediately: true }, child);
+          await session.cdp.send("Target.setAutoAttach", attach, child);
+        }
+      } catch {
+        // A frame that is gone by now has nothing left to run.
+      } finally {
+        await session.cdp.send("Runtime.runIfWaitingForDebugger", {}, child).catch(() => undefined);
+      }
+    })();
+  });
+  await session.cdp.send("Page.enable", {}, session.sessionId);
+  await session.cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: NO_WEBRTC_SCRIPT, runImmediately: true }, session.sessionId);
+  // Frames and workers of the tab, and popups it opens (new pages, attached from the browser).
+  await session.cdp.send("Target.setAutoAttach", attach, session.sessionId);
+  await session.cdp.send("Target.setAutoAttach", { ...attach, filter: [{ type: "page", exclude: false }, { exclude: true }] });
 }
 
 /**

@@ -150,6 +150,8 @@ function getJson(url: string): Promise<Record<string, unknown>> {
 export interface BrowserSession {
   cdp: Cdp;
   sessionId: string;
+  /** The browser's DevTools port on 127.0.0.1 (pages must never reach it). */
+  debugPort?: number;
   close(): Promise<void>;
 }
 
@@ -267,6 +269,7 @@ export async function launchBrowser(options: {
     return {
       cdp,
       sessionId,
+      debugPort: port,
       close: async () => {
         clearTimeout(lifetime);
         try {
@@ -293,7 +296,9 @@ export function proxyFlags(proxy: string): string[] {
     "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
     "--webrtc-ip-handling-policy=disable_non_proxied_udp",
     // Secure DNS resolves for Chrome itself; with every request proxied it is not needed and must not open a path.
-    "--disable-features=DnsOverHttps",
+    // Sandboxed frames stay in the page's process, where the script that turns WebRTC off reaches them before their
+    // own scripts run (an isolated sandboxed frame starts before it can be attached).
+    "--disable-features=DnsOverHttps,IsolateSandboxedIframes",
   ];
 }
 

@@ -218,7 +218,7 @@ password; every hop to another host must be https and resolve only to public add
 address that was checked.
 The same check walks a link's redirects before yt-dlp follows them (`checkLinkRedirects` in `sources/resolve.ts`; one
 plain GET to the link's own host, no new service) and covers every hop of the login-profile capture's media download
-(`browser/capture.ts`). `web` sends every request of its browser through `browser/proxy.ts` (below), and also holds each document request over
+(`browser/capture.ts`). `web` sends the requests of its browser through `browser/proxy.ts` (below), and also holds each document request over
 CDP (`Fetch.requestPaused`, `browser/read.ts`) to say clearly when a page redirects to a refused address.
 
 `exact` decodes gzip, deflate and br through `stream.pipeline` (never `pipe`, which left the socket open and let the
@@ -230,14 +230,21 @@ download past the limit. Whatever a stopped, cancelled or failed download wrote 
 ### `web` request proxy (2.3.0)
 
 Checking subresources target by target over CDP failed (it killed dedicated workers and missed sandboxed frames and
-prefetches), so every request of `web`'s browser goes through one choke point:
+prefetches), so the requests of `web`'s browser go through one choke point (WebRTC, which would go around it, is turned off):
 
 - `browser/proxy.ts` is an HTTP proxy inside the Frame Lens process, on 127.0.0.1 and a random port, started for one
   reading and closed with its browser; if it cannot start, or Chrome cannot be given its credentials, the page is not
   opened. Chrome is started with `--proxy-server=http://127.0.0.1:<port>` and `--proxy-bypass-list=<-loopback>` (so
   loopback goes through it too), `--disable-quic`, WebRTC limited to proxied traffic
-  (`--force-webrtc-ip-handling-policy=disable_non_proxied_udp`), secure DNS off, and no proxy variables in its
-  environment.
+  (`--force-webrtc-ip-handling-policy=disable_non_proxied_udp`), secure DNS off, sandboxed frames kept in the page's
+  process (`IsolateSandboxedIframes` off), and no proxy variables in its environment. The browser's DevTools port is
+  refused for page requests.
+- WebRTC is turned off, not proxied: Chrome connects WebRTC's TCP (TURN over TCP or TLS) to 127.0.0.1 directly, around
+  the proxy. `NO_WEBRTC_SCRIPT` removes `RTCPeerConnection` and its companions with
+  `Page.addScriptToEvaluateOnNewDocument` (it also reaches a page's new about:blank frames) on the tab and on every
+  out-of-process frame and popup, which auto-attach holds (`waitForDebuggerOnStart`) until the script is in place.
+  Workers have no `RTCPeerConnection` and are only let run; nothing is intercepted or closed. An isolated sandboxed
+  frame starts before it can be attached, so sandboxed frames are kept in-process, where the tab's script reaches them.
 - Each request names a host: an absolute-form request for http (the URL's host is checked and connected to; a
   different Host header is replaced by it), `CONNECT host:port` for https and WebSockets. The proxy resolves the host
   once per reading with `hostAddresses` and refuses it (403) when any address fails `isPrivateAddress`; otherwise it
@@ -255,8 +262,8 @@ prefetches), so every request of `web`'s browser goes through one choke point:
   for both, NO_PROXY as curl reads it; http and https proxies only), a request that passed the check goes on through
   that proxy by name, with the proxy's own credentials from its URL (never logged; the TLS of an https proxy uses
   Node's CAs, NODE_EXTRA_CA_CERTS included). Local names and addresses are refused before anything is sent, and so is a
-  name that resolves locally to one. A name this computer cannot resolve goes to the upstream proxy by name; there is
-  no address pin then, and the result says how many hosts went that way.
+  name that resolves locally to one. The upstream proxy resolves every name again itself, so there is no address pin
+  behind it; the result says how many hosts went that way and how many could not be resolved here at all.
 - Limits: 15 s to connect, 2 minutes idle, 256 connections at once.
 - No new service and no new outside request: the proxy carries only what the page asked for, as the browser would.
 

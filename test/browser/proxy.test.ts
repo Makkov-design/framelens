@@ -138,6 +138,20 @@ describe("web request proxy", () => {
     }
   });
 
+  it("refuses the browser's own DevTools port on this computer, also for the exempt local host", async () => {
+    const proxy = await startProxy({ exempt: "127.0.0.1", lookup: async () => ["127.0.0.1"] });
+    try {
+      proxy.blockLocalPort(port);
+      hits.length = 0;
+      const auth = basic(proxy);
+      for (const target of [`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`]) expect(await tunnel(proxy, target, auth), target).toMatch(/^HTTP\/1\.1 403/);
+      expect((await viaProxy(proxy, `http://127.0.0.1:${port}/json/version`, { "proxy-authorization": auth })).status).toBe(403);
+      expect(hits).toEqual([]);
+    } finally {
+      await proxy.close();
+    }
+  });
+
   it("closes with no listener left behind", async () => {
     const proxy = await startProxy();
     await proxy.close();
@@ -304,7 +318,9 @@ describe("web request proxy behind the network's own proxy", () => {
       expect(asked).toEqual([]);
       expect(await throughTunnel(proxy, "unresolvable.example:443")).toContain("origin unresolvable.example:443");
       expect(asked.map((a) => a.target)).toEqual(["unresolvable.example:443"]);
-      expect([...proxy.unpinned]).toEqual(["unresolvable.example"]);
+      // Every host sent to the upstream proxy goes by name (it resolves it again); one could not be resolved here at all.
+      expect([...proxy.viaUpstream]).toEqual(["unresolvable.example"]);
+      expect([...proxy.unresolved]).toEqual(["unresolvable.example"]);
     } finally {
       await proxy.close();
     }

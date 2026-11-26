@@ -27,8 +27,14 @@ export interface RequestProxy {
   refused: string[];
   /** The network's own proxy that checked requests went on through (without its credentials), when there is one. */
   upstream?: string;
-  /** Hosts this computer could not resolve, sent to the upstream proxy by name: no address pin for them. */
-  unpinned: Set<string>;
+  /**
+   * Hosts sent to the upstream proxy by name. That proxy resolves each name again itself, so none of them is pinned to
+   * the address checked here; `unresolved` are those this computer could not resolve at all.
+   */
+  viaUpstream: Set<string>;
+  unresolved: Set<string>;
+  /** Refuses every request to `port` on this computer (the browser's own DevTools port). */
+  blockLocalPort(port: number): void;
   close(): Promise<void>;
 }
 
@@ -218,16 +224,20 @@ export async function startProxy(options: ProxyOptions = {}): Promise<RequestPro
    */
   const route = async (host: string, port: number, tunnel: boolean): Promise<Route> => {
     const { addresses, local } = await resolveOnce(host);
+    if (blockedPorts.has(port) && (local || host === options.exempt || addresses?.some(isPrivateAddress))) return { kind: "refuse" };
     if (host === options.exempt) return addresses?.length ? { kind: "direct", address: addresses[0]! } : { kind: "unresolved" };
     if (local) return { kind: "refuse" };
     const proxy = tunnel ? options.upstream?.https : options.upstream?.http;
     if (proxy && !skipsProxy(host, port, options.upstream!.noProxy)) {
-      if (!addresses?.length) unpinned.add(host);
+      viaUpstream.add(host);
+      if (!addresses?.length) unresolved.add(host);
       return { kind: "upstream", proxy };
     }
     return addresses?.length ? { kind: "direct", address: addresses[0]! } : { kind: "unresolved" };
   };
-  const unpinned = new Set<string>();
+  const viaUpstream = new Set<string>();
+  const unresolved = new Set<string>();
+  const blockedPorts = new Set<number>();
   const dial = (address: string, port: number) => options.dial?.(address, port) ?? { host: address, port };
   /** A socket to the upstream proxy itself (TLS for an https proxy, with the system's and NODE_EXTRA_CA_CERTS' CAs). */
   const toUpstream = (proxy: URL): Socket => {
@@ -438,7 +448,11 @@ export async function startProxy(options: ProxyOptions = {}): Promise<RequestPro
     password,
     refused,
     ...(options.upstream && { upstream: upstreamLabel((options.upstream.https ?? options.upstream.http)!) }),
-    unpinned,
+    viaUpstream,
+    unresolved,
+    blockLocalPort: (port: number) => {
+      blockedPorts.add(port);
+    },
     close: () =>
       new Promise<void>((resolve) => {
         for (const socket of sockets) socket.destroy();

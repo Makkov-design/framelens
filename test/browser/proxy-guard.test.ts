@@ -1,7 +1,7 @@
 // The `web` request proxy in a real browser: every kind of request a page can make to this computer is refused, and
 // pages that only use their own host keep working (2.3.0).
 import { createServer, type IncomingHttpHeaders, type Server } from "node:http";
-import type { AddressInfo } from "node:net";
+import { createServer as createTcpServer, type AddressInfo } from "node:net";
 import { createHash } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { findBrowser } from "../../src/browser/cdp.js";
@@ -114,6 +114,60 @@ new Worker("/own.js").onmessage = (e) => { document.title = e.data; };
     expect(blocked.some((h) => /^\[::ffff:/.test(h))).toBe(true);
     // The per-run proxy credentials never reach a site.
     expect(seen.some((h) => "proxy-authorization" in h || "authorization" in h)).toBe(false);
+  }, 120_000);
+
+  it("turns WebRTC off in every frame, so TURN over TCP cannot reach this computer around the proxy (audit H1 of #51)", async () => {
+    // Chrome opens WebRTC's TCP connections to 127.0.0.1 directly, not through the proxy: count what reaches a listener.
+    let turnHits = 0;
+    const turn = createTcpServer((socket) => {
+      turnHits++;
+      socket.destroy();
+    });
+    await new Promise<void>((r) => turn.listen(0, "127.0.0.1", r));
+    const turnPort = (turn.address() as AddressInfo).port;
+    const attempt = (realm: string) =>
+      `(() => { try { const pc = new (${realm}.RTCPeerConnection)({ iceTransportPolicy: "relay", iceServers: [{ urls: ["turn:127.0.0.1:${turnPort}?transport=tcp", "turns:127.0.0.1:${turnPort}?transport=tcp", "stun:127.0.0.1:${turnPort}"], username: "u", credential: "p" }] }); pc.createDataChannel("x"); pc.addEventListener("icecandidateerror", () => {}); pc.createOffer().then((o) => pc.setLocalDescription(o)); return "made"; } catch (e) { return "blocked"; } })()`;
+    const frame = (name: string) => `<!doctype html><script>parent.postMessage(${JSON.stringify(name)} + ":" + ${attempt("window")}, "*");</script>`;
+    const pages = createServer((req, res) => {
+      res.writeHead(200, { "content-type": "text/html" });
+      if (req.url === "/oopif") res.end(frame("cross-site"));
+      else
+        res.end(`<!doctype html><title>Waiting</title><body><script>
+const out = ["top:" + ${attempt("window")}];
+const blank = document.createElement("iframe"); document.body.appendChild(blank); out.push("about-blank:" + ${attempt("blank.contentWindow")});
+addEventListener("message", (e) => { out.push(String(e.data)); document.title = out.sort().join(" "); });
+new Worker(URL.createObjectURL(new Blob(["postMessage(typeof RTCPeerConnection)"]))).onmessage = (e) => { out.push("worker:" + e.data); document.title = out.sort().join(" "); };
+document.title = out.sort().join(" ");
+</script>
+<iframe sandbox="allow-scripts" srcdoc="${frame("sandboxed").replace(/"/g, "&quot;")}"></iframe>
+<iframe src="http://other.example:${(pages.address() as AddressInfo).port}/oopif"></iframe>`);
+    });
+    await new Promise<void>((r) => pages.listen(0, "127.0.0.1", r));
+    const pagePort = (pages.address() as AddressInfo).port;
+    try {
+      // A public page (not the exempt host): its names resolve to a public address, and the proxy's connection to that
+      // address lands on the local test server.
+      const result = await readPage(`http://public.example:${pagePort}/`, dir, tools!, {
+        maxScroll: 0,
+        env: {},
+        lookup: async () => ["203.0.113.10"],
+        dial: (_address, port) => ({ host: "127.0.0.1", port }),
+      });
+      await new Promise((r) => setTimeout(r, 1500));
+      expect(result.reading.title).toBe("about-blank:blocked cross-site:blocked sandboxed:blocked top:blocked worker:undefined");
+      expect(turnHits).toBe(0);
+    } finally {
+      await new Promise<void>((r) => turn.close(() => r()));
+      await new Promise<void>((r) => pages.close(() => r()));
+    }
+  }, 120_000);
+
+  it("does not exempt a public name the user gave when it resolves to this computer (document guard and proxy)", async () => {
+    // Only a literal localhost or local IP is exempt. Exempting the name as given would let the document through to the
+    // proxy's empty refusal page instead of refusing it with a reason.
+    await expect(readPage(`http://page.example:${port}/plain`, dir, tools!, { maxScroll: 0, env: {}, lookup: async () => ["127.0.0.1"] })).rejects.toThrow(
+      /page\.example.*on this computer or the local network; it was not opened/,
+    );
   }, 120_000);
 
   it("reads a plain page about as fast as it reads other pages", async () => {

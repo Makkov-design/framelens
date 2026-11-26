@@ -191,7 +191,7 @@ Files sent gzip-, deflate- or br-encoded are decoded; other encodings (zstd, lis
 **Other links and `web`.** Before yt-dlp fetches a link that is not YouTube, Frame Lens walks the redirects its
 server answers with under the same rule, so a public link cannot send the download to your computer or local network;
 the requests a site extractor makes on its own are not covered (see [SECURITY.md](SECURITY.md)). `web` sends every
-request of its browser (pages, frames, scripts, images, fetches, workers, prefetches, WebSockets) through a check
+request of its browser that its tests cover (pages, frames, scripts, images, fetches, workers, prefetches, WebSockets; WebRTC is turned off) through a check
 inside Frame Lens that refuses your computer and local network, other than a `localhost` or local address you gave
 yourself, and says when the page was read at another address than the one you gave. Behind a network proxy
 (`HTTPS_PROXY`), checked requests go on through it.
