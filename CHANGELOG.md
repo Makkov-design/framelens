@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.3.0 — 2026-11-25
+## 2.3.0 — 2026-11-26
 
 Frame Lens now reads names from the screen where automatic captions misspell them: `plan` for `listen` and `learn`
 adds a name check and writes `NAMES.md`. `web` checks every request of the page it reads, its workers and

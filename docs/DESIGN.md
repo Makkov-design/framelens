@@ -227,7 +227,7 @@ size known up front, so `sources/ytdlp.ts` also measures the `source.*` files ev
 `source.temp.<ext>`, nor the finished `source.<ext>` while the merge's inputs are still beside it) and stops the
 download past the limit. Whatever a stopped, cancelled or failed download wrote is removed in `fetchWithYtDlp`.
 
-### `web` request proxy (2.3.1)
+### `web` request proxy (2.3.0)
 
 Checking subresources target by target over CDP failed (it killed dedicated workers and missed sandboxed frames and
 prefetches), so every request of `web`'s browser goes through one choke point:

@@ -1,5 +1,5 @@
 // The `web` request proxy in a real browser: every kind of request a page can make to this computer is refused, and
-// pages that only use their own host keep working (2.3.1).
+// pages that only use their own host keep working (2.3.0).
 import { createServer, type IncomingHttpHeaders, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { createHash } from "node:crypto";
