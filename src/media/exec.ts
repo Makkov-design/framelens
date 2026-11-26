@@ -12,6 +12,8 @@ export interface ExecResult {
 export type Exec = (file: string, args: string[], options?: { timeoutMs?: number; signal?: AbortSignal }) => Promise<ExecResult>;
 
 const MAX_BUFFER = 64 * 1024 * 1024;
+/** A stderr line that says why a program failed (ffmpeg's own words for it). */
+const REASON = /\b(error|invalid|failed|could not|cannot|unable|not supported|no such|denied)\b/i;
 /** The limit a step gets when its caller names none. */
 export const DEFAULT_EXEC_TIMEOUT_MS = 10 * 60_000;
 
@@ -48,7 +50,11 @@ export const execTool: Exec = async (file, args, options = {}) => {
     throw error;
   }
   if (result.code !== 0) {
-    const tail = result.stderr.trim().split("\n").slice(-6).join("\n");
+    // ffmpeg 7 and later end with its statistics and "Conversion failed!", after the line that says why: keep the
+    // lines that name the reason ahead of that last line, so the message is not only the statistics.
+    const lines = result.stderr.trim().split("\n");
+    const reasons = lines.slice(0, -1).filter((l) => REASON.test(l) && !/Conversion failed/i.test(l)).slice(-3);
+    const tail = (reasons.length ? [...reasons, lines.at(-1)!] : lines.slice(-6)).join("\n");
     throw new ToolOutputError(`${name} failed`, tail, result.code === null ? "it was ended by a signal" : `exit code ${result.code}`);
   }
   // A cut-off output would be read as the whole (a probe's packet list, a filter's per-frame log): fail instead.

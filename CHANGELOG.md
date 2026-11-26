@@ -58,6 +58,8 @@ released by the release workflow, with npm provenance.
   scripts spell words with them) and the joiner inside an emoji, and drops variation selectors (also U+E0100–E01EF)
   without leaving a space; it used to put a space in their place. Shorthand format controls (U+1BCA0–1BCA3) become a
   space.
+- When ffmpeg fails, the error names ffmpeg's reason. From ffmpeg 7 that line comes before the statistics and
+  "Conversion failed!", and only those last lines were shown.
 
 ## 2.2.0 — 2026-11-23
 
