@@ -152,11 +152,17 @@ describe.skipIf(!canRun)("the browser extension in a real browser", () => {
         `(async () => {
           const c = document.createElement("canvas"); c.width = 320; c.height = 180; document.body.append(c);
           const g = c.getContext("2d");
-          framelensRecorder.record(c.captureStream(), "https://example.test/reel/1");
+          // Frames only when the test paints one (captureStream(0) and requestFrame), not whenever the browser samples
+          // the canvas: on a loaded runner that sampling is what varies between runs.
+          const stream = c.captureStream(0);
+          const track = stream.getVideoTracks()[0];
+          const paint = (i) => { g.fillStyle = "hsl(" + ((i * 47) % 360) + " 80% 50%)"; g.fillRect(0, 0, 320, 180); track.requestFrame(); };
+          paint(0);
+          framelensRecorder.record(stream, "https://example.test/reel/1");
           const t0 = performance.now();
-          for (let i = 0; performance.now() - t0 < 2500; i++) {
-            g.fillStyle = "hsl(" + ((i * 47) % 360) + " 80% 50%)"; g.fillRect(0, 0, 320, 180);
+          for (let i = 1; performance.now() - t0 < 2500; i++) {
             await new Promise((r) => setTimeout(r, i % 3 ? 33 : 150));
+            paint(i);
           }
           const file = await framelensRecorder.stop();
           const buf = new Uint8Array(await (await fetch(file.url)).arrayBuffer());
@@ -183,7 +189,12 @@ describe.skipIf(!canRun)("the browser extension in a real browser", () => {
     expect(probe.duration).toBeGreaterThan(2.2);
     expect(probe.duration).toBeLessThan(3.2);
     expect(probe.vfr).toBe(true);
-    const frames = await extractFrames(file, join(dir, "rec-frames"), { everyFrame: true, start: 0, end: 2, width: 160 }, probe, tools!);
+    const frames = await extractFrames(file, join(dir, "rec-frames"), { everyFrame: true, start: 0, end: 2, width: 160 }, probe, tools!).catch(async (error: Error) => {
+      // Once failed on a CI runner (ffmpeg 8, "Conversion failed" after the first frame) and never locally: say what
+      // the recording held, so a failure carries its evidence.
+      const { stdout } = await tools!.exec(tools!.ffprobe, ["-v", "error", "-select_streams", "v", "-show_entries", "frame=pts_time,width,height,key_frame,pix_fmt", "-of", "csv=p=0", file]).catch(() => ({ stdout: "(ffprobe failed)" }));
+      throw new Error(`${error.message}\nThe recording's frames (pts, key, size, format):\n${stdout.trim().split("\n").slice(0, 12).join("\n")}`);
+    });
     const gaps = frames.slice(1).map((f, i) => f.t - frames[i]!.t);
     expect(Math.max(...gaps) - Math.min(...gaps)).toBeGreaterThan(0.05);
     expect(readdirSync(join(dir, "rec-frames")).length).toBe(frames.length);

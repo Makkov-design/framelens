@@ -150,6 +150,8 @@ function getJson(url: string): Promise<Record<string, unknown>> {
 export interface BrowserSession {
   cdp: Cdp;
   sessionId: string;
+  /** The browser's DevTools port on 127.0.0.1 (pages must never reach it). */
+  debugPort?: number;
   close(): Promise<void>;
 }
 
@@ -206,6 +208,11 @@ export async function launchBrowser(options: {
   width?: number;
   height?: number;
   maxLifetimeMs?: number;
+  /**
+   * Every request through this proxy (`http://127.0.0.1:<port>`), loopback included, with nothing that bypasses it:
+   * no QUIC, no WebRTC UDP outside the proxy, no system proxy settings from the environment.
+   */
+  proxy?: string;
 }): Promise<BrowserSession> {
   throwIfCancelled();
   mkdirSync(options.profile, { recursive: true });
@@ -224,9 +231,10 @@ export async function launchBrowser(options: {
       "--disable-background-networking",
       "--disable-sync",
       `--window-size=${width},${height}`,
+      ...(options.proxy ? proxyFlags(options.proxy) : []),
       "about:blank",
     ],
-    { stdio: "ignore", windowsHide: true, detached: process.platform !== "win32", env: childEnv() },
+    { stdio: "ignore", windowsHide: true, detached: process.platform !== "win32", env: options.proxy ? withoutProxyEnv(childEnv()) : childEnv() },
   );
   running.add(child);
   child.once("exit", () => running.delete(child));
@@ -261,6 +269,7 @@ export async function launchBrowser(options: {
     return {
       cdp,
       sessionId,
+      debugPort: port,
       close: async () => {
         clearTimeout(lifetime);
         try {
@@ -275,6 +284,27 @@ export async function launchBrowser(options: {
   } catch (error) {
     throw fail(`Could not control the browser: ${(error as Error).message}`);
   }
+}
+
+/** Chrome flags that send every request through `proxy` and close what would go around it. */
+export function proxyFlags(proxy: string): string[] {
+  return [
+    `--proxy-server=${proxy}`,
+    // "<-loopback>" removes Chrome's built-in bypass of localhost and 127.0.0.1: those go through the proxy too.
+    "--proxy-bypass-list=<-loopback>",
+    "--disable-quic",
+    "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
+    "--webrtc-ip-handling-policy=disable_non_proxied_udp",
+    // Secure DNS resolves for Chrome itself; with every request proxied it is not needed and must not open a path.
+    // Sandboxed frames stay in the page's process, where the script that turns WebRTC off reaches them before their
+    // own scripts run (an isolated sandboxed frame starts before it can be attached).
+    "--disable-features=DnsOverHttps,IsolateSandboxedIframes",
+  ];
+}
+
+/** The environment without system proxy settings, so nothing can point the browser elsewhere. */
+export function withoutProxyEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return Object.fromEntries(Object.entries(env).filter(([name]) => !/^(https?|ftp|all|no|socks)_proxy$|^auto_proxy$/i.test(name)));
 }
 
 /** Evaluates an expression in the page and returns its JSON value. */

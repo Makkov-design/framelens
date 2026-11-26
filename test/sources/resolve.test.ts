@@ -349,7 +349,10 @@ describe("one download per workspace at a time", () => {
     process.env.FAKE_YTDLP_DELAY_MS = "1500";
     const controller = new AbortController();
     const first = resolveSource(YT, { workspaceRoot: ws, env: env(), signal: controller.signal });
-    await new Promise((done) => setTimeout(done, 300));
+    // Cancel once the first download has really started: a fixed wait was too short for a cold start on Windows
+    // runners, where the first call was cancelled before yt-dlp ran and only one download was ever counted.
+    for (const until = Date.now() + 10_000; downloads() < 1 && Date.now() < until; ) await new Promise((done) => setTimeout(done, 25));
+    expect(downloads()).toBe(1);
     const second = resolveSource(YT, { workspaceRoot: ws, env: env() });
     controller.abort();
     await expect(first).rejects.toThrow(/cancelled/);

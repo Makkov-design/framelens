@@ -72,6 +72,22 @@ describe("external programs follow the tool call", () => {
     expect(formatLimit(150 * 60_000)).toBe("2 h 30 min");
   });
 
+  it("names the line that says why a program failed, not only the statistics after it (ffmpeg 7+)", async () => {
+    const stderr = [
+      "[vist#0:0/vp9 @ 0x1] [dec:vp9 @ 0x2] Error submitting packet to decoder: Invalid data found when processing input",
+      "frame=    1 fps=0.0 q=3.0 size=N/A time=00:00:00.03 bitrate=N/A speed=9.1x",
+      ...Array.from({ length: 8 }, (_, i) => `[Parsed_showinfo_1 @ 0x3] n:${i} pts_time:${i / 30}`),
+      "[out#0/image2 @ 0x4] video:0KiB audio:0KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: unknown",
+      "frame=    1 fps=0.0 q=3.0 Lsize=N/A time=00:00:00.03 bitrate=N/A speed=9.1x elapsed=0:00:00.00",
+      "Conversion failed!",
+    ].join("\n");
+    const error = await execTool(node, ["-e", `process.stderr.write(${JSON.stringify(stderr)}); process.exit(1)`]).catch((e: Error) => e);
+    expect((error as Error).message).toMatch(/Error submitting packet to decoder: Invalid data found when processing input Conversion failed!$/);
+    // Without such a line the last lines are kept, as before.
+    const plain = await execTool(node, ["-e", "process.stderr.write('a\\nb\\nlast words'); process.exit(2)"]).catch((e: Error) => e);
+    expect((plain as Error).message).toMatch(/^node(\.exe)? failed: a b last words$/);
+  });
+
   it("fails rather than return output it had to cut off (64 MiB per stream)", async () => {
     const error = await execTool(node, ["-e", "process.stdout.write(Buffer.alloc(65 * 1024 * 1024, 97))"]).catch((e: Error) => e);
     expect((error as Error).message).toMatch(/wrote more than 64 MiB of output/);
